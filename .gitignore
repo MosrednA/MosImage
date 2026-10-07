@@ -18,6 +18,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 frontend/src-tauri/target/
+frontend/src-tauri/gen/
 
 # Local app state, diagnostics and generated outputs
 /data/**

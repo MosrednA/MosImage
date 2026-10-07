@@ -11,7 +11,14 @@ class Settings(BaseSettings):
     data_dir: Path = project_root / "data"
     db_path: Path = data_dir / "app.db"
     image_dir: Path = data_dir / "images"
-    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    # Vite dev server, plus the Tauri desktop shell (Windows, then macOS/Linux).
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "tauri://localhost",
+    ]
     max_loaded_pipelines: int = 1
     enable_cpu_offload: bool = True
     runtime_mode: str = "balanced"
