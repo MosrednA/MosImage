@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -48,7 +49,7 @@ def ensure_storage() -> None:
     with connect() as db:
         db.execute(SCHEMA)
         _add_column_if_missing(db, "generations", "runtime_mode", "TEXT NOT NULL DEFAULT 'balanced'")
-        for column, definition in (("edit_operation", "TEXT"), ("blend_feather", "REAL"), ("context_padding", "INTEGER"), ("scene_context", "TEXT"), ("reference_image_path", "TEXT")):
+        for column, definition in (("edit_operation", "TEXT"), ("blend_feather", "REAL"), ("context_padding", "INTEGER"), ("scene_context", "TEXT"), ("reference_image_paths", "TEXT")):
             _add_column_if_missing(db, "generations", column, definition)
         db.commit()
 
@@ -112,6 +113,7 @@ def get_generation(generation_id: int) -> dict[str, Any] | None:
 def row_to_record(row: sqlite3.Row) -> dict[str, Any]:
     record = dict(row)
     record["output_image_url"] = image_url(record["output_image_path"])
+    record["reference_image_paths"] = json.loads(record.get("reference_image_paths") or "[]")
     return record
 
 

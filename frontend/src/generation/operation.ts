@@ -11,20 +11,29 @@ export function submitLabel(operation: Operation): string {
   return operation === "remove" ? "Remove" : operation === "expand" ? "Expand" : "Generate";
 }
 
-export function promptPlaceholder(operation: Operation, hasImage: boolean, referenceName: string | null = null): string {
+/** "Anna", "Anna and Tom", "Anna, Tom and Mia". */
+export function joinNames(names: readonly string[]): string {
+  return names.length < 2 ? names[0] ?? "" : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+export function promptPlaceholder(operation: Operation, hasImage: boolean, referenceNames: readonly string[] = []): string {
   if (operation === "remove") return "Optional: describe the background to restore…";
   if (operation === "expand") return "Describe the scene or what to add beyond the edges…";
-  if (referenceName) return `What is ${referenceName} doing here? e.g. sitting on the bench, reading`;
+  if (referenceNames.length > 1) return `What are ${joinNames(referenceNames)} doing here? e.g. sitting together on the bench`;
+  if (referenceNames.length) return `What is ${referenceNames[0]} doing here? e.g. sitting on the bench, reading`;
   return hasImage ? "What would you like to see in your selection?" : "Describe the image you want to create…";
 }
 
-export function operationHint(operation: Operation, hasImage: boolean, hasMask: boolean, tool: CanvasTool, referenceName: string | null = null): string {
+export function operationHint(operation: Operation, hasImage: boolean, hasMask: boolean, tool: CanvasTool, referenceNames: readonly string[] = []): string {
   if (operation === "expand") return "Describe the scene or new content. Your original image stays intact.";
   if (!hasImage) return "Describe a new image, or open one to edit.";
-  if (referenceName && operation === "replace") {
+  if (referenceNames.length && operation === "replace") {
+    const names = joinNames(referenceNames), several = referenceNames.length > 1;
     return hasMask
-      ? `${referenceName} appears inside your selection, at the selection's size. Two proposals give you a choice.`
-      : `Select where ${referenceName} should appear. Leave room for the whole body and its shadow.`;
+      ? `${names} ${several ? "appear" : "appears"} inside your selection, at the selection's size. Two proposals give you a choice.`
+      : several
+        ? `Select where ${names} should appear. Leave room for everyone, with their shadows.`
+        : `Select where ${names} should appear. Leave room for the whole body and its shadow.`;
   }
   if (hasMask) {
     return operation === "remove"

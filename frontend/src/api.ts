@@ -42,12 +42,33 @@ export interface JobResponse {
   status: JobState;
 }
 
+export type JobPhase = "loading" | "warming" | "preparing" | "generating" | "finishing";
+
 export interface JobStatus extends JobResponse {
   progress: number;
   error: string | null;
   generation_id: number | null;
   generation_ids: number[];
   mask_image_url?: string | null;
+  phase?: JobPhase | null;
+  /** The model or component being loaded, when phase is loading or warming. */
+  detail?: string | null;
+  step?: number | null;
+  steps?: number | null;
+  /** 1-based proposal being made, out of items. */
+  item?: number | null;
+  items?: number | null;
+  elapsed_seconds?: number | null;
+  phase_elapsed_seconds?: number | null;
+  eta_seconds?: number | null;
+  /** What a queued job waits for, such as the start-up warm-up. */
+  waiting_for?: TaskKind | null;
+}
+
+export interface EngineStatus {
+  /** The start-up job that loads and warms the Quality model and SAM. */
+  warm_up: JobStatus | null;
+  models: ModelInfo[];
 }
 
 export interface SystemInfo {
@@ -159,6 +180,10 @@ export async function listModels(): Promise<ModelInfo[]> {
 
 export async function listHistory(): Promise<GenerationRecord[]> {
   return request("/api/history");
+}
+
+export async function getEngine(): Promise<EngineStatus> {
+  return request("/api/engine");
 }
 
 export async function getSystemInfo(): Promise<SystemInfo> {

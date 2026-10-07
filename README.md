@@ -104,7 +104,7 @@ The English Focus layout gives most of the viewport to the image in every mode. 
 
 Object selection runs SAM 2.1 Tiny on CPU and caches one image embedding. Click to include a point, Alt+click to exclude a point, or use Brush/Eraser/Rectangle/Lasso to correct the mask. The first selection downloads the model. Ctrl+Z/Shift+Ctrl+Z undo/redo the mask first when its history is available, then document revisions. O/B/E/V choose Object/Brush/Expand/Pan; Ctrl+O opens an image and Ctrl+Enter submits an instruction.
 
-References place a person, pet or object from a concept image into the open document. Drop or browse images into the References panel on the right; each document keeps up to 24. Pick one (a single upload is picked automatically), select where it goes, then describe what it does, for example "sitting on the bench". The reference is passed to FLUX.2 Klein as `image_reference` for Replace edits only, so it requires the Quality model; picking one switches to Quality and two proposals. The scissors button optionally isolates the subject with SAM 2.1 Tiny on a neutral background; the full image is used by default because it was more reliable in the local trial. One reference is used per edit. See [the reference trial](INPAINTING_2026-10-07.md#reference-images).
+References place a person, pet or object from a concept image into the open document. Drop or browse images into the References panel on the right; each document keeps up to 24. Pick up to three (a single upload is picked automatically; the In use badge shows the order), select where they go, then describe what they do, for example "Anna and Tom sitting on the bench". References are passed to FLUX.2 Klein as `image_reference` for Replace edits only, so it requires the Quality model; picking one switches to Quality and two proposals. The scissors button optionally isolates the subject with SAM 2.1 Tiny on a neutral background; the full image is used by default because it was more reliable in the local trial. Several references are padded to one shared size of about 0.36 MP each and named in order in the prompt ("Anna is reference image 1"), so each likeness stays separate. See [the reference trial](INPAINTING_2026-10-07.md#reference-images).
 
 Expand supports draggable edges, format presets, and exact pixel margins. It adds space without cropping or changing the original pixels. The native canvas is capped at 4096 × 4096; generation still uses a model-facing image capped at 1024 on its longest edge. Applying an expansion updates document dimensions; undo/redo and reopening restore the corresponding revision dimensions.
 
@@ -144,9 +144,13 @@ The Quality app adapter loads the official `black-forest-labs/FLUX.2-klein-4b-nv
 
 ## Hot Loading
 
-Models load automatically when you submit an instruction. The backend also retains `/api/models/load` for scripted preloading; Focus hides that technical action. The active pipeline stays in memory until you switch task/placement, explicitly unload it, or restart the backend.
+On start the backend warms up in the background: it loads SAM 2.1 Tiny, then the Quality model (`MOSIMAGE_WARM_UP_MODEL`, FLUX.2 Klein NVFP4 by default), and runs one 256 px, one-step pass for each task so the first edit skips the CUDA kernel set-up. This takes about 15–20 s; the top bar shows Warming up and then Ready, and `/api/engine` reports the job. Edits submitted meanwhile wait for it and say so. Set `MOSIMAGE_WARM_UP_ON_START=false` to load on first use instead. `/api/models/load` remains for scripted preloading.
 
-With the default 16 GB profile, MosImage keeps one large pipeline hot at a time. Loading inpaint can evict text-to-image, switching between Quality and Fast unloads the previous provider, and switching between GPU-resident and CPU-offload placement reloads the pipeline.
+Measured on the RTX 5070 Ti: loading Klein NVFP4 takes 5–9 s from the local cache (about 13 s cold), and the first run afterwards adds 3–6 s unless warmed up. Klein's text-to-image and inpaint pipelines share one set of weights, so switching between a new image and an edit is instant. Point selection runs in its own CPU queue and never waits behind a generation.
+
+Prompt encodings are cached per loaded model, so a second proposal or "generate again" skips moving the 8 GB text encoder to the GPU. Two proposals with two references went from 22 s to about 18 s, and 15 s when repeated. Progress shows the phase, proposal, step and an estimate measured from the step time.
+
+With the default 16 GB profile, MosImage keeps one large model hot at a time. Switching between Quality and Fast unloads the previous provider, and switching between GPU-resident and CPU-offload placement reloads the pipeline.
 
 ## Desktop Shell
 

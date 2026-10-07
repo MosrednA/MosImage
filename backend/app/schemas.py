@@ -1,12 +1,14 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 TaskKind = Literal["text-to-image", "inpaint", "outpaint", "select", "load-model"]
 JobState = Literal["queued", "running", "cancelling", "cancelled", "completed", "failed"]
+JobPhase = Literal["loading", "warming", "preparing", "generating", "finishing"]
 RuntimeMode = Literal["safe", "balanced", "performance"]
+MAX_REFERENCES_PER_EDIT = 3
 
 
 class ModelInfo(BaseModel):
@@ -24,6 +26,7 @@ class LoadModelRequest(BaseModel):
     runtime_mode: RuntimeMode = "balanced"
     width: int = Field(default=1024, ge=256, le=2048)
     height: int = Field(default=1024, ge=256, le=2048)
+    warm_up: bool = False
 
 
 class TextToImageRequest(BaseModel):
@@ -53,12 +56,18 @@ class InpaintForm(BaseModel):
     blend_feather: float = Field(default=16, ge=0, le=64, allow_inf_nan=False)
     context_padding: int = Field(default=320, ge=32, le=1024)
     scene_context: str = Field(default="", max_length=1500)
-    reference_id: int | None = Field(default=None, ge=1)
+    # Order matters: the prompt names them as reference image 1, 2, ...
+    reference_ids: list[Annotated[int, Field(ge=1)]] = Field(default_factory=list, max_length=MAX_REFERENCES_PER_EDIT)
+
+    @field_validator("reference_ids")
+    @classmethod
+    def _unique_references(cls, value: list[int]) -> list[int]:
+        return list(dict.fromkeys(value))
 
 
 class OutpaintForm(InpaintForm):
     model_config = ConfigDict(extra="forbid")
-    reference_id: None = None
+    reference_ids: list[int] = Field(default_factory=list, max_length=0)
     model_name: str = "z-image-turbo"
     steps: int = Field(default=8, ge=1, le=100)
     guidance: float = Field(default=0.0, ge=0.0, le=30.0)
@@ -107,6 +116,16 @@ class JobStatus(BaseModel):
     generation_id: int | None = None
     generation_ids: list[int] = Field(default_factory=list)
     mask_image_url: str | None = None
+    phase: JobPhase | None = None
+    detail: str | None = None
+    step: int | None = None
+    steps: int | None = None
+    item: int | None = None
+    items: int | None = None
+    elapsed_seconds: float | None = None
+    phase_elapsed_seconds: float | None = None
+    eta_seconds: float | None = None
+    waiting_for: TaskKind | None = None
 
 
 class GenerationRecord(BaseModel):
@@ -126,7 +145,7 @@ class GenerationRecord(BaseModel):
     blend_feather: float | None = None
     context_padding: int | None = None
     scene_context: str | None = None
-    reference_image_path: str | None = None
+    reference_image_paths: list[str] = Field(default_factory=list)
     input_image_path: str | None = None
     mask_image_path: str | None = None
     output_image_path: str
@@ -194,3 +213,8 @@ class DocumentRecord(BaseModel):
     can_redo: bool
     created_at: datetime
     updated_at: datetime
+
+
+class EngineStatus(BaseModel):
+    warm_up: JobStatus | None = None
+    models: list[ModelInfo]

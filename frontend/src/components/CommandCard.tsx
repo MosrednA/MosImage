@@ -1,7 +1,7 @@
 import { Operation, promptPlaceholder, submitLabel } from "../generation/operation";
 import { Icon } from "./Icon";
 
-export interface ActiveReference { name: string; imageUrl: string }
+export interface ActiveReference { id: number; name: string; imageUrl: string }
 
 interface Props {
   operation: Operation;
@@ -10,8 +10,8 @@ interface Props {
   locked: boolean;
   settingsLabel: string;
   prompt: string;
-  reference: ActiveReference | null;
-  onClearReference: () => void;
+  references: readonly ActiveReference[];
+  onRemoveReference: (id: number) => void;
   onPrompt: (prompt: string) => void;
   hint: string;
   cancelled: boolean;
@@ -42,11 +42,13 @@ export function CommandCard(props: Props) {
       <button className="settings-trigger" aria-label="Generation settings" disabled={locked} onClick={props.onSettings}><span>{props.settingsLabel}</span><Icon name="settings" /></button>
     </div>
     <div className="prompt-row">
-      {props.reference && <div className="reference-chip" title={`Using ${props.reference.name} as reference`}>
-        <img crossOrigin="anonymous" src={props.reference.imageUrl} alt="" /><span>{props.reference.name}</span>
-        <button aria-label={`Stop using ${props.reference.name}`} title="Stop using this reference" disabled={locked} onClick={props.onClearReference}><Icon name="close" /></button>
+      {props.references.length > 0 && <div className={"reference-chips" + (props.references.length > 1 ? " several" : "")}>
+        {props.references.map(reference => <div key={reference.id} className="reference-chip" title={`Using ${reference.name} as reference`}>
+          <img crossOrigin="anonymous" src={reference.imageUrl} alt="" /><span>{reference.name}</span>
+          <button aria-label={`Stop using ${reference.name}`} title="Stop using this reference" disabled={locked} onClick={() => props.onRemoveReference(reference.id)}><Icon name="close" /></button>
+        </div>)}
       </div>}
-      <textarea aria-label="Describe your idea" rows={1} disabled={locked} placeholder={promptPlaceholder(operation, hasImage, props.reference?.name ?? null)} value={props.prompt}
+      <textarea aria-label="Describe your idea" rows={1} disabled={locked} placeholder={promptPlaceholder(operation, hasImage, props.references.map(reference => reference.name))} value={props.prompt}
         onChange={event => props.onPrompt(event.target.value)}
         onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); if (props.canSubmit) props.onSubmit(); } }} />
       {props.jobActive

@@ -49,8 +49,11 @@ class ZImageTurboProvider:
             require_generation_device()
             torch = torch_module()
             placement = self._placement_for(request.runtime_mode, request.width, request.height)
+            if self._text_pipe is None or self._text_placement != placement:
+                control.set_phase("loading", self.display_name)
             pipe = self._load_text_pipe(placement)
             control.set_progress(0.15)
+            control.set_phase("generating")
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
             generator = torch.Generator(selected_device(torch)).manual_seed(seed)
 
@@ -89,8 +92,11 @@ class ZImageTurboProvider:
             init_image = Image.open(input_path).convert("RGB")
             mask_image = Image.open(mask_path).convert("L").resize(init_image.size)
             placement = self._inpaint_placement_for(request.runtime_mode)
+            if self._inpaint_pipe is None or self._inpaint_placement != placement:
+                control.set_phase("loading", self.display_name)
             pipe = self._load_inpaint_pipe(placement)
             control.set_progress(0.15)
+            control.set_phase("generating")
             image = pipe(
                 prompt=". ".join(part for part in (request.prompt.strip(), request.scene_context.strip()) if part),
                 negative_prompt=request.negative_prompt,
@@ -125,6 +131,7 @@ class ZImageTurboProvider:
                 if request.task == "inpaint"
                 else self._placement_for(request.runtime_mode, request.width, request.height)
             )
+            control.set_phase("loading", self.display_name)
             if request.task == "inpaint":
                 self._load_inpaint_pipe(placement)
             else:

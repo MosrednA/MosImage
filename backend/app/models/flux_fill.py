@@ -50,6 +50,8 @@ class FluxFillProvider:
             control.raise_if_cancelled()
             require_generation_device()
             torch = self._load_torch()
+            if self._pipe is None:
+                control.set_phase("loading", self.display_name)
             pipe = self._load_pipe()
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
             generator = torch.Generator(selected_device(torch)).manual_seed(seed)
@@ -58,6 +60,7 @@ class FluxFillProvider:
             with Image.open(mask_path) as mask_file:
                 mask = mask_file.convert("L")
             control.set_progress(0.15)
+            control.set_phase("generating")
             image = pipe(
                 prompt=". ".join(part for part in (request.prompt.strip(), request.scene_context.strip()) if part),
                 image=source,
@@ -83,6 +86,7 @@ class FluxFillProvider:
         try:
             control.raise_if_cancelled()
             require_generation_device()
+            control.set_phase("loading", self.display_name)
             self._load_pipe()
             control.set_progress(0.95)
         except JobCancelled:

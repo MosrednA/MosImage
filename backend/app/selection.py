@@ -62,6 +62,11 @@ class ObjectSelector:
             raise
         return SelectionResult(mask_image_url=storage.image_url(storage.to_relative(path)))
 
+    def warm_up(self) -> None:
+        """Load SAM ahead of the first click; it downloads on first use."""
+        with self._lock:
+            self._ensure_model()
+
     def subject_mask(self, image: Image.Image) -> np.ndarray | None:
         """Mask of the main subject of a concept image, or None when unclear.
 
@@ -76,6 +81,13 @@ class ObjectSelector:
         # Nearly empty or nearly full masks mean SAM found no distinct subject.
         return mask if 0.03 <= coverage <= 0.85 else None
 
+    def _ensure_model(self) -> None:
+        if self._model is None:
+            from transformers import Sam2Model, Sam2Processor
+
+            self._processor = Sam2Processor.from_pretrained(self.model_id, token=settings.huggingface_token)
+            self._model = Sam2Model.from_pretrained(self.model_id, token=settings.huggingface_token, use_safetensors=True, trust_remote_code=False).eval()
+
     def _predict(
         self,
         image: Image.Image,
@@ -87,12 +99,11 @@ class ObjectSelector:
         control: JobControl | None = None,
     ) -> np.ndarray:
         import torch
-        from transformers import Sam2Model, Sam2Processor
 
         with self._lock:
-            if self._model is None:
-                self._processor = Sam2Processor.from_pretrained(self.model_id, token=settings.huggingface_token)
-                self._model = Sam2Model.from_pretrained(self.model_id, token=settings.huggingface_token, use_safetensors=True, trust_remote_code=False).eval()
+            if self._model is None and control:
+                control.set_phase("loading", "SAM 2.1 Tiny")
+            self._ensure_model()
             processor, model = self._processor, self._model
             if processor is None:
                 raise RuntimeError("Selection processor was not loaded")

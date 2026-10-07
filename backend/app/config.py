@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     inpaint_max_dimension: int = 1024
     inpaint_context_ratio: float = 0.5
     inpaint_minimum_context: int = 128
+    # Load and warm the Quality model and SAM while the UI opens.
+    warm_up_on_start: bool = True
+    warm_up_model: str = "flux2-klein-4b-nvfp4"
     huggingface_token: str | None = Field(
         default=None,
         validation_alias=AliasChoices("HF_TOKEN", "MOSIMAGE_HF_TOKEN"),

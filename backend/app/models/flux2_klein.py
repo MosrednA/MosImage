@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import gc
+import math
+from collections import OrderedDict
 import random
+import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.config import settings
 from app.jobs import JobCancelled, JobControl
+from app.models.base import ModelReference
 from app.runtime import require_generation_device, selected_device, selected_dtype, torch_module
 from app.schemas import InpaintForm, LoadModelRequest, ModelInfo, RuntimeMode, TextToImageRequest
 
@@ -16,15 +20,29 @@ from app.schemas import InpaintForm, LoadModelRequest, ModelInfo, RuntimeMode, T
 Placement = Literal["cuda", "offload"]
 PipelineTask = Literal["text-to-image", "inpaint"]
 
+# Several references share a token budget: two at this size cost what one
+# 1024 px reference does, and kept both identities in the local trial.
+MULTI_REFERENCE_AREA = 512 * 704
+REFERENCE_BACKGROUND = (232, 232, 232)
+SHARED_COMPONENTS = ("scheduler", "vae", "text_encoder", "tokenizer", "transformer")
+PROMPT_CACHE_SIZE = 8
+GENERIC_REFERENCE_NAME = re.compile(r"^Reference \d+$")
 
-def _inpaint_prompt(request: InpaintForm, with_reference: bool = False) -> str:
+
+def _inpaint_prompt(request: InpaintForm, references: Sequence[str] = ()) -> str:
     if request.edit_operation == "remove":
         instruction = "Remove the selected subject completely and reconstruct the background naturally inside the masked region. " + request.prompt.strip()
     else:
         instruction = request.prompt.strip().rstrip(".") + "."
-        if with_reference:
+        if len(references) == 1:
             instruction += (" The subject is the person or object from the reference image: keep its face, hair, clothing,"
                             " colours and proportions identical to the reference, and show it complete within the selection.")
+        elif references:
+            named = [f"{name} is reference image {index}" for index, name in enumerate(references, 1) if not GENERIC_REFERENCE_NAME.match(name)]
+            instruction += f" The subjects come from the {len(references)} reference images"
+            instruction += (": " + ", ".join(named) + ".") if named else "."
+            instruction += (" Keep each one's face, hair, clothing, colours and proportions identical to their reference,"
+                            " and show them all complete within the selection.")
     instruction += " Match the surrounding lighting, color palette, perspective, texture and depth of field."
     if request.scene_context.strip():
         instruction += " Scene context: " + request.scene_context.strip()
@@ -40,28 +58,46 @@ def _reference_image(path: Path) -> Image.Image:
     return image
 
 
+def _reference_images(paths: Sequence[Path]) -> list[Image.Image]:
+    """One reference keeps its own size; several are padded to one shared size.
+
+    The pipeline crops every reference to the first one's size, so differing
+    aspect ratios would cut people off without the shared padding.
+    """
+    images = [_reference_image(path) for path in paths]
+    if len(images) < 2:
+        return images
+    aspect = sum(image.width / image.height for image in images) / len(images)
+    width = max(16, round(math.sqrt(MULTI_REFERENCE_AREA * aspect) / 16) * 16)
+    height = max(16, round(MULTI_REFERENCE_AREA / width / 16) * 16)
+    return [ImageOps.pad(image, (width, height), Image.Resampling.LANCZOS, color=REFERENCE_BACKGROUND) for image in images]
+
+
 class Flux2KleinProvider:
-    """Generation and mask-conditioned editing with one resident pipeline."""
+    """Generation and mask-conditioned editing on one set of resident weights.
+
+    The text and inpaint pipelines are thin wrappers around the same modules,
+    so switching between them costs neither a reload nor extra memory.
+    """
 
     name = "flux2-klein-4b"
     display_name = "FLUX.2 Klein 4B (BF16)"
     model_id = "black-forest-labs/FLUX.2-klein-4B"
 
     def __init__(self) -> None:
-        self._pipe: Any | None = None
+        self._pipes: dict[PipelineTask, Any] = {}
         self._placement: Placement | None = None
-        self._task: PipelineTask | None = None
         self._torch: Any | None = None
+        self._prompt_cache: OrderedDict[str, Any] = OrderedDict()
 
     def info(self) -> ModelInfo:
-        loaded_pipelines = [f"{self._task}:{self._placement}"] if self._pipe is not None else []
         return ModelInfo(
             name=self.name,
             display_name=self.display_name,
             model_id=self.model_id,
             capabilities=["text-to-image", "inpaint"],
-            loaded=self._pipe is not None,
-            loaded_pipelines=loaded_pipelines,
+            loaded=bool(self._pipes),
+            loaded_pipelines=[f"{task}:{self._placement}" for task in self._pipes],
         )
 
     def generate(self, request: TextToImageRequest, output_path: Path, control: JobControl) -> tuple[int, int]:
@@ -73,8 +109,10 @@ class Flux2KleinProvider:
             control.set_progress(0.15)
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
             generator = torch.Generator(selected_device(torch)).manual_seed(seed)
+            prompt_embeds = self._encode_prompt(pipe, request.prompt, control)
+            control.set_phase("generating")
             image = pipe(
-                prompt=request.prompt,
+                prompt_embeds=prompt_embeds,
                 height=request.height,
                 width=request.width,
                 num_inference_steps=request.steps,
@@ -96,14 +134,16 @@ class Flux2KleinProvider:
         mask_path: Path,
         output_path: Path,
         control: JobControl,
-        reference_path: Path | None = None,
+        references: Sequence[ModelReference] = (),
     ) -> tuple[int, int]:
         try:
             control.raise_if_cancelled()
             require_generation_device()
             torch = self._load_torch()
             pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control)
-            reference = _reference_image(reference_path) if reference_path and request.edit_operation != "remove" else None
+            if request.edit_operation == "remove":
+                references = ()
+            reference_images = _reference_images([reference.path for reference in references])
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
             generator = torch.Generator(selected_device(torch)).manual_seed(seed)
             with Image.open(input_path) as source:
@@ -111,11 +151,14 @@ class Flux2KleinProvider:
             with Image.open(mask_path) as selection:
                 mask_image = selection.convert("L")
             control.set_progress(0.15)
+            prompt_embeds = self._encode_prompt(pipe, _inpaint_prompt(request, [reference.name for reference in references]), control)
+            control.set_phase("generating")
             image = pipe(
                 image=init_image,
                 mask_image=mask_image,
-                **({"image_reference": reference} if reference is not None else {}),
-                prompt=_inpaint_prompt(request, with_reference=reference is not None),
+                # A list of equally sized images becomes one reference token block each.
+                **({"image_reference": reference_images if len(reference_images) > 1 else reference_images[0]} if reference_images else {}),
+                prompt_embeds=prompt_embeds,
                 height=init_image.height,
                 width=init_image.width,
                 num_inference_steps=request.steps,
@@ -135,44 +178,86 @@ class Flux2KleinProvider:
         try:
             control.raise_if_cancelled()
             require_generation_device()
-            self._load_pipe(self._placement_for(request.runtime_mode), request.task, control)
+            placement = self._placement_for(request.runtime_mode)
+            pipe = self._load_pipe(placement, request.task, control)
+            control.set_progress(0.6)
+            if request.warm_up:
+                self._warm_up(pipe, request.task, control)
+                # The other task shares the weights, so having it ready is free.
+                self._load_pipe(placement, "text-to-image" if request.task == "inpaint" else "inpaint", control)
             control.set_progress(0.95)
         except JobCancelled:
             self.unload()
             raise
 
     def unload(self) -> None:
-        self._pipe = None
+        self._pipes = {}
         self._placement = None
-        self._task = None
+        self._prompt_cache.clear()
         self._collect()
+
+    def _encode_prompt(self, pipe: Any, prompt: str, control: JobControl | None = None) -> Any:
+        """Encode each prompt once.
+
+        Under CPU offload every encode moves the 8 GB text encoder onto the GPU
+        and back. Proposals and retries share their prompt, so they skip that.
+        """
+        embeds = self._prompt_cache.get(prompt)
+        if embeds is None:
+            if control is not None:
+                control.set_phase("preparing")
+            embeds = pipe.encode_prompt(prompt=prompt, device=pipe._execution_device)[0]
+            self._prompt_cache[prompt] = embeds
+            while len(self._prompt_cache) > PROMPT_CACHE_SIZE:
+                self._prompt_cache.popitem(last=False)
+        else:
+            self._prompt_cache.move_to_end(prompt)
+        return embeds
+
+    def _warm_up(self, pipe: Any, task: PipelineTask, control: JobControl) -> None:
+        """One tiny step compiles the CUDA kernels the first real edit would wait for (about 3 s)."""
+        control.set_phase("warming", self.display_name)
+        torch = self._load_torch()
+        generator = torch.Generator(selected_device(torch)).manual_seed(0)
+        canvas = Image.new("RGB", (256, 256), REFERENCE_BACKGROUND)
+        extra = {"image": canvas, "mask_image": Image.new("L", canvas.size, 255), "strength": 1.0} if task == "inpaint" else {}
+        pipe(prompt="a quiet garden", height=256, width=256, num_inference_steps=1, guidance_scale=1.0, generator=generator, **extra)
 
     def _load_pipe(self, placement: Placement, task: PipelineTask, control: JobControl) -> Any:
         control.raise_if_cancelled()
-        if self._pipe is not None and (self._placement != placement or self._task != task):
-            self._pipe = None
-            self._placement = None
-            self._task = None
-            self._collect()
-        if self._pipe is None:
+        if self._pipes and self._placement != placement:
+            self.unload()
+        if task in self._pipes:
+            return self._pipes[task]
+        shared = next(iter(self._pipes.values()), None)
+        if shared is None:
+            control.set_phase("loading", self.display_name)
+        pipe = None
+        try:
+            pipe = self._create_pipeline(task, control) if shared is None else self._derive_pipeline(shared, task)
+            control.raise_if_cancelled()
+            if task == "inpaint":
+                # Preserve the inward ramp during latent sampling.
+                pipe.mask_processor.register_to_config(do_binarize=False)
+            self._place_pipeline(pipe, placement)
+            control.raise_if_cancelled()
+        except BaseException:
             pipe = None
-            try:
-                pipe = self._create_pipeline(task, control)
-                control.raise_if_cancelled()
-                if task == "inpaint":
-                    # Preserve the inward ramp during latent sampling.
-                    pipe.mask_processor.register_to_config(do_binarize=False)
-                self._place_pipeline(pipe, placement)
-                control.raise_if_cancelled()
-            except BaseException:
-                pipe = None
+            if shared is None:
                 self._collect()
-                raise
-            # Publish only after loading, placement and cancellation checks.
-            self._pipe = pipe
-            self._placement = placement
-            self._task = task
-        return self._pipe
+            raise
+        # Publish only after loading, placement and cancellation checks.
+        self._pipes[task] = pipe
+        self._placement = placement
+        return pipe
+
+    def _derive_pipeline(self, shared: Any, task: PipelineTask) -> Any:
+        from diffusers import Flux2KleinInpaintPipeline, Flux2KleinPipeline
+
+        pipeline_class = Flux2KleinInpaintPipeline if task == "inpaint" else Flux2KleinPipeline
+        components = {name: getattr(shared, name) for name in SHARED_COMPONENTS}
+        # Direct construction: from_pipe would cast the packed NVFP4 scales.
+        return pipeline_class(**components, is_distilled=shared.config.get("is_distilled", False))
 
     def _create_pipeline(self, task: PipelineTask, control: JobControl) -> Any:
         from diffusers import Flux2KleinInpaintPipeline, Flux2KleinPipeline

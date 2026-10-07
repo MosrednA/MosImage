@@ -343,3 +343,17 @@ small { color: var(--muted); }
   .tool-rail { gap: 2px; padding-top: 5px; } .tool-rail button { height: 45px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+/* Progress detail: one bar segment per proposal. */
+.job-overlay { min-width: min(330px, calc(100% - 28px)); padding-bottom: 18px; }
+.job-overlay > div { flex: 1; min-width: 0; }
+.job-progress { position: absolute; left: 18px; right: 18px; bottom: 8px; display: flex; gap: 4px; height: 3px; }
+.job-progress i { flex: 1; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--fill), #3a4d66 var(--fill)); }
+.engine-status.warming { color: #f3d48f; }
+.engine-status.warming i { background: #f3c96b; animation: engine-pulse 1.2s ease-in-out infinite; }
+.engine-status small { font-family: "Cascadia Code",monospace; font-size: 9px; color: var(--muted); }
+.engine-status.cold i { background: var(--muted); }
+@keyframes engine-pulse { 50% { opacity: .35; } }
+.reference-chips { display: flex; gap: 5px; flex-shrink: 0; align-self: center; }
+.reference-chips.several .reference-chip span { display: none; }
+.reference-card.unavailable img { opacity: .45; }

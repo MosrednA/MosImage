@@ -165,7 +165,7 @@ Object selection also uses SAM's three-mask output only for the first click. Ref
 
 ## Reference images
 
-References put a specific person or object from a concept image into a selection. Diffusers 0.41's `Flux2KleinInpaintPipeline` accepts one `image_reference` and caps it near 1 MP. MosImage sends it at most 1024 px on the long edge. Replace edits only append a short identity instruction to the prompt. Removal and Expand never receive a reference.
+References put a specific person or object from a concept image into a selection. Diffusers 0.41's `Flux2KleinInpaintPipeline` accepts one `image_reference` or a list, and caps each near 1 MP. MosImage sends a single reference at most 1024 px on the long edge. Replace edits only append a short identity instruction to the prompt. Removal and Expand never receive a reference.
 
 Local trial on `data/reference-trial/`, FLUX.2 Klein 4B NVFP4 in Balanced mode on the RTX 5070 Ti. The concepts were made with the Codex CLI image tool. The garden photo had a box selection beside the path and the prompt "sitting on a wooden bench beside the gravel path", with four seeds per variant.
 
@@ -180,3 +180,14 @@ Local trial on `data/reference-trial/`, FLUX.2 Klein 4B NVFP4 in Balanced mode o
 The first run after a model switch adds about 4–5 s. Isolation was 15% faster but less reliable, so it is an optional toggle and the full image stays the default. It uses three SAM points on the vertical centre line, accepts masks between 3% and 85% of the frame, and places the crop on neutral grey.
 
 A UI run with two proposals took 33 s including a cold model load. One proposal was clean. In the other, the face crossed the box edge and was cut by the blend. A subject must fit inside the selection. The hint asks for room for the whole body and its shadow, and two proposals are the default when a reference is picked.
+
+### Several references
+
+The pipeline crops every reference to the first one's size, so MosImage pads them to one shared size with neutral grey and names them in order in the prompt. Trial: two concepts (Anna, Tom), a wider box selection, four seeds per size.
+
+| Size per reference | Warm time per image | Result |
+|---|---|---|
+| 768 × 1024 | 11.9–15.1 s | 4/4 kept both identities |
+| 512 × 704 | 8.6–8.9 s | 4/4 kept both identities |
+
+The smaller size kept both people just as well and is about 30% faster, so it is used whenever there is more than one reference; up to three are allowed. With start-up warm-up and cached prompt encoding, a UI run with two proposals and two references takes about 18 s, or 15 s when repeated. The contact sheet is `data/reference-trial/contact-sheet-multi.jpg`.

@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Sequence
 
 from app.jobs import JobControl
 from app.schemas import InpaintForm, LoadModelRequest, ModelInfo, TextToImageRequest
+
+
+@dataclass(frozen=True)
+class ModelReference:
+    """A concept image the user named, as handed to reference-aware providers."""
+
+    name: str
+    path: Path
 
 
 class ImageModelProvider(Protocol):
@@ -23,6 +32,7 @@ class ImageModelProvider(Protocol):
         mask_path: Path,
         output_path: Path,
         control: JobControl,
+        references: Sequence[ModelReference] = (),
     ) -> tuple[int, int]:
         ...
 

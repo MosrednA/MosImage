@@ -3,8 +3,9 @@ from __future__ import annotations
 import time
 import unittest
 from threading import Event
+from types import SimpleNamespace
 
-from app.jobs import JobControl, JobManager
+from app.jobs import FINISH_SECONDS, Job, JobControl, JobManager, _estimate_remaining
 
 
 def wait_for_status(manager: JobManager, job_id: str, expected: str, timeout: float = 2.0) -> None:
@@ -163,6 +164,96 @@ class JobManagerCancellationTests(unittest.TestCase):
             self.assertFalse(manager.claim_hard_cancel(job.id))
             self.assertEqual(manager.status(job.id).generation_id, 42)
         finally:
+            manager.shutdown()
+
+
+class JobProgressDetailTests(unittest.TestCase):
+    def test_reports_phase_proposal_step_and_an_estimate_once_sampling_runs(self) -> None:
+        manager = JobManager()
+        at_step, release = Event(), Event()
+
+        def work(control: JobControl) -> int:
+            control.set_phase("loading", "FLUX.2 Klein")
+            second = control.slice(1, 2)
+            second.set_progress(0.15)
+            second.set_phase("generating")
+            callback = second.diffusion_callback(total_steps=4)
+            callback(None, 0, None, {})
+            time.sleep(0.3)
+            callback(SimpleNamespace(num_timesteps=3), 1, None, {})
+            at_step.set()
+            release.wait(2)
+            return 1
+
+        try:
+            job = manager.submit("inpaint", work)
+            self.assertTrue(at_step.wait(2))
+            status = manager.status(job.id)
+            self.assertEqual((status.phase, status.item, status.items), ("generating", 2, 2))
+            # Strength below 1 runs fewer timesteps than requested; the pipeline count wins.
+            self.assertEqual((status.step, status.steps), (2, 3))
+            self.assertIsNotNone(status.eta_seconds)
+            self.assertGreater(status.eta_seconds, 0)
+            self.assertGreaterEqual(status.elapsed_seconds, status.phase_elapsed_seconds)
+            release.set()
+            wait_for_status(manager, job.id, "completed")
+        finally:
+            release.set()
+            manager.shutdown()
+
+    def test_estimate_ignores_set_up_in_the_step_time_and_counts_remaining_proposals(self) -> None:
+        # Proposal 1 of 2: step 1 ends 2 s after set-up starts, step 2 one second later, out of 4.
+        job = Job(id="a", kind="inpaint", status="running", phase="generating", item=1, items=2, step=2, steps=4,
+                  item_started_at=0.0, first_step_at=2.0, last_step_at=3.0, prep_seconds=2.0, step_seconds=1.0, item_steps=4)
+        current = 2 * 1.0 + FINISH_SECONDS
+        whole_proposal = 2.0 + 3 * 1.0 + FINISH_SECONDS
+        self.assertAlmostEqual(_estimate_remaining(job, now=3.0), current + whole_proposal)
+
+    def test_estimate_waits_for_a_step_time_unless_a_proposal_finished(self) -> None:
+        first = Job(id="a", kind="inpaint", status="running", phase="generating", item=1, items=2, step=1, steps=4,
+                    item_started_at=0.0, first_step_at=2.0, last_step_at=2.0, prep_seconds=2.0)
+        self.assertIsNone(_estimate_remaining(first, now=2.0))
+        second = Job(id="b", kind="inpaint", status="running", phase="generating", item=2, items=2,
+                     item_started_at=10.0, item_durations=[10.0])
+        self.assertAlmostEqual(_estimate_remaining(second, now=12.0), 8.0)
+
+    def test_prompt_encoding_before_sampling_is_not_timed_as_part_of_a_proposal(self) -> None:
+        manager = JobManager()
+        try:
+            def work(control: JobControl) -> int:
+                for index in range(2):
+                    proposal = control.slice(index, 2)
+                    proposal.set_phase("preparing")
+                    if index == 0:
+                        time.sleep(0.4)  # encoding happens once; the second proposal reuses it
+                    proposal.set_phase("generating")
+                    proposal.set_phase("finishing")
+                return 1
+
+            job = manager.submit("inpaint", work)
+            wait_for_status(manager, job.id, "completed")
+            durations = manager._jobs[job.id].item_durations
+            self.assertEqual(len(durations), 1)
+            self.assertLess(durations[0], 0.2)
+        finally:
+            manager.shutdown()
+
+    def test_queued_job_names_what_it_waits_for_and_selection_skips_the_gpu_queue(self) -> None:
+        manager = JobManager()
+        release = Event()
+        try:
+            warm_up = manager.submit("load-model", lambda control: release.wait(2) and None)
+            wait_for_status(manager, warm_up.id, "running")
+            edit = manager.submit("inpaint", lambda control: 1)
+            self.assertEqual(manager.status(edit.id).waiting_for, "load-model")
+            selection = manager.submit("select", lambda control: None)
+            wait_for_status(manager, selection.id, "completed")
+            self.assertEqual(manager.status(edit.id).status, "queued")
+            release.set()
+            wait_for_status(manager, edit.id, "completed")
+            self.assertIsNone(manager.status(edit.id).waiting_for)
+        finally:
+            release.set()
             manager.shutdown()
 
 

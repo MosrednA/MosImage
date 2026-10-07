@@ -1,24 +1,27 @@
 import { DragEvent, useRef, useState } from "react";
 import { ReferenceRecord, fileUrl } from "../api";
+import { MAX_ACTIVE_REFERENCES } from "../hooks/useReferences";
 import { Icon } from "./Icon";
 
 interface Props {
   references: ReferenceRecord[];
-  activeId: number | null;
+  /** References used in the next edit, in prompt order. */
+  activeIds: readonly number[];
   pending: ReadonlySet<number>;
   uploading: number;
   disabled: boolean;
   note: string | null;
   collapsed: boolean;
   onCollapsed: (collapsed: boolean) => void;
-  onUse: (id: number | null) => void;
+  onUse: (id: number) => void;
   onAdd: (files: File[]) => void;
   onRemove: (id: number) => void;
   onIsolate: (id: number, isolated: boolean) => void;
 }
 
 export function ReferencePanel(props: Props) {
-  const { references, activeId, pending, uploading, disabled, collapsed } = props;
+  const { references, activeIds, pending, uploading, disabled, collapsed } = props;
+  const full = activeIds.length >= MAX_ACTIVE_REFERENCES;
   const picker = useRef<HTMLInputElement>(null);
   const [dropping, setDropping] = useState(false);
 
@@ -47,7 +50,7 @@ export function ReferencePanel(props: Props) {
 
   return <aside className={"reference-panel" + (dropping ? " dropping" : "")} aria-label="References" {...dragHandlers}>
     <header>
-      <div><strong>References</strong><small>{references.length ? "Pick one to place it in your image" : "People, pets or objects"}</small></div>
+      <div><strong>References</strong><small>{references.length > 1 ? `Pick up to ${MAX_ACTIVE_REFERENCES} to place in your image` : references.length ? "Pick it to place it in your image" : "People, pets or objects"}</small></div>
       <button className="icon-button" title="Add reference images" aria-label="Add reference images" disabled={disabled} onClick={() => picker.current?.click()}><Icon name="plus" /></button>
       <button className="icon-button" title="Hide references" aria-label="Hide references" onClick={() => props.onCollapsed(true)}><Icon name="chevronRight" /></button>
     </header>
@@ -61,12 +64,12 @@ export function ReferencePanel(props: Props) {
         <small>Drop images here or click to browse</small>
       </button>}
       {references.map(item => {
-        const active = item.id === activeId, busy = pending.has(item.id), isolated = !!item.subject_url;
-        return <div key={item.id} className={"reference-card" + (active ? " active" : "") + (busy ? " busy" : "")}>
-          <button className="reference-use" aria-pressed={active} disabled={disabled || busy}
-            title={active ? "Stop using this reference" : "Use this reference in your next edit"} onClick={() => props.onUse(active ? null : item.id)}>
+        const order = activeIds.indexOf(item.id) + 1, active = order > 0, busy = pending.has(item.id), isolated = !!item.subject_url;
+        const title = active ? "Stop using this reference" : full ? `Up to ${MAX_ACTIVE_REFERENCES} references per edit. Take one out first.` : "Use this reference in your next edit";
+        return <div key={item.id} className={"reference-card" + (active ? " active" : "") + (busy ? " busy" : "") + (!active && full ? " unavailable" : "")}>
+          <button className="reference-use" aria-pressed={active} disabled={disabled || busy} title={title} onClick={() => props.onUse(item.id)}>
             <img crossOrigin="anonymous" src={fileUrl(item.subject_url ?? item.image_url)} alt="" loading="lazy" />
-            {active && <span className="reference-badge">In use</span>}
+            {active && <span className="reference-badge">{activeIds.length > 1 ? `${order} · In use` : "In use"}</span>}
             {busy && <span className="reference-spinner" aria-label="Working" />}
           </button>
           <div className="reference-meta">

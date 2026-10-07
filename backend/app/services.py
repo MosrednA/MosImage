@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
@@ -13,6 +14,7 @@ from . import references, storage
 from .compositing import prepare_inpaint_workspace
 from .config import settings
 from .jobs import JobControl
+from .models.base import ModelReference
 from .models.registry import registry
 from .models.flux2_klein_nvfp4 import KLEIN_MODELS
 from .schemas import InpaintForm, OutpaintForm, TextToImageRequest
@@ -104,7 +106,11 @@ def _run_masked_edit(
     mask_path = _save_bytes(mask_bytes, settings.mask_dir, "mask", mask_name)
     output_paths: list[Path] = []
     generation_values: list[dict[str, object]] = []
-    reference_path = references.model_image_path(request.reference_id) if request.reference_id and task == "inpaint" else None
+    model_references = [
+        ModelReference(name=record["name"], path=references.model_image_path(record["id"]))
+        for record in (references.get_reference(reference_id) for reference_id in request.reference_ids)
+        if record is not None
+    ] if task == "inpaint" else []
 
     try:
         with TemporaryDirectory(prefix="inpaint-", dir=settings.data_dir) as temporary_dir:
@@ -129,7 +135,7 @@ def _run_masked_edit(
                 )
                 iteration_control = control.slice(index, request.count)
                 # Only reference-aware providers receive the extra argument.
-                extra = {"reference_path": reference_path} if reference_path else {}
+                extra = {"references": model_references} if model_references else {}
                 seed, _model_width = provider.inpaint(
                     iteration,
                     iteration_workspace.model_input_path,
@@ -139,6 +145,7 @@ def _run_masked_edit(
                     **extra,
                 )
                 iteration_control.set_progress(0.97)
+                iteration_control.set_phase("finishing")
                 width, height = iteration_workspace.composite_to(output_path)
                 control.raise_if_cancelled()
                 generation_values.append(
@@ -158,7 +165,7 @@ def _run_masked_edit(
                         "blend_feather": request.blend_feather if task == "inpaint" else None,
                         "context_padding": request.context_padding if task == "inpaint" else None,
                         "scene_context": request.scene_context if task == "inpaint" else None,
-                        "reference_image_path": storage.to_relative(reference_path),
+                        "reference_image_paths": json.dumps([storage.to_relative(reference.path) for reference in model_references]) if model_references else None,
                         "input_image_path": storage.to_relative(input_path),
                         "mask_image_path": storage.to_relative(mask_path),
                         "output_image_path": storage.to_relative(output_path),

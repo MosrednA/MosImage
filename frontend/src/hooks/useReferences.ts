@@ -2,18 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { ReferenceRecord, addReference, deleteReference, listReferences, setReferenceIsolation } from "../api";
 
 const ACCEPTED = new Set(["image/png", "image/jpeg", "image/webp"]);
+/** Matches the backend limit; more references dilute each likeness. */
+export const MAX_ACTIVE_REFERENCES = 3;
 
-/** Concept images of the open document, plus the one used for the next edit. */
+/** Concept images of the open document, plus the ones used for the next edit, in order. */
 export function useReferences(documentId: number | null, onError: (message: string) => void) {
   const [references, setReferences] = useState<ReferenceRecord[]>([]);
-  const [activeId, setActiveId] = useState<number | null>(null);
+  const [activeIds, setActiveIds] = useState<number[]>([]);
   const [pending, setPending] = useState<ReadonlySet<number>>(new Set());
   const [uploading, setUploading] = useState(0);
   const current = useRef(documentId);
   current.current = documentId;
 
   useEffect(() => {
-    setReferences([]); setActiveId(null); setPending(new Set()); setUploading(0);
+    setReferences([]); setActiveIds([]); setPending(new Set()); setUploading(0);
     if (documentId === null) return;
     let disposed = false;
     listReferences(documentId)
@@ -51,7 +53,7 @@ export function useReferences(documentId: number | null, onError: (message: stri
     await withPending(id, async () => {
       await deleteReference(id);
       setReferences(items => items.filter(item => item.id !== id));
-      setActiveId(active => active === id ? null : active);
+      setActiveIds(ids => ids.filter(active => active !== id));
     });
   }
 
@@ -68,8 +70,17 @@ export function useReferences(documentId: number | null, onError: (message: stri
     finally { setPending(ids => { const next = new Set(ids); next.delete(id); return next; }); }
   }
 
-  const active = references.find(item => item.id === activeId) ?? null;
-  return { references, active, setActiveId, pending, uploading, add, remove, setIsolated };
+  /** Adds the reference to the next edit, or takes it out. Returns false at the limit. */
+  function toggle(id: number): boolean {
+    if (activeIds.includes(id)) { setActiveIds(ids => ids.filter(active => active !== id)); return true; }
+    if (activeIds.length >= MAX_ACTIVE_REFERENCES) return false;
+    setActiveIds(ids => [...ids, id]);
+    return true;
+  }
+  function clear() { setActiveIds([]); }
+
+  const active = activeIds.map(id => references.find(item => item.id === id)).filter((item): item is ReferenceRecord => !!item);
+  return { references, active, toggle, clear, pending, uploading, add, remove, setIsolated };
 }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : "The reference could not be updated."; }

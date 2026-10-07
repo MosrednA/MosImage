@@ -120,7 +120,7 @@ class ReferenceApiTests(unittest.TestCase):
     def test_inpaint_rejects_missing_references_and_non_klein_models_before_queueing(self) -> None:
         with isolated_data():
             reference_id = references.create_reference(new_document(), png(Image.new("RGB", (8, 8))), "p.png")["id"]
-            for fields in ({"reference_id": str(reference_id + 5)}, {"reference_id": str(reference_id), "model_name": "z-image-turbo"}):
+            for fields in ({"reference_ids": [str(reference_id), str(reference_id + 5)]}, {"reference_ids": [str(reference_id)], "model_name": "z-image-turbo"}):
                 with self.subTest(fields=fields), patch("app.main.jobs.submit") as submit:
                     response = TestClient(app).post(
                         "/api/inpaint",
@@ -132,9 +132,11 @@ class ReferenceApiTests(unittest.TestCase):
 
 
 class ReferenceGenerationTests(unittest.TestCase):
-    def test_reference_reaches_the_provider_and_is_recorded(self) -> None:
+    def test_references_reach_the_provider_in_order_and_are_recorded(self) -> None:
         with isolated_data():
-            reference_id = references.create_reference(new_document(), png(Image.new("RGB", (20, 40), "orange")), "p.png")["id"]
+            document_id = new_document()
+            reference_id = references.create_reference(document_id, png(Image.new("RGB", (20, 40), "orange")), "Anna.png")["id"]
+            second_id = references.create_reference(document_id, png(Image.new("RGB", (30, 30), "blue")), "Tom.png")["id"]
             source = Image.new("RGB", (64, 64), "purple")
             mask = Image.new("L", source.size, 0)
             mask.paste(255, (16, 16, 48, 48))
@@ -147,25 +149,29 @@ class ReferenceGenerationTests(unittest.TestCase):
 
             provider.inpaint.side_effect = fake_inpaint
             with patch("app.services.registry.activate", return_value=provider):
-                ids = run_inpaint(InpaintForm(prompt="on a bench", reference_id=reference_id), png(source), "s.png", png(mask), "m.png", MagicMock())
-                self.assertEqual(provider.inpaint.call_args.kwargs["reference_path"], references.model_image_path(reference_id))
-                self.assertIsNotNone(storage.get_generation(ids[0])["reference_image_path"])
+                ids = run_inpaint(InpaintForm(prompt="on a bench", reference_ids=[second_id, reference_id]), png(source), "s.png", png(mask), "m.png", MagicMock())
+                passed = provider.inpaint.call_args.kwargs["references"]
+                self.assertEqual([item.name for item in passed], ["Tom", "Anna"])
+                self.assertEqual(passed[1].path, references.model_image_path(reference_id))
+                self.assertEqual(len(storage.get_generation(ids[0])["reference_image_paths"]), 2)
 
                 provider.inpaint.reset_mock()
                 run_inpaint(InpaintForm(prompt="a mushroom"), png(source), "s.png", png(mask), "m.png", MagicMock())
-                self.assertNotIn("reference_path", provider.inpaint.call_args.kwargs)
+                self.assertNotIn("references", provider.inpaint.call_args.kwargs)
 
     def test_prompt_names_the_reference_only_for_replacement(self) -> None:
-        with_reference = _inpaint_prompt(InpaintForm(prompt="sitting on a bench."), with_reference=True)
+        with_reference = _inpaint_prompt(InpaintForm(prompt="sitting on a bench."), ["Anna"])
         self.assertTrue(with_reference.startswith("sitting on a bench. The subject is the person or object from the reference image"))
         self.assertNotIn("reference", _inpaint_prompt(InpaintForm(prompt="sitting on a bench")))
-        self.assertNotIn("reference image", _inpaint_prompt(InpaintForm(prompt="grass", edit_operation="remove"), with_reference=True))
+        self.assertNotIn("reference image", _inpaint_prompt(InpaintForm(prompt="grass", edit_operation="remove"), ["Anna"]))
 
-    def test_expansion_does_not_accept_references(self) -> None:
+    def test_reference_ids_are_validated(self) -> None:
         with self.assertRaises(ValidationError):
-            OutpaintForm(prompt="sky", left=64, reference_id=3)
-        with self.assertRaises(ValidationError):
-            InpaintForm(prompt="x", reference_id=0)
+            OutpaintForm(prompt="sky", left=64, reference_ids=[3])
+        for invalid in ([0], [1, 2, 3, 4]):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                InpaintForm(prompt="x", reference_ids=invalid)
+        self.assertEqual(InpaintForm(prompt="x", reference_ids=[2, 1, 2]).reference_ids, [2, 1])
 
 
 if __name__ == "__main__":

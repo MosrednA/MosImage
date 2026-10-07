@@ -26,7 +26,8 @@ import { WelcomeCanvas } from "./components/WelcomeCanvas";
 import { ShortcutsDialog } from "./components/ShortcutsDialog";
 import { ReferencePanel } from "./components/ReferencePanel";
 import { CancellationRequest, isActiveJob, useJobPolling } from "./hooks/useJobPolling";
-import { useReferences } from "./hooks/useReferences";
+import { MAX_ACTIVE_REFERENCES, useReferences } from "./hooks/useReferences";
+import { useEngineWarmUp } from "./hooks/useEngineWarmUp";
 
 interface JobContext { jobId: string; documentId: number | null; revisionId: number | null; operation: "inpaint" | "outpaint" | null }
 const initialExpansion: Expansion = { left: 128, top: 0, right: 128, bottom: 0 };
@@ -76,9 +77,9 @@ export default function App() {
   const proposalUrls = alternatives.map((item, index) => fileUrl(proposal?.alternatives[index]?.output_image_url ?? item.output_image_url));
   const previewUrl = chosen && !compare ? proposalUrls[selected] : null;
   const task = taskFor(operation);
-  // A reference applies to Replace edits only; Remove and Expand ignore it.
-  const reference = operation === "replace" && source ? refs.active : null;
-  const referenceNeedsQuality = !!reference && !isKleinModel(settings.model_name);
+  // References apply to Replace edits only; Remove and Expand ignore them.
+  const references = operation === "replace" && source ? refs.active : [];
+  const referenceNeedsQuality = references.length > 0 && !isKleinModel(settings.model_name);
   const cudaBlocked = !!system && (!system.torch_available || (system.preferred_device === "cuda" && !system.cuda_available && !system.allow_cpu_generation));
 
   useEffect(() => {
@@ -98,6 +99,7 @@ export default function App() {
     } catch { setOnline(false); setError("The local engine is unavailable. Start MosImage with start.cmd, then reconnect."); }
   }
   useEffect(() => { void connect(); }, []);
+  const warmUp = useEngineWarmUp(online, setModels);
 
   // Debounced autosave of the document name.
   useEffect(() => {
@@ -216,9 +218,10 @@ export default function App() {
     }
     setOperation("expand");
   }
-  function chooseReference(id: number | null) {
-    refs.setActiveId(id);
-    if (id === null) return;
+  function chooseReference(id: number) {
+    const wasActive = refs.active.some(item => item.id === id);
+    if (!refs.toggle(id)) { setError(`Use up to ${MAX_ACTIVE_REFERENCES} references per edit. Take one out first.`); return; }
+    if (wasActive) return;
     if (operation !== "replace") setOperation("replace");
     // References need FLUX.2 Klein; two proposals make a good likeness easy to pick.
     setSettings(current => {
@@ -273,7 +276,7 @@ export default function App() {
         form.set("blend_feather", "0");
         form.set("context_padding", String(settings.context_padding));
         form.set("scene_context", settings.scene_context);
-        if (reference) form.set("reference_id", String(reference.id));
+        for (const item of references) form.append("reference_ids", String(item.id));
         queued(await inpaintImage(form), "inpaint");
       } else throw new Error("Select the area you want to change first.");
     });
@@ -326,12 +329,12 @@ export default function App() {
     ? expansionValid && !!settings.prompt.trim()
     : (operation === "remove" || !!settings.prompt.trim()) && (task === "text-to-image" || !!mask) && !referenceNeedsQuality);
   const hint = referenceNeedsQuality ? "References need the Quality model. Choose Quality in generation settings."
-    : operationHint(operation, !!source, !!mask, tool, reference?.name ?? null);
+    : operationHint(operation, !!source, !!mask, tool, references.map(item => item.name));
   const referenceNote = operation === "expand" ? "References are used for Replace edits. Leave Expand to place one."
-    : operation === "remove" && refs.active ? "Switch to Replace to place the selected reference." : null;
+    : operation === "remove" && refs.active.length ? "Switch to Replace to place the selected references." : null;
 
   return <main className={"focus-app" + (document ? " with-references" : "")}>
-    <TopBar document={document} onRename={name => document && setDocument({ ...document, name })} online={online} system={system} locked={locked} canExport={!!source}
+    <TopBar document={document} onRename={name => document && setDocument({ ...document, name })} online={online} system={system} warmUp={warmUp} locked={locked} canExport={!!source}
       onUndo={() => void perform(() => travel("undo"))} onRedo={() => void perform(() => travel("redo"))}
       onOpen={() => upload.current?.click()} onLibrary={() => setLibraryOpen(true)} onExport={exportImage} />
     <input ref={upload} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={onFile} />
@@ -352,7 +355,7 @@ export default function App() {
         ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} />
         : <CommandCard operation={operation} onOperation={setOperation} hasImage={!!source} locked={locked}
           settingsLabel={settingsSummary(settings, task)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
-          reference={reference && { name: reference.name, imageUrl: fileUrl(reference.subject_url ?? reference.image_url) }} onClearReference={() => refs.setActiveId(null)}
+          references={references.map(item => ({ id: item.id, name: item.name, imageUrl: fileUrl(item.subject_url ?? item.image_url) }))} onRemoveReference={id => refs.toggle(id)}
           hint={hint} cancelled={job?.status === "cancelled"} jobActive={jobActive} cancelling={cancelling} canSubmit={canSubmit}
           onCanvasSize={() => setPanel("expansion")} onSettings={() => setPanel("settings")} onSubmit={() => void submit()} onCancel={() => void cancel()} />}
       {(cudaBlocked || error) && <div className="error-notice" role="alert">
@@ -361,7 +364,7 @@ export default function App() {
         {error && <button className="icon-button" aria-label="Dismiss message" onClick={() => setError(null)}><Icon name="close" /></button>}
       </div>}
     </section>
-    {document && <ReferencePanel references={refs.references} activeId={refs.active?.id ?? null} pending={refs.pending} uploading={refs.uploading}
+    {document && <ReferencePanel references={refs.references} activeIds={refs.active.map(item => item.id)} pending={refs.pending} uploading={refs.uploading}
       disabled={locked || operation === "expand"} note={referenceNote} collapsed={referencesCollapsed} onCollapsed={collapseReferences}
       onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null) chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}
     {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} task={task} disabled={locked} /></ControlDialog>}

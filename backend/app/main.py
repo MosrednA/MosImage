@@ -22,6 +22,7 @@ from .schemas import (
     AlternativeProposalRequest,
     DocumentRecord,
     DocumentUpdate,
+    EngineStatus,
     InpaintForm,
     OutpaintForm,
     ReferenceRecord,
@@ -42,8 +43,14 @@ documents.ensure_document_storage()
 references.ensure_reference_storage()
 
 
+warm_up_job_id: str | None = None
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global warm_up_job_id
+    if settings.warm_up_on_start:
+        warm_up_job_id = jobs.submit("load-model", _warm_up_engine).id
     try:
         yield
     finally:
@@ -82,6 +89,11 @@ def health() -> dict[str, str]:
 @app.get("/api/system")
 def system() -> dict:
     return system_info()
+
+
+@app.get("/api/engine", response_model=EngineStatus)
+def engine() -> EngineStatus:
+    return EngineStatus(warm_up=jobs.status(warm_up_job_id) if warm_up_job_id else None, models=registry.list())
 
 
 @app.get("/api/models", response_model=list[ModelInfo])
@@ -125,7 +137,7 @@ async def inpaint(
     blend_feather: float = Form(16),
     context_padding: int = Form(320),
     scene_context: str = Form(""),
-    reference_id: int | None = Form(None),
+    reference_ids: list[int] = Form([]),
     image: UploadFile = File(...),
     mask: UploadFile = File(...),
 ) -> JobResponse:
@@ -144,13 +156,13 @@ async def inpaint(
             blend_feather=blend_feather,
             context_padding=context_padding,
             scene_context=scene_context,
-            reference_id=reference_id,
+            reference_ids=reference_ids,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if request.reference_id is not None:
-        if references.get_reference(request.reference_id) is None:
-            raise HTTPException(status_code=422, detail="The selected reference no longer exists.")
+    if request.reference_ids:
+        if any(references.get_reference(reference_id) is None for reference_id in request.reference_ids):
+            raise HTTPException(status_code=422, detail="A selected reference no longer exists.")
         if request.model_name not in KLEIN_MODELS:
             raise HTTPException(status_code=422, detail="References need the Quality model (FLUX.2 Klein).")
     image_bytes = await image.read()
@@ -381,6 +393,15 @@ def restore_reference_background(reference_id: int) -> dict:
         return references.clear_subject(reference_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _warm_up_engine(control: JobControl) -> None:
+    """Load SAM and the Quality model before the first click or edit."""
+    control.set_phase("loading", "SAM 2.1 Tiny")
+    selector.warm_up()
+    control.set_progress(0.2)
+    request = LoadModelRequest(model_name=settings.warm_up_model, task="inpaint", warm_up=True)
+    _preload_model(request, control.subrange(0.2, 1.0))
 
 
 def _preload_model(request: LoadModelRequest, control: JobControl) -> None:

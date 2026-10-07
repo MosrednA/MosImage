@@ -1,21 +1,21 @@
+import { CSSProperties } from "react";
 import { JobStatus } from "../api";
+import { describeJob } from "../generation/progress";
 
 export function JobOverlay({ job }: { job: JobStatus | null }) {
-  const cancelling = job?.status === "cancelling";
-  const detail = cancelling ? "Stopping the operation and releasing memory…"
-    : job?.kind === "select" ? "The selection model downloads on first use"
-      : (job?.progress ?? 0) <= .05 ? "The first run may take longer while the model loads"
-        : "Your preview will appear as soon as it is ready";
+  const text = job ? describeJob(job) : { title: "Opening image…", detail: "", percent: null };
+  const items = job?.items ?? 1;
   return <div className="job-overlay" role="status">
     <span className="spinner" />
-    <div><strong>{job ? jobLabel(job) : "Opening image…"}</strong><small>{detail}</small></div>
-    {job && !cancelling && <output>{Math.round(job.progress * 100)}%</output>}
+    <div><strong>{text.title}</strong>{text.detail && <small>{text.detail}</small>}</div>
+    {text.percent !== null && <output>{text.percent}%</output>}
+    {text.percent !== null && <span className="job-progress" aria-hidden="true">
+      {/* One segment per proposal, so two proposals read as two halves. */}
+      {Array.from({ length: items }, (_, index) => <i key={index} style={{ "--fill": `${segmentFill(job!.progress, index, items) * 100}%` } as CSSProperties} />)}
+    </span>}
   </div>;
 }
 
-function jobLabel(job: JobStatus): string {
-  if (job.status === "cancelling") return "Cancelling…";
-  if (job.status === "queued") return "Waiting for the local engine…";
-  if (job.kind === "select") return "Selecting object…";
-  return job.progress <= .05 ? "Loading model…" : job.kind === "outpaint" ? "Expanding your image…" : "Creating your proposals…";
+function segmentFill(progress: number, index: number, count: number): number {
+  return Math.min(Math.max(progress * count - index, 0), 1);
 }
