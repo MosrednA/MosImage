@@ -401,6 +401,8 @@ small { color: var(--muted); }
 .layer-tools .icon-button { width: 29px; height: 29px; padding: 5px; }
 .layer-tools .icon-button svg { width: 16px; height: 16px; }
 .layer-unmask { padding: 6px 8px; font-size: 11px; }
+.layer-blend { gap: 6px; padding: 7px 8px; font-size: 11px; }
+.layer-blend svg { width: 15px; height: 15px; }
 
 /* Layers: on the canvas */
 .layer-stage { position: absolute; inset: 0; pointer-events: none; }

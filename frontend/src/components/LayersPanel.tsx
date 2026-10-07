@@ -20,6 +20,9 @@ interface Props {
   onReorder: (id: string, index: number) => void;
   onReset: (id: string) => void;
   onInvertMask: (id: string) => void;
+  onBlend: (id: string) => void;
+  /** Visible layers make AI results arrive as layers instead of changing the background. */
+  aiOnLayers: boolean;
 }
 
 const LAYER_DRAG_TYPE = "application/x-mosimage-layer";
@@ -89,7 +92,7 @@ export function LayersPanel(props: Props) {
       <div role="option" aria-selected={activeId === null} tabIndex={0} className={"layer-row background" + (activeId === null ? " active" : "")}
         onClick={() => props.onSelect(null)} onKeyDown={event => { if (event.key === "Enter") props.onSelect(null); }}>
         <span className="layer-thumb">{props.backgroundUrl && <img src={props.backgroundUrl} alt="" draggable={false} />}</span>
-        <span className="layer-name">Background<small>AI edits change this</small></span>
+        <span className="layer-name">Background<small>{props.aiOnLayers ? "AI results arrive as layers" : "AI edits change this"}</small></span>
       </div>
     </div>
     {active && <LayerProperties key={active.id} {...props} layer={active} />}
@@ -97,7 +100,7 @@ export function LayersPanel(props: Props) {
   </div>;
 }
 
-function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDuplicate, onReset, onInvertMask }: Props & { layer: LayerRecord }) {
+function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDuplicate, onReset, onInvertMask, onBlend }: Props & { layer: LayerRecord }) {
   const [opacity, setOpacity] = useState(Math.round(layer.opacity * 100));
   useEffect(() => setOpacity(Math.round(layer.opacity * 100)), [layer.opacity]);
   const commitOpacity = () => { if (opacity / 100 !== layer.opacity) onUpdate(layer.id, { opacity: opacity / 100 }, "Change opacity"); };
@@ -118,6 +121,8 @@ function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDup
       <button className="icon-button" disabled={disabled} title="Duplicate layer" aria-label="Duplicate layer" onClick={() => onDuplicate(layer.id)}><Icon name="duplicate" /></button>
       <button className="icon-button" disabled={disabled} title="Delete layer · Delete" aria-label="Delete layer" onClick={() => onRemove(layer.id)}><Icon name="trash" /></button>
     </div>
+    <button className="layer-blend" disabled={disabled || !layer.visible} title={layer.visible ? "Let the AI match its light, colours, shadows and edges to the picture" : "Show the layer to blend it in"}
+      onClick={() => onBlend(layer.id)}><Icon name="spark" />Blend in</button>
     {layer.mask_url && <button className="layer-unmask" disabled={disabled} onClick={() => onUpdate(layer.id, { mask_path: null, mask_url: null }, "Show whole layer")}>Show the whole layer again</button>}
   </section>;
 }

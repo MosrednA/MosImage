@@ -38,6 +38,16 @@ export function duplicateLayer(layers: LayerRecord[], id: string): { layers: Lay
   return { layers: [...layers.slice(0, index + 1), copy, ...layers.slice(index + 1)], copy };
 }
 
+/**
+ * Adds an AI result: on top of the stack, or just above the layer it blends
+ * in, which is then hidden so the blended version replaces it.
+ */
+export function insertResult(layers: LayerRecord[], result: LayerRecord, replaces: string | null): LayerRecord[] {
+  const index = replaces ? layers.findIndex(layer => layer.id === replaces) : -1;
+  if (index < 0) return [...layers, result];
+  return [...layers.slice(0, index), { ...layers[index], visible: false }, result, ...layers.slice(index + 1)];
+}
+
 /** The topmost visible layer under a canvas point; `solid` can reject transparent pixels. */
 export function layerAt<T extends LayerRecord>(layers: T[], point: Point, solid: (layer: T) => boolean = () => true): T | null {
   for (let index = layers.length - 1; index >= 0; index -= 1) {

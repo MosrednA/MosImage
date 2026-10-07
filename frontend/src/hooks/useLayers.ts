@@ -2,7 +2,7 @@ import { Dispatch, MutableRefObject, SetStateAction, useEffect, useRef, useState
 import { DocumentRecord, LayerRecord, getDocument, saveLayers, uploadLayerAsset } from "../api";
 import { canvasBlob } from "../layers/bitmaps";
 import { initialPlacement } from "../layers/geometry";
-import { MAX_LAYERS, duplicateLayer, layerName, moveLayer, newLayerId, patchLayer } from "../layers/stack";
+import { MAX_LAYERS, duplicateLayer, insertResult, layerName, moveLayer, newLayerId, patchLayer } from "../layers/stack";
 
 const ACCEPTED = new Set(["image/png", "image/jpeg", "image/webp"]);
 const NUDGE_SETTLE = 450;
@@ -114,6 +114,34 @@ export function useLayers(
     }
   }
 
+  /**
+   * Adds the selected part of an AI result as a masked layer at its place.
+   * With `replaces`, it goes just above that layer, which is hidden.
+   */
+  async function addResult(image: Blob, mask: Blob, name: string, center: { x: number; y: number }, replaces: string | null): Promise<LayerRecord | null> {
+    const start = documentRef.current;
+    if (!start) return null;
+    if (currentLayers().length >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one to apply this result.`);
+    setUploading(count => count + 1);
+    try {
+      const [asset, maskAsset] = await Promise.all([
+        uploadLayerAsset(start.id, image, "image", "result.png"),
+        uploadLayerAsset(start.id, mask, "mask", "mask.png"),
+      ]);
+      if (documentRef.current?.id !== start.id) return null;
+      const layer: LayerRecord = {
+        id: newLayerId(), name: name.slice(0, 80), image_path: asset.path, image_url: asset.url,
+        mask_path: maskAsset.path, mask_url: maskAsset.url, width: asset.width, height: asset.height,
+        x: center.x, y: center.y, scale_x: 1, scale_y: 1, rotation: 0, opacity: 1, visible: true,
+      };
+      commit(insertResult(currentLayers(), layer, replaces), replaces ? "Blend layer in" : "Add AI result");
+      setActiveId(layer.id);
+      return layer;
+    } finally {
+      setUploading(count => count - 1);
+    }
+  }
+
   /** Stores a new mask (coverage in alpha) for a layer. */
   async function setMask(id: string, mask: HTMLCanvasElement | Blob | null, label: string) {
     const start = documentRef.current;
@@ -173,7 +201,7 @@ export function useLayers(
   return {
     layers, active, activeId, select: setActiveId, uploading,
     commit, update, preview, cancelPreview, nudge, settled,
-    addImages, addImage, setMask, remove, duplicate, reorder,
+    addImages, addImage, addResult, setMask, remove, duplicate, reorder,
   };
 }
 

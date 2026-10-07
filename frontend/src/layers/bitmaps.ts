@@ -77,18 +77,77 @@ export async function flatten(background: CanvasImageSource, size: ImageSize, la
   const canvas = blankCanvas(size.width, size.height);
   const context = canvas.getContext("2d")!;
   context.drawImage(background, 0, 0, size.width, size.height);
-  for (const layer of layers) {
-    const composed = blankCanvas(layer.width, layer.height);
-    composeLayer(composed, layer.image, layer.mask);
-    context.save();
-    context.globalAlpha = layer.opacity;
-    context.translate(layer.x, layer.y);
-    context.rotate((layer.rotation * Math.PI) / 180);
-    context.scale(layer.scale_x, layer.scale_y);
-    context.drawImage(composed, -layer.width / 2, -layer.height / 2);
-    context.restore();
-  }
+  for (const layer of layers) drawLayer(context, layer, layer.opacity);
   return canvasBlob(canvas);
+}
+
+/** Draws a layer through its mask at its place on the canvas. */
+function drawLayer(context: CanvasRenderingContext2D, layer: FlatLayer, opacity: number): void {
+  const composed = blankCanvas(layer.width, layer.height);
+  composeLayer(composed, layer.image, layer.mask);
+  context.save();
+  context.globalAlpha = opacity;
+  context.translate(layer.x, layer.y);
+  context.rotate((layer.rotation * Math.PI) / 180);
+  context.scale(layer.scale_x, layer.scale_y);
+  context.drawImage(composed, -layer.width / 2, -layer.height / 2);
+  context.restore();
+}
+
+/**
+ * Where a layer shows on the canvas, grown by `grow` px and softened by
+ * `soften` px, as a greyscale selection mask: what "Blend in" lets the AI redo.
+ */
+export async function layerFootprint(size: ImageSize, layer: FlatLayer, grow: number, soften: number): Promise<Blob> {
+  const shape = blankCanvas(size.width, size.height);
+  const context = shape.getContext("2d", { willReadFrequently: true })!;
+  // Blurring and then keeping every touched pixel grows the shape by about the blur radius.
+  const drawn = blankCanvas(size.width, size.height);
+  drawLayer(drawn.getContext("2d")!, layer, 1);
+  context.filter = `blur(${grow / 2}px)`;
+  context.drawImage(drawn, 0, 0);
+  context.filter = "none";
+  const pixels = context.getImageData(0, 0, size.width, size.height);
+  thresholdAlpha(pixels.data, 8);
+  context.putImageData(pixels, 0, 0);
+
+  const selection = blankCanvas(size.width, size.height);
+  const output = selection.getContext("2d")!;
+  output.fillStyle = "black";
+  output.fillRect(0, 0, size.width, size.height);
+  output.filter = `blur(${soften}px)`;
+  output.drawImage(shape, 0, 0);
+  return canvasBlob(selection);
+}
+
+/** Makes every pixel with more than `cutoff` alpha fully white and the rest transparent. */
+export function thresholdAlpha(data: Uint8ClampedArray, cutoff: number): void {
+  for (let index = 0; index < data.length; index += 4) {
+    data[index] = data[index + 1] = data[index + 2] = 255;
+    data[index + 3] = data[index + 3] > cutoff ? 255 : 0;
+  }
+}
+
+export interface Patch { image: Blob; mask: Blob; box: ImageBox }
+
+/**
+ * The selected part of an AI result as a layer: the result cropped to the
+ * selection, with the soft selection as its mask so it can be shown again.
+ */
+export async function selectionPatch(result: CanvasImageSource, size: ImageSize, selection: Blob): Promise<Patch | null> {
+  const mask = await createImageBitmap(selection);
+  const maskCanvas = blankCanvas(size.width, size.height);
+  const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true })!;
+  maskContext.drawImage(mask, 0, 0, size.width, size.height);
+  mask.close();
+  const box = maskBounds(maskContext.getImageData(0, 0, size.width, size.height));
+  if (!box) return null;
+  const image = blankCanvas(box.width, box.height);
+  image.getContext("2d")!.drawImage(result, box.x, box.y, box.width, box.height, 0, 0, box.width, box.height);
+  const cropped = blankCanvas(box.width, box.height);
+  cropped.getContext("2d")!.drawImage(maskCanvas, box.x, box.y, box.width, box.height, 0, 0, box.width, box.height);
+  const [imageBlob, maskBlob] = await Promise.all([canvasBlob(image), canvasBlob(cropped)]);
+  return { image: imageBlob, mask: maskBlob, box };
 }
 
 export interface Cutout { blob: Blob; box: ImageBox }
