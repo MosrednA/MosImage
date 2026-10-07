@@ -44,6 +44,7 @@ def ensure_storage() -> None:
         settings.document_dir,
         settings.revision_dir,
         settings.reference_dir,
+        settings.layer_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
     with connect() as db:

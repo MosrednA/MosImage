@@ -1,4 +1,4 @@
-export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help" | "person" | "plus" | "trash" | "scissors" | "chevronLeft" | "chevronRight";
+export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help" | "person" | "plus" | "trash" | "scissors" | "chevronLeft" | "chevronRight" | "layers" | "transform" | "flipH" | "flipV" | "duplicate" | "rotate" | "reset" | "image";
 
 const paths: Record<IconName, string> = {
   object: "M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5M8 9l4-2 4 2v6l-4 2-4-2z",
@@ -26,6 +26,14 @@ const paths: Record<IconName, string> = {
   scissors: "M6 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12",
   chevronLeft: "M15 6l-6 6 6 6",
   chevronRight: "M9 6l6 6-6 6",
+  layers: "M12 3l9 5-9 5-9-5zM3 12.5l9 5 9-5M3 17l9 5 9-5",
+  transform: "M4 4h4v4H4zM16 4h4v4h-4zM4 16h4v4H4zM16 16h4v4h-4zM8 6h8M8 18h8M6 8v8M18 8v8",
+  flipH: "M12 3v18M9 6L3 18h6zM15 6l6 12h-6z",
+  flipV: "M3 12h18M6 9L18 3v6zM6 15l12 6v-6z",
+  duplicate: "M8 8h12v12H8zM4 16V4h12",
+  rotate: "M20 12a8 8 0 11-2.3-5.7M20 4v5h-5",
+  reset: "M4 12a8 8 0 108-8 8 8 0 00-6 2.7M4 4v5h5",
+  image: "M4 5h16v14H4zM4 16l5-5 4 4 2-2 5 5M15 9.5a1.5 1.5 0 100-.01",
 };
 
 export function Icon({ name }: { name: IconName }) {

@@ -15,7 +15,7 @@ from starlette.responses import Response
 from pydantic import ValidationError
 from PIL import Image
 
-from . import documents, references, storage
+from . import documents, layers, references, storage
 from .config import settings
 from .jobs import JobCancelled, JobControl, jobs
 from .models.registry import registry
@@ -27,6 +27,8 @@ from .schemas import (
     DocumentUpdate,
     EngineStatus,
     InpaintForm,
+    LayerAsset,
+    LayersUpdate,
     OutpaintForm,
     ReferenceRecord,
     SelectionRequest,
@@ -320,6 +322,30 @@ async def create_document_revision(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@app.post("/api/v2/documents/{document_id}/layer-assets", response_model=LayerAsset)
+async def upload_layer_asset(document_id: int, image: UploadFile = File(...), kind: str = Form("image")) -> dict:
+    if kind not in {"image", "mask"}:
+        raise HTTPException(status_code=422, detail="Unsupported layer asset")
+    if documents.get_document(document_id) is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        return layers.save_asset(await image.read(), kind)  # type: ignore[arg-type]
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.put("/api/v2/documents/{document_id}/layers", response_model=DocumentRecord)
+def save_document_layers(document_id: int, request: LayersUpdate) -> dict:
+    try:
+        return documents.save_layers(
+            document_id, request.base_revision_id, [layer.model_dump() for layer in request.layers], request.label
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409 if "changed" in str(exc) else 422, detail=str(exc)) from exc
+
+
 @app.post("/api/v2/documents/{document_id}/alternatives", response_model=RevisionRecord)
 def create_alternative_proposal(document_id: int, request: AlternativeProposalRequest) -> dict:
     try:
@@ -328,6 +354,7 @@ def create_alternative_proposal(document_id: int, request: AlternativeProposalRe
             request.generation_ids,
             request.operation_type,
             request.base_revision_id,
+            (request.layer_offset_x, request.layer_offset_y),
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

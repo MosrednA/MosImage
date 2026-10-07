@@ -1,4 +1,4 @@
-import { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { SelectionPoint } from "../api";
 import { Icon } from "../components/Icon";
 import { DEFAULT_EXPAND, autoSoften } from "../masks/maskRefine";
@@ -6,11 +6,22 @@ import { paddedContextBox } from "./context";
 import { ImageSize, viewportPointToImage } from "./coordinates";
 import { BRUSH_RANGE, CanvasToolbar } from "./CanvasToolbar";
 import { SelectionBar } from "./SelectionBar";
-import { CanvasTool, TOOLS, isMaskTool } from "./tools";
+import { CanvasTool, LAYER_STATUS, TOOLS, isMaskTool } from "./tools";
 import { useMaskLayer } from "./useMaskLayer";
 import { useViewport } from "./useViewport";
 
 export type { CanvasTool } from "./tools";
+
+/** What the layer stage needs from the editor view. */
+export interface LayerView {
+  zoom: number;
+  size: ImageSize;
+  brushSize: number;
+  hide: boolean;
+  /** Pointer input goes to the layers instead of the AI selection. */
+  interactive: boolean;
+  trackCursor: (clientX: number, clientY: number) => void;
+}
 
 interface EditorCanvasProps {
   imageUrl: string | null;
@@ -31,6 +42,11 @@ interface EditorCanvasProps {
   contextPadding: number;
   onContextPadding: (padding: number) => void;
   onHelp: () => void;
+  /** A layer is selected: the tools edit its mask instead of the AI selection. */
+  layerActive: boolean;
+  layerPointCount: number;
+  onUndoLayerPoint: () => void;
+  renderLayers: (view: LayerView) => ReactNode;
 }
 
 export function EditorCanvas(props: EditorCanvasProps) {
@@ -46,16 +62,19 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const [maskVisible, setMaskVisible] = useState(true);
   const [subtract, setSubtract] = useState(false);
   const [spacePan, setSpacePan] = useState(false);
+  const [layerHide, setLayerHide] = useState(true);
+  const { layerActive } = props;
   const soften = softenOverride ?? (imageSize ? autoSoften(imageSize.width, imageSize.height) : 0);
   const panning = tool === "move" || spacePan;
   const viewport = useViewport(stageRef, surfaceRef, imageSize, panning);
   const { zoom, displaySize } = viewport;
   const mask = useMaskLayer({
-    imageUrl, imageSize, disabled, brushSize, edges: { expand, soften }, zoom,
+    imageUrl, imageSize, disabled: disabled || layerActive, brushSize, edges: { expand, soften }, zoom,
     clearToken: props.clearToken, maskImportUrl: props.maskImportUrl, onMaskChange: props.onMaskChange, onError: props.onError,
   });
   const contextBox = mask.selectionBounds && imageSize ? paddedContextBox(mask.selectionBounds, imageSize, contextPadding) : null;
   const editing = !reviewing && !!imageSize;
+  const layerInput = (layerActive || tool === "transform") && !panning;
 
   useEffect(() => {
     const typing = (target: EventTarget | null) => target instanceof HTMLElement && !!target.closest("input, textarea, select, [contenteditable], dialog");
@@ -76,6 +95,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
         const factor = event.key === "]" ? 1.2 : 1 / 1.2;
         setBrushSize(size => Math.round(Math.min(Math.max(size * factor, BRUSH_RANGE.min), BRUSH_RANGE.max)));
       } else if (event.key.toLowerCase() === "q") setMaskVisible(visible => !visible);
+      else if (layerActive) return;
       else if (event.key === "Escape" && (mask.hasSelection || points.length)) props.onClearSelection();
       else if (event.key === "Backspace" && tool === "object" && points.length) { event.preventDefault(); props.onRemovePoint(points.length - 1); }
     };
@@ -110,9 +130,13 @@ export function EditorCanvas(props: EditorCanvasProps) {
     if (point && !disabled) props.onObjectPoint({ ...point, label: 0 });
   }
 
-  function moveCursor(event: ReactPointerEvent<HTMLCanvasElement>) {
+  function trackCursor(clientX: number, clientY: number) {
     const cursor = cursorRef.current, surface = surfaceRef.current?.getBoundingClientRect();
-    if (cursor && surface) cursor.style.transform = `translate(${event.clientX - surface.left}px, ${event.clientY - surface.top}px)`;
+    if (cursor && surface) cursor.style.transform = `translate(${clientX - surface.left}px, ${clientY - surface.top}px)`;
+  }
+
+  function moveCursor(event: ReactPointerEvent<HTMLCanvasElement>) {
+    trackCursor(event.clientX, event.clientY);
     mask.gesture.update(event);
   }
 
@@ -121,8 +145,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
   return (
     <section className="editor-canvas" aria-label="Image editor">
       <CanvasToolbar tool={tool} reviewing={reviewing} disabled={disabled}
-        brushSize={brushSize} onBrushSize={setBrushSize} subtract={subtract} onSubtract={setSubtract}
-        pointCount={points.length} onUndoPoint={() => props.onRemovePoint(points.length - 1)}
+        brushSize={brushSize} onBrushSize={setBrushSize}
+        subtract={layerActive ? layerHide : subtract} onSubtract={layerActive ? setLayerHide : setSubtract} modeLabels={layerActive ? ["Restore", "Hide"] : undefined}
+        pointCount={layerActive ? props.layerPointCount : points.length} onUndoPoint={layerActive ? props.onUndoLayerPoint : () => props.onRemovePoint(points.length - 1)}
         zoom={zoom} fitToStage={viewport.fitToStage} atActualSize={!viewport.fitToStage && viewport.manualZoom === 1} onZoom={value => viewport.setZoom(value)} onFit={viewport.fit} />
       {editing && mask.hasSelection && <SelectionBar disabled={disabled}
         expand={expand} onExpand={setExpand} soften={soften} softenAuto={softenOverride === null} onSoften={setSoftenOverride}
@@ -135,6 +160,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
         {imageUrl && imageSize && displaySize ? (
           <div ref={surfaceRef} className={"editor-surface" + (brushCursor ? " brush-cursor-active" : "")} style={{ width: displaySize.width, height: displaySize.height }}>
             <img src={previewImageUrl || imageUrl} alt={imageName || "Source image"} draggable={false} />
+            {props.renderLayers({ zoom, size: imageSize, brushSize, hide: layerHide, interactive: layerInput && editing, trackCursor })}
             <canvas
               ref={mask.canvasRef}
               className="mask-draw"
@@ -142,7 +168,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
               height={imageSize.height}
               data-tool={tool}
               aria-label="Selection canvas"
-              style={{ pointerEvents: disabled || panning ? "none" : undefined, opacity: mask.drawing && !reviewing ? undefined : 0 }}
+              style={{ pointerEvents: disabled || panning || layerInput ? "none" : undefined, opacity: mask.drawing && !reviewing ? undefined : 0 }}
               onPointerDown={beginGesture}
               onPointerMove={moveCursor}
               onPointerUp={mask.gesture.finish}
@@ -153,7 +179,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
               style={{ opacity: reviewing || mask.drawing || !maskVisible ? 0 : 1 }} />
             {brushCursor && <div ref={cursorRef} className="brush-cursor" style={{ width: brushSize * zoom, height: brushSize * zoom, margin: -brushSize * zoom / 2 }} />}
             {!reviewing && showContext && contextBox && <div className="context-boundary" aria-label="Protected context boundary" style={{ left: contextBox.x * zoom, top: contextBox.y * zoom, width: contextBox.width * zoom, height: contextBox.height * zoom }}><span>Context · stays unchanged</span></div>}
-            {!reviewing && maskVisible && points.map((point, index) => <button key={`${index}-${point.x}-${point.y}`} type="button"
+            {!reviewing && maskVisible && !layerActive && points.map((point, index) => <button key={`${index}-${point.x}-${point.y}`} type="button"
               className={`selection-point ${point.label ? "positive" : "negative"}`} style={{ left: point.x * zoom, top: point.y * zoom }}
               disabled={disabled} aria-label={`Remove ${point.label ? "include" : "exclude"} point ${index + 1}`} title="Click to remove this point"
               onPointerDown={event => event.stopPropagation()} onClick={() => props.onRemovePoint(index)}>
@@ -171,7 +197,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
 
       <footer className="canvas-status">
         <span>{imageSize ? `${imageSize.width} × ${imageSize.height} px` : "No document"}</span>
-        <span>{reviewing ? "← → to compare proposals · Apply to save" : spacePan ? "Drag to pan" : TOOLS[tool].status}</span>
+        <span>{reviewing ? "← → to compare proposals · Apply to save" : spacePan ? "Drag to pan" : (layerActive ? LAYER_STATUS[tool] : TOOLS[tool].status)}</span>
         <button className="status-help" onClick={props.onHelp} title="Keyboard shortcuts · ?"><Icon name="help" /><span>Shortcuts</span></button>
       </footer>
     </section>

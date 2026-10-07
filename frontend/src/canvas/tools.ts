@@ -1,7 +1,7 @@
 import { IconName } from "../components/Icon";
 
 export type MaskTool = "brush" | "eraser" | "rectangle" | "lasso";
-export type CanvasTool = MaskTool | "move" | "object";
+export type CanvasTool = MaskTool | "move" | "object" | "transform";
 
 export const MASK_TOOLS: readonly MaskTool[] = ["brush", "eraser", "rectangle", "lasso"];
 
@@ -17,7 +17,19 @@ export const TOOLS: Record<CanvasTool, ToolInfo> = {
   eraser: { label: "Eraser", icon: "eraser", key: "E", status: "Paint to remove from the selection · [ ] size" },
   lasso: { label: "Lasso", icon: "lasso", key: "L", status: "Draw around an area · Alt subtracts" },
   rectangle: { label: "Box", icon: "rectangle", key: "M", status: "Drag a box · Alt subtracts" },
+  transform: { label: "Transform", icon: "transform", key: "T", status: "Click a layer to select it · Drag to move · Handles scale, stretch and rotate" },
   move: { label: "Pan", icon: "move", key: "V", status: "Drag to pan · Ctrl + scroll zooms" },
+};
+
+/** What the tools do when a layer is selected: they edit its mask instead of the AI selection. */
+export const LAYER_STATUS: Record<CanvasTool, string> = {
+  object: "Click the part of the layer to keep · Right-click to exclude",
+  brush: "Paint to bring hidden parts of the layer back · [ ] size",
+  eraser: "Paint to hide parts of the layer · [ ] size",
+  lasso: "Draw around an area to hide or restore it · Alt switches",
+  rectangle: "Drag a box to hide or restore it · Alt switches",
+  transform: "Drag to move · Corners scale (Shift stretches) · Edges stretch · Shift snaps rotation",
+  move: "Drag to pan · Ctrl + scroll zooms",
 };
 
 /** Rail order: selection tools first, navigation last. */

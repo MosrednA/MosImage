@@ -115,11 +115,37 @@ export interface DocumentRecord {
   color_profile: string;
   current_revision_id: number | null;
   current_image_url: string | null;
+  /** Layers above the background, bottom first. */
+  layers: LayerRecord[];
   can_undo: boolean;
   can_redo: boolean;
   created_at: string;
   updated_at: string;
 }
+
+/** One image layer: centre in canvas pixels, scale (negative flips) and rotation in degrees. */
+export interface LayerState {
+  id: string;
+  name: string;
+  image_path: string;
+  mask_path: string | null;
+  x: number;
+  y: number;
+  scale_x: number;
+  scale_y: number;
+  rotation: number;
+  opacity: number;
+  visible: boolean;
+}
+
+export interface LayerRecord extends LayerState {
+  width: number;
+  height: number;
+  image_url: string;
+  mask_url: string | null;
+}
+
+export interface LayerAsset { path: string; url: string; width: number; height: number }
 
 export interface ReferenceRecord {
   id: number;
@@ -274,11 +300,12 @@ export async function proposeAlternatives(
   generationIds: number[],
   operationType: "generate" | "inpaint" | "outpaint",
   baseRevisionId?: number,
+  layerOffset: { x: number; y: number } = { x: 0, y: 0 },
 ): Promise<RevisionRecord> {
   return request(`/api/v2/documents/${documentId}/alternatives`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ generation_ids: generationIds, operation_type: operationType, base_revision_id: baseRevisionId }),
+    body: JSON.stringify({ generation_ids: generationIds, operation_type: operationType, base_revision_id: baseRevisionId, layer_offset_x: layerOffset.x, layer_offset_y: layerOffset.y }),
   });
 }
 
@@ -295,6 +322,24 @@ export async function acceptAlternative(
 
 export async function listReferences(documentId: number): Promise<ReferenceRecord[]> {
   return request(`/api/v2/documents/${documentId}/references`);
+}
+
+export async function uploadLayerAsset(documentId: number, image: Blob, kind: "image" | "mask", filename = "layer.png"): Promise<LayerAsset> {
+  const form = new FormData();
+  form.set("image", image, filename);
+  form.set("kind", kind);
+  return request(`/api/v2/documents/${documentId}/layer-assets`, { method: "POST", body: form });
+}
+
+/** Saves the layer stack as an undoable revision; fails with 409 when the document moved on. */
+export async function saveLayers(documentId: number, baseRevisionId: number, layers: LayerState[], label: string): Promise<DocumentRecord> {
+  const body = layers.map(({ id, name, image_path, mask_path, x, y, scale_x, scale_y, rotation, opacity, visible }) =>
+    ({ id, name, image_path, mask_path, x, y, scale_x, scale_y, rotation, opacity, visible }));
+  return request(`/api/v2/documents/${documentId}/layers`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_revision_id: baseRevisionId, layers: body, label }),
+  });
 }
 
 export async function addReference(documentId: number, image: File): Promise<ReferenceRecord> {

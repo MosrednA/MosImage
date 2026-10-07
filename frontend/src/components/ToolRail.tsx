@@ -24,6 +24,7 @@ export function ToolRail({ hasImage, tool, expanding, locked, onNew, onTool, onE
     <div className="rail-divider" />
     {RAIL_TOOLS.map(toolButton)}
     <div className="rail-divider" />
+    {toolButton("transform")}
     <button className={expanding ? "active" : ""} aria-pressed={expanding} title="Expand canvas (C)" disabled={!hasImage || locked} onClick={onExpand}><Icon name="expand" /><span>Expand</span></button>
     {toolButton("move")}
   </nav>;

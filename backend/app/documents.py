@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from PIL import Image
 
+from . import layers as layer_store
 from . import storage
 from .config import settings
 
@@ -58,8 +59,12 @@ CREATE INDEX IF NOT EXISTS alternatives_revision_idx ON alternatives(revision_id
 
 
 def ensure_document_storage() -> None:
+    layer_store.ensure_layer_storage()
     with storage.connect() as db:
         db.executescript(DOCUMENT_SCHEMA)
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(revisions)")}
+        if "layers" not in columns:
+            db.execute("ALTER TABLE revisions ADD COLUMN layers TEXT NOT NULL DEFAULT '[]'")
         db.commit()
 
 
@@ -189,6 +194,7 @@ def create_alternative_proposal(
     generation_ids: list[int],
     operation_type: str,
     base_revision_id: int | None = None,
+    layer_offset: tuple[int, int] = (0, 0),
 ) -> dict[str, Any]:
     if len(set(generation_ids)) != len(generation_ids):
         raise ValueError("Alternative generation IDs must be unique")
@@ -225,6 +231,7 @@ def create_alternative_proposal(
             copied_mask = _copy_revision_asset(_absolute_path(mask_relative), "mask")
 
         with storage.connect() as db:
+            parent_layers = _layers_of(db, document["current_revision_id"])
             revision_id = _insert_revision(
                 db,
                 document_id=document_id,
@@ -234,6 +241,7 @@ def create_alternative_proposal(
                 mask_path=storage.to_relative(copied_mask),
                 parameters={"generation_ids": generation_ids},
                 accepted=False,
+                layers=layer_store.shifted(parent_layers, *layer_offset) if operation_type == "outpaint" else parent_layers,
             )
             for generation, path in zip(resolved, copied_paths, strict=True):
                 db.execute(
@@ -299,6 +307,32 @@ def accept_alternative(document_id: int, revision_id: int, alternative_id: int) 
     return get_document(document_id) or _missing_document(document_id)
 
 
+def save_layers(document_id: int, base_revision_id: int, layers: list[dict[str, Any]], label: str) -> dict[str, Any]:
+    """Records a new layer stack over the current background as an undoable revision."""
+    checked = layer_store.validate(layers)
+    with storage.connect() as db:
+        document = db.execute("SELECT current_revision_id FROM documents WHERE id = ?", (document_id,)).fetchone()
+        if document is None:
+            raise LookupError("Document not found")
+        if document["current_revision_id"] != base_revision_id:
+            raise ValueError("The document changed. Try again.")
+        base = db.execute("SELECT composite_image_path FROM revisions WHERE id = ?", (base_revision_id,)).fetchone()
+        revision_id = _insert_revision(
+            db,
+            document_id=document_id,
+            parent_revision_id=base_revision_id,
+            operation_type="layers",
+            composite_path=base["composite_image_path"],
+            mask_path=None,
+            parameters={"label": label},
+            accepted=True,
+            layers=checked,
+        )
+        _set_current_revision(db, document_id, revision_id)
+        db.commit()
+    return get_document(document_id) or _missing_document(document_id)
+
+
 def undo(document_id: int) -> dict[str, Any]:
     with storage.connect() as db:
         row = db.execute(
@@ -351,10 +385,11 @@ def _document_record(db: Connection, row: Row) -> dict[str, Any]:
     current = None
     if current_revision_id is not None:
         current = db.execute(
-            "SELECT composite_image_path, parent_revision_id FROM revisions WHERE id = ?",
+            "SELECT composite_image_path, parent_revision_id, layers FROM revisions WHERE id = ?",
             (current_revision_id,),
         ).fetchone()
     record["current_image_url"] = storage.image_url(current["composite_image_path"]) if current else None
+    record["layers"] = layer_store.records(current["layers"]) if current else []
     record["can_undo"] = bool(current and current["parent_revision_id"] is not None)
     record["can_redo"] = bool(
         current_revision_id is not None
@@ -375,6 +410,7 @@ def _revision_record(db: Connection, row: Row) -> dict[str, Any]:
     record["accepted"] = bool(record["accepted"])
     record["operation_parameters"] = json.loads(record["operation_parameters"])
     record["composite_image_url"] = storage.image_url(record["composite_image_path"])
+    record["layers"] = layer_store.records(record.get("layers"))
     alternatives = db.execute(
         "SELECT * FROM alternatives WHERE revision_id = ? ORDER BY id",
         (record["id"],),
@@ -401,15 +437,19 @@ def _insert_revision(
     mask_path: str | None,
     parameters: dict[str, object],
     accepted: bool,
+    layers: list[dict[str, Any]] | None = None,
 ) -> int:
     if composite_path is None:
         raise ValueError("A revision image is required")
+    # Background edits keep the layers that were above them.
+    if layers is None:
+        layers = _layers_of(db, parent_revision_id)
     cursor = db.execute(
         """
         INSERT INTO revisions
             (document_id, parent_revision_id, operation_type, composite_image_path,
-             mask_image_path, operation_parameters, accepted)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+             mask_image_path, operation_parameters, accepted, layers)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             document_id,
@@ -419,9 +459,17 @@ def _insert_revision(
             mask_path,
             json.dumps(parameters),
             int(accepted),
+            json.dumps(layers),
         ),
     )
     return int(cursor.lastrowid)
+
+
+def _layers_of(db: Connection, revision_id: int | None) -> list[dict[str, Any]]:
+    if revision_id is None:
+        return []
+    row = db.execute("SELECT layers FROM revisions WHERE id = ?", (revision_id,)).fetchone()
+    return layer_store.parse(row["layers"]) if row else []
 
 
 def _set_current_revision(db: Connection, document_id: int, revision_id: int) -> None:

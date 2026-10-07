@@ -8,6 +8,8 @@ interface Props {
   onBrushSize: (size: number) => void;
   subtract: boolean;
   onSubtract: (subtract: boolean) => void;
+  /** Names for the two Lasso/Box modes; the second is the subtracting one. */
+  modeLabels?: [string, string];
   pointCount: number;
   onUndoPoint: () => void;
   zoom: number;
@@ -30,8 +32,8 @@ export function CanvasToolbar(props: Props) {
       <output>{props.brushSize}px</output>
     </label>}
     {!reviewing && (tool === "rectangle" || tool === "lasso") && <div className="segmented compact" aria-label="Selection mode">
-      <button aria-pressed={!props.subtract} disabled={disabled} onClick={() => props.onSubtract(false)}>Add</button>
-      <button aria-pressed={props.subtract} disabled={disabled} title="Or hold Alt" onClick={() => props.onSubtract(true)}>Subtract</button>
+      <button aria-pressed={!props.subtract} disabled={disabled} onClick={() => props.onSubtract(false)}>{props.modeLabels?.[0] ?? "Add"}</button>
+      <button aria-pressed={props.subtract} disabled={disabled} title="Or hold Alt" onClick={() => props.onSubtract(true)}>{props.modeLabels?.[1] ?? "Subtract"}</button>
     </div>}
     {!reviewing && tool === "object" && props.pointCount > 0 && <>
       <span className="point-count">{props.pointCount} {props.pointCount === 1 ? "point" : "points"}</span>

@@ -11,8 +11,6 @@ interface Props {
   uploading: number;
   disabled: boolean;
   note: string | null;
-  collapsed: boolean;
-  onCollapsed: (collapsed: boolean) => void;
   onUse: (id: number) => void;
   onAdd: (files: File[]) => void;
   onRemove: (id: number) => void;
@@ -20,7 +18,7 @@ interface Props {
 }
 
 export function ReferencePanel(props: Props) {
-  const { references, activeIds, pending, uploading, disabled, collapsed } = props;
+  const { references, activeIds, pending, uploading, disabled } = props;
   const full = activeIds.length >= MAX_ACTIVE_REFERENCES;
   const picker = useRef<HTMLInputElement>(null);
   const [dropping, setDropping] = useState(false);
@@ -29,7 +27,7 @@ export function ReferencePanel(props: Props) {
     event.preventDefault(); event.stopPropagation(); setDropping(false);
     if (disabled) return;
     const files = Array.from(event.dataTransfer.files);
-    if (files.length) { props.onAdd(files); props.onCollapsed(false); }
+    if (files.length) props.onAdd(files);
   }
   const dragHandlers = {
     onDragOver: (event: DragEvent<HTMLElement>) => { event.preventDefault(); event.stopPropagation(); if (!disabled) setDropping(true); },
@@ -39,20 +37,10 @@ export function ReferencePanel(props: Props) {
   const input = <input ref={picker} className="visually-hidden" type="file" multiple accept="image/png,image/jpeg,image/webp"
     onChange={event => { const files = Array.from(event.target.files ?? []); if (files.length) props.onAdd(files); event.target.value = ""; }} />;
 
-  if (collapsed) {
-    return <aside className={"reference-panel collapsed" + (dropping ? " dropping" : "")} aria-label="References" {...dragHandlers}>
-      <button className="reference-expand" title="Show references" aria-label={`Show references (${references.length})`} onClick={() => props.onCollapsed(false)}>
-        <Icon name="chevronLeft" /><Icon name="person" />{references.length > 0 && <span className="reference-count">{references.length}</span>}
-      </button>
-      {input}
-    </aside>;
-  }
-
-  return <aside className={"reference-panel" + (dropping ? " dropping" : "")} aria-label="References" {...dragHandlers}>
+  return <div className={"reference-panel" + (dropping ? " dropping" : "")} {...dragHandlers}>
     <header>
-      <div><strong>References</strong><small>{references.length > 1 ? `Pick up to ${MAX_ACTIVE_REFERENCES} to place in your image` : references.length ? "Pick it to place it in your image" : "People, pets or objects"}</small></div>
+      <div><small>{references.length > 1 ? `Pick up to ${MAX_ACTIVE_REFERENCES} to place in your image` : references.length ? "Pick it to place it in your image" : "People, pets or objects"}</small></div>
       <button className="icon-button" title="Add reference images" aria-label="Add reference images" disabled={disabled} onClick={() => picker.current?.click()}><Icon name="plus" /></button>
-      <button className="icon-button" title="Hide references" aria-label="Hide references" onClick={() => props.onCollapsed(true)}><Icon name="chevronRight" /></button>
     </header>
     {input}
     {props.note && <p className="reference-note">{props.note}</p>}
@@ -85,5 +73,5 @@ export function ReferencePanel(props: Props) {
       {references.length > 0 && <button className="reference-add" disabled={disabled} onClick={() => picker.current?.click()}><Icon name="plus" />Add more</button>}
     </div>
     {dropping && <div className="reference-drop">Drop to add references</div>}
-  </aside>;
+  </div>;
 }

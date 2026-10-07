@@ -1,7 +1,7 @@
 import { ControlDialog } from "./ControlDialog";
 
 const GROUPS: [string, [string, string][]][] = [
-  ["Tools", [["O", "Object selection"], ["B", "Brush"], ["E", "Eraser"], ["L", "Lasso"], ["M", "Box"], ["V", "Pan"], ["C", "Expand canvas"]]],
+  ["Tools", [["O", "Object selection"], ["B", "Brush"], ["E", "Eraser"], ["L", "Lasso"], ["M", "Box"], ["T", "Transform layers"], ["V", "Pan"], ["C", "Expand canvas"]]],
   ["Selection", [
     ["Click / right-click", "Include / exclude an object point"],
     ["Click a marker", "Remove that point"],
@@ -12,13 +12,22 @@ const GROUPS: [string, [string, string][]][] = [
     ["Ctrl + I", "Invert the selection"],
     ["Esc", "Clear the selection"],
   ]],
+  ["Layers", [
+    ["Ctrl + V", "Paste an image as a layer"],
+    ["Ctrl + J", "Copy the selection to a layer"],
+    ["Shift + drag a corner", "Stretch freely"],
+    ["Shift + rotate", "Snap to 15°"],
+    ["Arrows / Shift + arrows", "Nudge 1 px / 10 px"],
+    ["Delete", "Delete the layer"],
+    ["Esc", "Back to the background"],
+  ]],
   ["View", [["Space + drag", "Pan with any tool"], ["Ctrl + scroll", "Zoom at the cursor"], ["Ctrl + 0", "Fit to window"], ["Ctrl + 1", "Actual pixels"]]],
   ["Edit", [
     ["Ctrl + Enter", "Generate, or apply a proposal"],
     ["← →", "Previous / next proposal"],
     ["Ctrl + Z", "Undo the selection, then the image"],
     ["Ctrl + Shift + Z", "Redo"],
-    ["Ctrl + O / Ctrl + V", "Open / paste an image"],
+    ["Ctrl + O", "Open an image"],
   ]],
 ];
 

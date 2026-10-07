@@ -72,5 +72,9 @@ class Settings(BaseSettings):
     def reference_dir(self) -> Path:
         return self.image_dir / "references"
 
+    @property
+    def layer_dir(self) -> Path:
+        return self.image_dir / "layers"
+
 
 settings = Settings()

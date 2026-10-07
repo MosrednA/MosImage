@@ -172,6 +172,53 @@ class AlternativeProposalRequest(BaseModel):
     generation_ids: list[int] = Field(min_length=1, max_length=4)
     operation_type: Literal["generate", "inpaint", "outpaint"]
     base_revision_id: int | None = None
+    # Expand adds this much canvas on the left and top; layers move along with the content.
+    layer_offset_x: int = Field(default=0, ge=0)
+    layer_offset_y: int = Field(default=0, ge=0)
+
+
+class LayerState(BaseModel):
+    """One image layer: centre position in canvas pixels, scale (negative flips) and rotation in degrees."""
+
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")
+    name: str = Field(min_length=1, max_length=80)
+    image_path: str
+    mask_path: str | None = None
+    x: float
+    y: float
+    scale_x: float = 1.0
+    scale_y: float = 1.0
+    rotation: float = 0.0
+    opacity: float = Field(default=1.0, ge=0, le=1)
+    visible: bool = True
+
+    @field_validator("scale_x", "scale_y")
+    @classmethod
+    def usable_scale(cls, value: float) -> float:
+        if not 0.005 <= abs(value) <= 50:
+            raise ValueError("Layer scale must stay between 0.5% and 5000%")
+        return value
+
+
+class LayerRecord(LayerState):
+    width: int
+    height: int
+    image_url: str
+    mask_url: str | None = None
+
+
+class LayersUpdate(BaseModel):
+    base_revision_id: int
+    layers: list[LayerState] = Field(max_length=32)
+    # Short description of the change, such as "Move layer".
+    label: str = Field(default="Edit layers", max_length=60)
+
+
+class LayerAsset(BaseModel):
+    path: str
+    url: str
+    width: int
+    height: int
 
 
 class AlternativeRecord(BaseModel):
@@ -199,6 +246,7 @@ class RevisionRecord(BaseModel):
     accepted: bool
     created_at: datetime
     alternatives: list[AlternativeRecord] = Field(default_factory=list)
+    layers: list[LayerRecord] = Field(default_factory=list)
 
 
 class DocumentRecord(BaseModel):
@@ -209,6 +257,8 @@ class DocumentRecord(BaseModel):
     color_profile: str
     current_revision_id: int | None = None
     current_image_url: str | None = None
+    # Layers above the background in the current revision, bottom first.
+    layers: list[LayerRecord] = Field(default_factory=list)
     can_undo: bool
     can_redo: bool
     created_at: datetime
