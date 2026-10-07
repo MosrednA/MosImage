@@ -53,10 +53,12 @@ class InpaintForm(BaseModel):
     blend_feather: float = Field(default=16, ge=0, le=64, allow_inf_nan=False)
     context_padding: int = Field(default=320, ge=32, le=1024)
     scene_context: str = Field(default="", max_length=1500)
+    reference_id: int | None = Field(default=None, ge=1)
 
 
 class OutpaintForm(InpaintForm):
     model_config = ConfigDict(extra="forbid")
+    reference_id: None = None
     model_name: str = "z-image-turbo"
     steps: int = Field(default=8, ge=1, le=100)
     guidance: float = Field(default=0.0, ge=0.0, le=30.0)
@@ -124,10 +126,22 @@ class GenerationRecord(BaseModel):
     blend_feather: float | None = None
     context_padding: int | None = None
     scene_context: str | None = None
+    reference_image_path: str | None = None
     input_image_path: str | None = None
     mask_image_path: str | None = None
     output_image_path: str
     output_image_url: str
+    created_at: datetime
+
+
+class ReferenceRecord(BaseModel):
+    id: int
+    document_id: int
+    name: str
+    width: int
+    height: int
+    image_url: str
+    subject_url: str | None = None
     created_at: datetime
 
 

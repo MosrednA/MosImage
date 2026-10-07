@@ -10,8 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from pydantic import ValidationError
+from PIL import Image
 
-from . import documents, storage
+from . import documents, references, storage
 from .config import settings
 from .jobs import JobCancelled, JobControl, jobs
 from .models.registry import registry
@@ -23,6 +24,7 @@ from .schemas import (
     DocumentUpdate,
     InpaintForm,
     OutpaintForm,
+    ReferenceRecord,
     SelectionRequest,
     JobResponse,
     JobStatus,
@@ -31,11 +33,13 @@ from .schemas import (
     RevisionRecord,
     TextToImageRequest,
 )
+from .models.flux2_klein_nvfp4 import KLEIN_MODELS
 from .services import run_inpaint, run_outpaint, run_text_to_image
 from .selection import selector
 
 storage.ensure_storage()
 documents.ensure_document_storage()
+references.ensure_reference_storage()
 
 
 @asynccontextmanager
@@ -121,6 +125,7 @@ async def inpaint(
     blend_feather: float = Form(16),
     context_padding: int = Form(320),
     scene_context: str = Form(""),
+    reference_id: int | None = Form(None),
     image: UploadFile = File(...),
     mask: UploadFile = File(...),
 ) -> JobResponse:
@@ -139,9 +144,15 @@ async def inpaint(
             blend_feather=blend_feather,
             context_padding=context_padding,
             scene_context=scene_context,
+            reference_id=reference_id,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if request.reference_id is not None:
+        if references.get_reference(request.reference_id) is None:
+            raise HTTPException(status_code=422, detail="The selected reference no longer exists.")
+        if request.model_name not in KLEIN_MODELS:
+            raise HTTPException(status_code=422, detail="References need the Quality model (FLUX.2 Klein).")
     image_bytes = await image.read()
     mask_bytes = await mask.read()
     job = jobs.submit(
@@ -324,6 +335,52 @@ def redo_document(document_id: int) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/v2/documents/{document_id}/references", response_model=list[ReferenceRecord])
+def list_document_references(document_id: int) -> list[dict]:
+    return references.list_references(document_id)
+
+
+@app.post("/api/v2/documents/{document_id}/references", response_model=ReferenceRecord)
+async def add_document_reference(document_id: int, image: UploadFile = File(...)) -> dict:
+    try:
+        return references.create_reference(document_id, await image.read(), image.filename)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/api/v2/references/{reference_id}")
+def delete_document_reference(reference_id: int) -> dict[str, str]:
+    try:
+        references.delete_reference(reference_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"status": "deleted"}
+
+
+@app.post("/api/v2/references/{reference_id}/subject", response_model=ReferenceRecord)
+def isolate_reference_subject(reference_id: int) -> dict:
+    try:
+        source_path = references.original_image_path(reference_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    with Image.open(source_path) as source:
+        image = source.convert("RGB")
+    mask = selector.subject_mask(image)
+    if mask is None:
+        raise HTTPException(status_code=422, detail="No clear subject found. Crop the image around the subject and add it again.")
+    return references.set_subject(reference_id, references.extract_subject(image, mask))
+
+
+@app.delete("/api/v2/references/{reference_id}/subject", response_model=ReferenceRecord)
+def restore_reference_background(reference_id: int) -> dict:
+    try:
+        return references.clear_subject(reference_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _preload_model(request: LoadModelRequest, control: JobControl) -> None:

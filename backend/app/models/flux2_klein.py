@@ -17,15 +17,27 @@ Placement = Literal["cuda", "offload"]
 PipelineTask = Literal["text-to-image", "inpaint"]
 
 
-def _inpaint_prompt(request: InpaintForm) -> str:
+def _inpaint_prompt(request: InpaintForm, with_reference: bool = False) -> str:
     if request.edit_operation == "remove":
         instruction = "Remove the selected subject completely and reconstruct the background naturally inside the masked region. " + request.prompt.strip()
     else:
         instruction = request.prompt.strip().rstrip(".") + "."
+        if with_reference:
+            instruction += (" The subject is the person or object from the reference image: keep its face, hair, clothing,"
+                            " colours and proportions identical to the reference, and show it complete within the selection.")
     instruction += " Match the surrounding lighting, color palette, perspective, texture and depth of field."
     if request.scene_context.strip():
         instruction += " Scene context: " + request.scene_context.strip()
     return instruction
+
+
+def _reference_image(path: Path) -> Image.Image:
+    with Image.open(path) as reference:
+        image = reference.convert("RGB")
+    # The pipeline caps references near one megapixel anyway; shrinking once
+    # here keeps large phone photos cheap to decode for every proposal.
+    image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+    return image
 
 
 class Flux2KleinProvider:
@@ -84,12 +96,14 @@ class Flux2KleinProvider:
         mask_path: Path,
         output_path: Path,
         control: JobControl,
+        reference_path: Path | None = None,
     ) -> tuple[int, int]:
         try:
             control.raise_if_cancelled()
             require_generation_device()
             torch = self._load_torch()
             pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control)
+            reference = _reference_image(reference_path) if reference_path and request.edit_operation != "remove" else None
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
             generator = torch.Generator(selected_device(torch)).manual_seed(seed)
             with Image.open(input_path) as source:
@@ -100,7 +114,8 @@ class Flux2KleinProvider:
             image = pipe(
                 image=init_image,
                 mask_image=mask_image,
-                prompt=_inpaint_prompt(request),
+                **({"image_reference": reference} if reference is not None else {}),
+                prompt=_inpaint_prompt(request, with_reference=reference is not None),
                 height=init_image.height,
                 width=init_image.width,
                 num_inference_steps=request.steps,

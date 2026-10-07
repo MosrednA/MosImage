@@ -42,12 +42,13 @@ def ensure_storage() -> None:
         settings.output_dir,
         settings.document_dir,
         settings.revision_dir,
+        settings.reference_dir,
     ]:
         directory.mkdir(parents=True, exist_ok=True)
     with connect() as db:
         db.execute(SCHEMA)
         _add_column_if_missing(db, "generations", "runtime_mode", "TEXT NOT NULL DEFAULT 'balanced'")
-        for column, definition in (("edit_operation", "TEXT"), ("blend_feather", "REAL"), ("context_padding", "INTEGER"), ("scene_context", "TEXT")):
+        for column, definition in (("edit_operation", "TEXT"), ("blend_feather", "REAL"), ("context_padding", "INTEGER"), ("scene_context", "TEXT"), ("reference_image_path", "TEXT")):
             _add_column_if_missing(db, "generations", column, definition)
         db.commit()
 

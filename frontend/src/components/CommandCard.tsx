@@ -1,6 +1,8 @@
 import { Operation, promptPlaceholder, submitLabel } from "../generation/operation";
 import { Icon } from "./Icon";
 
+export interface ActiveReference { name: string; imageUrl: string }
+
 interface Props {
   operation: Operation;
   onOperation: (operation: "replace" | "remove") => void;
@@ -8,6 +10,8 @@ interface Props {
   locked: boolean;
   settingsLabel: string;
   prompt: string;
+  reference: ActiveReference | null;
+  onClearReference: () => void;
   onPrompt: (prompt: string) => void;
   hint: string;
   cancelled: boolean;
@@ -38,7 +42,11 @@ export function CommandCard(props: Props) {
       <button className="settings-trigger" aria-label="Generation settings" disabled={locked} onClick={props.onSettings}><span>{props.settingsLabel}</span><Icon name="settings" /></button>
     </div>
     <div className="prompt-row">
-      <textarea aria-label="Describe your idea" rows={1} disabled={locked} placeholder={promptPlaceholder(operation, hasImage)} value={props.prompt}
+      {props.reference && <div className="reference-chip" title={`Using ${props.reference.name} as reference`}>
+        <img crossOrigin="anonymous" src={props.reference.imageUrl} alt="" /><span>{props.reference.name}</span>
+        <button aria-label={`Stop using ${props.reference.name}`} title="Stop using this reference" disabled={locked} onClick={props.onClearReference}><Icon name="close" /></button>
+      </div>}
+      <textarea aria-label="Describe your idea" rows={1} disabled={locked} placeholder={promptPlaceholder(operation, hasImage, props.reference?.name ?? null)} value={props.prompt}
         onChange={event => props.onPrompt(event.target.value)}
         onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); if (props.canSubmit) props.onSubmit(); } }} />
       {props.jobActive

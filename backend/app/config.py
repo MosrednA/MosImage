@@ -56,5 +56,9 @@ class Settings(BaseSettings):
     def revision_dir(self) -> Path:
         return self.image_dir / "revisions"
 
+    @property
+    def reference_dir(self) -> Path:
+        return self.image_dir / "references"
+
 
 settings = Settings()

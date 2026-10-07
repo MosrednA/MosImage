@@ -162,3 +162,21 @@ Users could still see where the mask had been. Two causes were addressed.
 **VAE colour drift.** Klein's untouched latents still pass through the VAE, which shifts colour and saturation slightly. A patch can show a uniform cast next to exact source pixels. `correct_color_drift` compares generated and source pixels in the unselected ring, skipping 12 px beyond any visible alpha and transparent outpaint padding. It extrapolates the difference with normalized Gaussian convolution at 128 px working size, clamps it to ±24 levels and adds it to the generated crop before compositing. Only very low frequencies move. The correction is estimated from surroundings the model was meant to reproduce, so an intentional glow or material change inside the selection keeps its relative contrast. A 2048 px crop takes about 0.2 s on the CPU. `InpaintWorkspace.color_correction=False` disables it.
 
 Object selection also uses SAM's three-mask output only for the first click. Refinement clicks ask for one mask, following the SAM authors' guidance for unambiguous prompts.
+
+## Reference images
+
+References put a specific person or object from a concept image into a selection. Diffusers 0.41's `Flux2KleinInpaintPipeline` accepts one `image_reference` and caps it near 1 MP. MosImage sends it at most 1024 px on the long edge. Replace edits only append a short identity instruction to the prompt. Removal and Expand never receive a reference.
+
+Local trial on `data/reference-trial/`, FLUX.2 Klein 4B NVFP4 in Balanced mode on the RTX 5070 Ti. The concepts were made with the Codex CLI image tool. The garden photo had a box selection beside the path and the prompt "sitting on a wooden bench beside the gravel path", with four seeds per variant.
+
+| Variant | Warm time per image | Result |
+|---|---|---|
+| Text only, no reference | 5.5–6.1 s | Plausible person, no identity |
+| Inpaint plus reference, studio concept | 7.8–8.4 s | 4/4 kept face, hair and clothing |
+| Inpaint plus reference, busy market concept | 7.5–8.1 s | 4/4 usable |
+| Same, SAM-isolated subject | 6.3–6.5 s | 3/4 usable; one figure broke apart |
+| Full-frame multi-reference generation (`Flux2KleinPipeline`) | 10.3–12.4 s | Identity kept, but the whole garden was re-rendered |
+
+The first run after a model switch adds about 4–5 s. Isolation was 15% faster but less reliable, so it is an optional toggle and the full image stays the default. It uses three SAM points on the vertical centre line, accepts masks between 3% and 85% of the frame, and places the crop on neutral grey.
+
+A UI run with two proposals took 33 s including a cold model load. One proposal was clean. In the other, the face crossed the box edge and was cut by the blend. A subject must fit inside the selection. The hint asks for room for the whole body and its shadow, and two proposals are the default when a reference is picked.

@@ -24,10 +24,13 @@ import { JobOverlay } from "./components/JobOverlay";
 import { ExpansionDialog } from "./components/ExpansionDialog";
 import { WelcomeCanvas } from "./components/WelcomeCanvas";
 import { ShortcutsDialog } from "./components/ShortcutsDialog";
+import { ReferencePanel } from "./components/ReferencePanel";
 import { CancellationRequest, isActiveJob, useJobPolling } from "./hooks/useJobPolling";
+import { useReferences } from "./hooks/useReferences";
 
 interface JobContext { jobId: string; documentId: number | null; revisionId: number | null; operation: "inpaint" | "outpaint" | null }
 const initialExpansion: Expansion = { left: 128, top: 0, right: 128, bottom: 0 };
+const REFERENCES_COLLAPSED_KEY = "mosimage.referencesCollapsed";
 
 export default function App() {
   const [settings, setSettings] = useState(defaultSettings);
@@ -57,6 +60,8 @@ export default function App() {
   const [dropActive, setDropActive] = useState(false);
   const [panel, setPanel] = useState<"settings" | "expansion" | "shortcuts" | null>(null);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
+  const [referencesCollapsed, setReferencesCollapsed] = useState(() => { try { return localStorage.getItem(REFERENCES_COLLAPSED_KEY) === "1"; } catch { return false; } });
+  const refs = useReferences(document?.id ?? null, setError);
   const upload = useRef<HTMLInputElement>(null);
   const context = useRef<JobContext | null>(null);
   const cancellation = useRef<CancellationRequest | null>(null);
@@ -71,6 +76,9 @@ export default function App() {
   const proposalUrls = alternatives.map((item, index) => fileUrl(proposal?.alternatives[index]?.output_image_url ?? item.output_image_url));
   const previewUrl = chosen && !compare ? proposalUrls[selected] : null;
   const task = taskFor(operation);
+  // A reference applies to Replace edits only; Remove and Expand ignore it.
+  const reference = operation === "replace" && source ? refs.active : null;
+  const referenceNeedsQuality = !!reference && !isKleinModel(settings.model_name);
   const cudaBlocked = !!system && (!system.torch_available || (system.preferred_device === "cuda" && !system.cuda_available && !system.allow_cpu_generation));
 
   useEffect(() => {
@@ -208,6 +216,20 @@ export default function App() {
     }
     setOperation("expand");
   }
+  function chooseReference(id: number | null) {
+    refs.setActiveId(id);
+    if (id === null) return;
+    if (operation !== "replace") setOperation("replace");
+    // References need FLUX.2 Klein; two proposals make a good likeness easy to pick.
+    setSettings(current => {
+      const quality = isKleinModel(current.model_name) ? {} : { preset: "quality" as const, model_name: GENERATION_PRESETS.quality.modelName, steps: GENERATION_PRESETS.quality.steps, guidance: GENERATION_PRESETS.quality.guidance };
+      return { ...current, ...quality, count: current.count === 1 ? 2 : current.count };
+    });
+  }
+  function collapseReferences(collapsed: boolean) {
+    setReferencesCollapsed(collapsed);
+    try { localStorage.setItem(REFERENCES_COLLAPSED_KEY, collapsed ? "1" : "0"); } catch { /* Preference only. */ }
+  }
   function clearSelection() { setClearToken(value => value + 1); setMask(null); setMaskUrl(null); setPoints([]); }
   function queued(created: JobResponse, operationType: JobContext["operation"]) {
     cancellation.current = null;
@@ -251,6 +273,7 @@ export default function App() {
         form.set("blend_feather", "0");
         form.set("context_padding", String(settings.context_padding));
         form.set("scene_context", settings.scene_context);
+        if (reference) form.set("reference_id", String(reference.id));
         queued(await inpaintImage(form), "inpaint");
       } else throw new Error("Select the area you want to change first.");
     });
@@ -301,9 +324,13 @@ export default function App() {
   const expansionValid = !!size && validExpansion(size, expansion);
   const canSubmit = !locked && online && !cudaBlocked && (task === "outpaint"
     ? expansionValid && !!settings.prompt.trim()
-    : (operation === "remove" || !!settings.prompt.trim()) && (task === "text-to-image" || !!mask));
+    : (operation === "remove" || !!settings.prompt.trim()) && (task === "text-to-image" || !!mask) && !referenceNeedsQuality);
+  const hint = referenceNeedsQuality ? "References need the Quality model. Choose Quality in generation settings."
+    : operationHint(operation, !!source, !!mask, tool, reference?.name ?? null);
+  const referenceNote = operation === "expand" ? "References are used for Replace edits. Leave Expand to place one."
+    : operation === "remove" && refs.active ? "Switch to Replace to place the selected reference." : null;
 
-  return <main className="focus-app">
+  return <main className={"focus-app" + (document ? " with-references" : "")}>
     <TopBar document={document} onRename={name => document && setDocument({ ...document, name })} online={online} system={system} locked={locked} canExport={!!source}
       onUndo={() => void perform(() => travel("undo"))} onRedo={() => void perform(() => travel("redo"))}
       onOpen={() => upload.current?.click()} onLibrary={() => setLibraryOpen(true)} onExport={exportImage} />
@@ -325,7 +352,8 @@ export default function App() {
         ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} />
         : <CommandCard operation={operation} onOperation={setOperation} hasImage={!!source} locked={locked}
           settingsLabel={settingsSummary(settings, task)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
-          hint={operationHint(operation, !!source, !!mask, tool)} cancelled={job?.status === "cancelled"} jobActive={jobActive} cancelling={cancelling} canSubmit={canSubmit}
+          reference={reference && { name: reference.name, imageUrl: fileUrl(reference.subject_url ?? reference.image_url) }} onClearReference={() => refs.setActiveId(null)}
+          hint={hint} cancelled={job?.status === "cancelled"} jobActive={jobActive} cancelling={cancelling} canSubmit={canSubmit}
           onCanvasSize={() => setPanel("expansion")} onSettings={() => setPanel("settings")} onSubmit={() => void submit()} onCancel={() => void cancel()} />}
       {(cudaBlocked || error) && <div className="error-notice" role="alert">
         <span>{error ?? system?.setup_hint ?? "CUDA is unavailable. Check the local PyTorch installation."}</span>
@@ -333,6 +361,9 @@ export default function App() {
         {error && <button className="icon-button" aria-label="Dismiss message" onClick={() => setError(null)}><Icon name="close" /></button>}
       </div>}
     </section>
+    {document && <ReferencePanel references={refs.references} activeId={refs.active?.id ?? null} pending={refs.pending} uploading={refs.uploading}
+      disabled={locked || operation === "expand"} note={referenceNote} collapsed={referencesCollapsed} onCollapsed={collapseReferences}
+      onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null) chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}
     {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} task={task} disabled={locked} /></ControlDialog>}
     {panel === "expansion" && size && <ExpansionDialog size={size} expansion={expansion} onChange={setExpansion} disabled={locked} onClose={() => setPanel(null)} />}
     {panel === "shortcuts" && <ShortcutsDialog onClose={() => setPanel(null)} />}

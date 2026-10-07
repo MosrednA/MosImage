@@ -82,6 +82,22 @@ class Flux2KleinPlacementTests(unittest.TestCase):
             self.assertTrue(arguments["prompt"].startswith("glowing mushroom."))
             self.assertTrue((root / "output.png").exists())
 
+    def test_reference_image_is_passed_for_replacement_but_not_for_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = Image.new("RGB", (64, 64), "purple")
+            source.save(root / "source.png")
+            Image.new("L", source.size, 255).save(root / "mask.png")
+            Image.new("RGB", (1200, 2400), "orange").save(root / "reference.png")
+            pipe = MagicMock(return_value=SimpleNamespace(images=[source]))
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe):
+                self.provider.inpaint(InpaintForm(prompt="sitting on a bench"), root / "source.png", root / "mask.png", root / "output.png", MagicMock(), reference_path=root / "reference.png")
+                arguments = pipe.call_args.kwargs
+                self.assertEqual(arguments["image_reference"].size, (512, 1024))
+                self.assertIn("from the reference image", arguments["prompt"])
+                self.provider.inpaint(InpaintForm(prompt="grass", edit_operation="remove"), root / "source.png", root / "mask.png", root / "output.png", MagicMock(), reference_path=root / "reference.png")
+                self.assertNotIn("image_reference", pipe.call_args.kwargs)
+
     def test_remove_prompt_restores_the_background_without_adding_a_subject(self) -> None:
         prompt = _inpaint_prompt(InpaintForm(prompt="violet flowers", edit_operation="remove", scene_context="soft dusk"))
         self.assertIn("reconstruct the background", prompt)

@@ -100,6 +100,17 @@ export interface DocumentRecord {
   updated_at: string;
 }
 
+export interface ReferenceRecord {
+  id: number;
+  document_id: number;
+  name: string;
+  width: number;
+  height: number;
+  image_url: string;
+  subject_url: string | null;
+  created_at: string;
+}
+
 export interface AlternativeRecord {
   id: number;
   revision_id: number;
@@ -255,6 +266,24 @@ export async function acceptAlternative(
     `/api/v2/documents/${documentId}/revisions/${revisionId}/alternatives/${alternativeId}/accept`,
     { method: "POST" },
   );
+}
+
+export async function listReferences(documentId: number): Promise<ReferenceRecord[]> {
+  return request(`/api/v2/documents/${documentId}/references`);
+}
+
+export async function addReference(documentId: number, image: File): Promise<ReferenceRecord> {
+  const form = new FormData();
+  form.set("image", image);
+  return request(`/api/v2/documents/${documentId}/references`, { method: "POST", body: form });
+}
+
+export async function deleteReference(referenceId: number): Promise<void> {
+  await request(`/api/v2/references/${referenceId}`, { method: "DELETE" });
+}
+
+export async function setReferenceIsolation(referenceId: number, isolated: boolean): Promise<ReferenceRecord> {
+  return request(`/api/v2/references/${referenceId}/subject`, { method: isolated ? "POST" : "DELETE" });
 }
 
 export async function undoDocument(documentId: number): Promise<DocumentRecord> {

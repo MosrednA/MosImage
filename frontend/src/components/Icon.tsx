@@ -1,4 +1,4 @@
-export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help";
+export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help" | "person" | "plus" | "trash" | "scissors" | "chevronLeft" | "chevronRight";
 
 const paths: Record<IconName, string> = {
   object: "M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5M8 9l4-2 4 2v6l-4 2-4-2z",
@@ -20,6 +20,12 @@ const paths: Record<IconName, string> = {
   eyeOff: "M3 3l18 18M10.6 5.1A10 10 0 0112 5c6.4 0 10 7 10 7a17 17 0 01-3.2 4M6.6 6.6A17 17 0 002 12s3.6 7 10 7a9.6 9.6 0 005.4-1.6M9.9 9.9a3 3 0 004.2 4.2",
   invert: "M12 3a9 9 0 110 18 9 9 0 010-18zM12 3v18M12 7h4M12 11h6M12 15h5",
   help: "M12 21a9 9 0 100-18 9 9 0 000 18zM9.6 9.2a2.5 2.5 0 014.9.6c0 1.6-2.5 2.2-2.5 3.7M12 17h.01",
+  person: "M12 11a4 4 0 100-8 4 4 0 000 8zM4 21v-1a6 6 0 016-6h4a6 6 0 016 6v1",
+  plus: "M12 5v14M5 12h14",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  scissors: "M6 9a3 3 0 100-6 3 3 0 000 6zM6 21a3 3 0 100-6 3 3 0 000 6zM20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12",
+  chevronLeft: "M15 6l-6 6 6 6",
+  chevronRight: "M9 6l6 6-6 6",
 };
 
 export function Icon({ name }: { name: IconName }) {

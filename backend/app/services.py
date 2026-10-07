@@ -9,7 +9,7 @@ from typing import Literal
 
 from PIL import Image
 
-from . import storage
+from . import references, storage
 from .compositing import prepare_inpaint_workspace
 from .config import settings
 from .jobs import JobControl
@@ -104,6 +104,7 @@ def _run_masked_edit(
     mask_path = _save_bytes(mask_bytes, settings.mask_dir, "mask", mask_name)
     output_paths: list[Path] = []
     generation_values: list[dict[str, object]] = []
+    reference_path = references.model_image_path(request.reference_id) if request.reference_id and task == "inpaint" else None
 
     try:
         with TemporaryDirectory(prefix="inpaint-", dir=settings.data_dir) as temporary_dir:
@@ -127,12 +128,15 @@ def _run_masked_edit(
                     update={"seed": _alternative_seed(request.seed, index), "count": 1}
                 )
                 iteration_control = control.slice(index, request.count)
+                # Only reference-aware providers receive the extra argument.
+                extra = {"reference_path": reference_path} if reference_path else {}
                 seed, _model_width = provider.inpaint(
                     iteration,
                     iteration_workspace.model_input_path,
                     iteration_workspace.model_mask_path,
                     iteration_workspace.model_output_path,
                     iteration_control,
+                    **extra,
                 )
                 iteration_control.set_progress(0.97)
                 width, height = iteration_workspace.composite_to(output_path)
@@ -154,6 +158,7 @@ def _run_masked_edit(
                         "blend_feather": request.blend_feather if task == "inpaint" else None,
                         "context_padding": request.context_padding if task == "inpaint" else None,
                         "scene_context": request.scene_context if task == "inpaint" else None,
+                        "reference_image_path": storage.to_relative(reference_path),
                         "input_image_path": storage.to_relative(input_path),
                         "mask_image_path": storage.to_relative(mask_path),
                         "output_image_path": storage.to_relative(output_path),

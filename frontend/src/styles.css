@@ -213,6 +213,44 @@ small { color: var(--muted); }
 .library-grid strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; width: 100%; font-weight: 500; padding: 3px 5px 0; font-size: 11px; }
 .library-grid small { padding: 0 5px; font-size: 10px; }
 .library-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 40px 20px; }
+.focus-app.with-references { grid-template-columns: 64px minmax(0,1fr) auto; }
+.reference-panel { position: relative; width: 236px; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: #151b23; }
+.reference-panel.collapsed { width: 46px; align-items: center; padding-top: 10px; }
+.reference-panel header { display: flex; align-items: center; gap: 2px; padding: 12px 8px 10px 14px; border-bottom: 1px solid var(--line); }
+.reference-panel header div { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.reference-panel header strong { font-size: 12px; font-weight: 600; }
+.reference-panel header small { font-size: 10px; }
+.reference-expand { flex-direction: column; gap: 4px; padding: 8px 4px; width: 36px; border-color: transparent; background: transparent; color: #a8b5c6; position: relative; }
+.reference-count { font-size: 9px; min-width: 16px; padding: 1px 4px; border-radius: 8px; background: var(--accent); color: #152339; font-weight: 700; }
+.reference-note { margin: 10px 12px 0; padding: 8px 10px; border-radius: 6px; background: #222b37; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.reference-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.reference-empty { flex-direction: column; gap: 8px; padding: 22px 14px; border: 1px dashed #3d4b5f; background: #18202a; text-align: center; line-height: 1.45; border-radius: 10px; }
+.reference-empty svg { width: 28px; height: 28px; color: var(--accent); }
+.reference-empty strong { font-size: 12px; }
+.reference-empty span { font-size: 11px; color: #b4c1d1; }
+.reference-empty small { font-size: 10px; }
+.reference-card { position: relative; border: 1px solid #2f3b4b; border-radius: 10px; background: #1b232e; overflow: hidden; transition: border-color .15s, box-shadow .15s; }
+.reference-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.reference-card.uploading { height: 120px; display: grid; place-items: center; }
+.reference-use { display: block; position: relative; width: 100%; padding: 0; border: 0; border-radius: 0; background: #e8e8e8; aspect-ratio: 4 / 5; }
+.reference-use img { width: 100%; height: 100%; object-fit: contain; display: block; background: #0e1217; }
+.reference-use:hover:not(:disabled) { background: #e8e8e8; filter: brightness(1.08); }
+.reference-badge { position: absolute; left: 8px; top: 8px; padding: 2px 7px; border-radius: 9px; background: var(--accent); color: #152339; font-size: 10px; font-weight: 700; }
+.reference-meta { display: flex; align-items: center; gap: 2px; padding: 4px 4px 4px 10px; font-size: 11px; }
+.reference-meta span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-meta .icon-button { width: 28px; height: 28px; padding: 5px; }
+.reference-meta .icon-button svg { width: 16px; height: 16px; }
+.reference-meta .icon-button[aria-pressed=true] { color: var(--accent); background: #26354a; }
+.reference-spinner { position: absolute; inset: 0; margin: auto; width: 22px; height: 22px; border: 2px solid #ffffff33; border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+.reference-card.busy .reference-use img { opacity: .5; }
+.reference-add { border-style: dashed; background: transparent; color: #a8b5c6; padding: 10px; }
+.reference-drop { position: absolute; inset: 6px; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 10px; background: #101824e6; color: var(--accent); font-size: 12px; font-weight: 600; pointer-events: none; }
+.reference-panel.collapsed.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; }
+.reference-chip { display: flex; align-items: center; gap: 6px; flex-shrink: 0; align-self: center; max-width: 170px; padding: 3px 4px 3px 3px; border: 1px solid var(--accent); border-radius: 8px; background: #22324a; font-size: 11px; }
+.reference-chip img { width: 30px; height: 30px; border-radius: 5px; object-fit: cover; background: #e8e8e8; }
+.reference-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-chip button { width: 22px; height: 22px; padding: 3px; border-color: transparent; background: transparent; }
+.reference-chip button svg { width: 14px; height: 14px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 @media (max-width: 1100px) {
   .engine-status, .document-title small { display: none; }
@@ -220,9 +258,25 @@ small { color: var(--muted); }
   .document-title input { width: 100%; }
   .brush-control input { width: 80px; }
   .edge-slider input { width: 80px; }
+  .reference-panel:not(.collapsed) { width: 196px; }
 }
 @media (max-width: 760px) {
   .focus-app { grid-template-columns: minmax(0,1fr); grid-template-rows: 48px 48px minmax(0,1fr); }
+  .focus-app.with-references { grid-template-columns: minmax(0,1fr); grid-template-rows: 48px 48px minmax(0,1fr) auto; }
+  .reference-panel, .reference-panel:not(.collapsed) { width: auto; border-left: none; border-top: 1px solid var(--line); max-height: 150px; }
+  .reference-panel.collapsed { flex-direction: row; justify-content: center; padding: 0; }
+  .reference-expand { flex-direction: row; width: auto; }
+  .reference-expand svg:first-child { transform: rotate(90deg); }
+  .reference-panel header { padding: 6px 6px 6px 12px; }
+  .reference-panel header small { display: none; }
+  .reference-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 8px 10px; }
+  .reference-card { width: 76px; flex-shrink: 0; }
+  .reference-meta span { display: none; }
+  .reference-meta { justify-content: center; padding: 2px; }
+  .reference-empty { flex-direction: row; text-align: left; padding: 10px; width: 100%; }
+  .reference-empty span, .reference-empty small { display: none; }
+  .reference-add { flex-shrink: 0; }
+  .reference-chip span { display: none; }
   .topbar { padding: 0 11px; gap: 8px; }
   .brand strong { font-size: 16px; } .brand-mark { font-size: 26px; }
   .document-title { display: none; }
