@@ -13,6 +13,12 @@ export const defaultSettings: EditorSettings = {
   seed: "", steps: 4, guidance: 1, width: 1024, height: 1024, strength: 1, count: 1,
   blend_feather: 16, context_padding: 320, scene_context: "",
 };
+export function settingsSummary(settings: EditorSettings, task: ImageTask): string {
+  const quality = settings.model_name === "flux1-fill-dev" ? "Fill" : task === "outpaint" ? "Standard" : settings.preset === "fast" ? "Fast" : "Quality";
+  const count = `${settings.count} ${settings.count === 1 ? "proposal" : "proposals"}`;
+  return [quality, count, ...(task === "text-to-image" ? [`${settings.width} × ${settings.height}`] : [])].join(" · ");
+}
+
 interface Props { settings: EditorSettings; onChange: (settings: EditorSettings) => void; models: ModelInfo[]; task: ImageTask; disabled: boolean }
 
 export function SettingsControls({ settings, onChange, models, task, disabled }: Props) {
