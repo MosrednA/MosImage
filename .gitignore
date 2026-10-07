@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.nvfp4-deps/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+.agents/
+.codex/
+*.log
+
+# Node/Vite
+node_modules/
+dist/
+*.tsbuildinfo
+frontend/src-tauri/target/
+
+# Local app state, diagnostics and generated outputs
+/data/**
+!/data/**/
+!/data/**/.gitkeep
+.playwright-mcp/
+
+# Model caches and local checkpoints
+models/*
+!models/.gitkeep
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

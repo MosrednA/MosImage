@@ -1,0 +1,79 @@
+# Focus implementation and validation
+
+**Status:** Delivered locally, 7 October 2026. This is the current implementation reference, linked from [README](README.md). The [model research](MOSIMAGE_DIRECTION_2026-10-07.md) preserves the starting snapshot and longer-term recommendations; the [v2 roadmap](V2_REFACTOR_PLAN.md) records remaining scope.
+
+## Overall interface
+
+The English editor uses the same canvas-first shell for generating, selecting, painting masks, replacing/removing content, expanding and comparing proposals.
+
+- A 52 px header and 64 px tool rail replace the larger permanent UI blocks.
+- The image uses the remaining workspace above a compact command dock. Nothing overlaps the fitted image.
+- Generation settings, including quality, count, aspect ratio and advanced inference controls, open a modal panel.
+- Regional edits expose Edge blend, Surrounding context and optional Scene notes in that panel. Defaults use 320 px context and a 16 px transition, retained during Klein sampling and final blending. A toggleable dashed rectangle shows the context the model sees; it remains protected.
+- Control modals keep their heading and Done action visible while longer settings scroll, including narrow windows.
+- Canvas size opens a modal with format presets and exact margins; expansion handles remain directly on the canvas.
+- Selection controls follow the active tool. Refine selection opens a contextual popover instead of occupying a permanent row.
+- The proposal review strip replaces the instruction dock. Compare original, select an alternative, Apply or Discard.
+- Cancel replaces the primary instruction action for queued, loading, selection and generation jobs. Cancelling stays visible while memory is released, locks new submissions, and recovers from a supervised worker replacement without a misleading missing-job error. The current image, prompt and selection remain available afterward.
+- Library opens a searchable drawer; document names autosave. Open, export, document undo/redo, Fit and zoom remain directly accessible.
+- Narrow screens retain a viewport-sized workspace, using a horizontal tool rail and compact controls. This is browser responsiveness, not a packaged mobile application.
+
+At a 1920 × 936 viewport, the original 1152 × 864 fixture displays at 859 × 644. With 128 px on each side, the expanded canvas displays at approximately 786 × 625, compared with approximately 261 × 208 in the rejected layout. These are browser layout measurements, not image-resolution or model-performance claims.
+
+## Local selection and expansion
+
+SAM 2.1 Tiny uses the public `facebook/sam2.1-hiera-tiny` checkpoint through Transformers. Point coordinates are native image coordinates; click includes and Alt+click excludes. Requests allow at most 24 points and require a positive point. One image embedding is cached by content hash. The selection model stays on CPU, leaving GPU memory to the serialized generation worker. Manual brush, erase, rectangle, lasso and mask transforms remain available.
+
+`POST /api/select` accepts an image plus validated JSON point parameters and returns a queued selection job. Completed jobs expose a local mask URL, separate from generation IDs.
+
+`POST /api/outpaint` accepts an image plus validated JSON generation parameters and margins. It creates an extended RGBA canvas and a mask selecting only added margins, then uses the existing model provider and compositor. Original RGBA pixels are preserved exactly; added pixels become opaque. Native dimensions are capped at 4096 per edge and 16 million pixels; model input remains capped at 1024 on its longest edge. Outpainting quality depends on the selected model and scene.
+
+Proposals bind to their source revision. Applying, undoing, redoing or reopening restores both the corresponding image and canvas dimensions. Quality editing now uses the native `Flux2KleinInpaintPipeline` in the installed Diffusers 0.41.0, with the actual mask and edit strength. Generation and inpaint pipelines share weights but are loaded separately, with one resident at a time. Protected compositing still enforces exact original pixels outside the selection. Expand automatically selects Z-Image Turbo at 8 steps and guidance 0, labeled Standard. The API also accepts the optional FLUX Fill adapter, but its BF16 component-offload implementation does not make the entire 12B transformer fit the 16 GB GPU; a quantized or finer-grained route remains unimplemented and unvalidated. The API rejects Klein for outpainting; the new native Klein path has not been evaluated for expansion.
+
+## Dependency update
+
+Versions were checked against current package metadata on 7 October 2026. Frontend direct dependencies were updated and pinned: React 19.3.0, Vite 8.3.3, TypeScript 7.0.2, Vitest 5.0.3, React Vite plugin 6.1.2 and Tauri CLI 2.12.1.
+
+The backend now pins the stable Diffusers 0.41.0 release instead of a moving Git branch, Transformers 5.19.0, Torch 2.14.1+cu130, torchvision 0.29.1+cu130, Pillow 12.3.0, FastAPI 0.142.2, Uvicorn 0.54.0, Accelerate 1.15.0 and other current compatible dependencies. Hugging Face Hub 1.33.0 is the newest compatible 1.x release; Hub 2.x conflicts with the current Diffusers constraint.
+
+`requirements-torch-cu130.txt` uses the official PyTorch CUDA 13.0 index. Application requirements explicitly pin CUDA Torch builds to prevent a resolver from silently replacing them with CPU-only builds. Startup uses the new CUDA requirements. The existing NVIDIA driver was left in place.
+
+The verified runtime reports CUDA available, RTX 5070 Ti, BF16, TF32, model CPU offload and one large resident pipeline. Model downloads require safetensors.
+
+`npm audit` and `pip-audit` reported zero known vulnerabilities after updates; the initial Python audit found 39 across eight packages. The installed-package Python audit covered 58 packages and skipped the two CUDA-suffixed Torch wheels; their equivalent base versions, Torch 2.14.1 and torchvision 0.29.1, were audited separately with zero known advisories. This is a dependency-advisory check, not a guarantee of complete application security.
+
+## Validation and remaining scope
+
+Frontend build and 17 unit tests pass. Backend syntax checks and 41 unit tests pass, including frozen benchmark asset/mask validation, cancellation remaining pending through cleanup, completed-job protection, native soft mask conditioning, inward feather boundaries, preservation of the user's soft alpha during generation, exact context rectangles, protected RGBA pixels, edit parameter validation, history migration, expansion defaults/provider rejection, expansion limits, selection validation, revision dimension traversal and CORS cache behavior.
+
+The user's active BF16 Fill job was cancelled on request; the supervised worker released its memory and the API remained available. An actual inpaint submission was subsequently cancelled through the primary UI action: its response was `cancelling`, then `cancelled`, with no result generation IDs. The validation document retained revision 33 and its original image; the mask remained selected and Generate became available again. This sample recovered in approximately 1.47 seconds and does not establish a universal cancellation latency. Browser scenarios also exercised a stale running poll arriving after Cancel, a temporary network failure plus missing job during worker replacement, and a failed cancel request followed by retry. Cancel stayed visible and within the viewport at widths 320, 390 and 1440 with no horizontal overflow. Evidence is retained under `data/cancel-diagnostic/`.
+
+Real local SAM selection and point refinement produced usable masks on the fixture. One warm refinement measured approximately 0.96 seconds including UI actions and polling; this is a single sample, not a general latency benchmark.
+
+Real CUDA outpainting expanded 1152 × 864 to 1408 × 1120. The final native Z-Image run was submitted through the UI with a descriptive scene prompt. All 995,328 original pixels matched exactly and all added pixels were opaque. Browser Apply, Undo and Redo restored the expected dimensions. The fixture document was returned to its original revision after validation. The generated margins continued the scene, but visible transitions remained around the protected original; a seamless result across arbitrary scenes has not been established.
+
+Visual review of initial expansion runs found black margins: RGBA resampling discarded the hidden neutral RGB color before model input was flattened. The model input now composites transparency onto neutral gray before resampling, while the native RGBA original remains untouched. A downscaled transparent-margin regression checks this ordering.
+
+Correcting the color alone did not solve filling: Klein retained the gray border, and instructions about gray margins caused Z-Image to synthesize a framed picture. The native mask-conditioned Z-Image route with a descriptive scene prompt produced actual city, sky and foliage in the margins, preserving all 995,328 original pixels exactly. A generic continuation description instead produced a decorative frame. Expand now uses the native route and requires a short scene/content description, passed directly. The existing protected compositor remains responsible for exact original pixels. The official [Diffusers Z-Image documentation](https://huggingface.co/docs/diffusers/main/api/pipelines/z_image) describes this image-plus-mask pipeline; only the local fixture demonstrates the observed quality here.
+
+Two real CUDA inpainting proposals preserved all 987,581 pixels outside a 7,747-pixel rectangle selection. Browser alternative switching, original comparison, Apply and Undo worked; the fixture was returned to its original revision. A real 512 × 512 generation was submitted with Ctrl+Enter, applied and exported as a valid PNG. These checks validate the workflow and protected pixels, not general prompt adherence or visual quality.
+
+The subsequent mushroom regression reproduced the user's visibly clipped, saturated result. The old Klein path ignored its mask, edited the entire crop, then clipped the generated subject at compositing. Native mask conditioning and a concise subject-first prompt produced a complete, warmer mushroom within the same painted footprint (generation 33, seed 3936008243), preserving all 1,525,188 protected pixels. A real browser submission using a rectangle, 256 px context, 16 px edge blend and scene notes produced generation 35, preserving all 1,510,684 protected pixels. Apply, Undo, Redo and Undo restored the validation document to its original revision without browser errors. The [inpainting reference](INPAINTING_2026-10-07.md) records negative experiments and the remaining quality limits.
+
+The restarted backend reproduced generation 33's result with the original mask (generation 38). The user rejected its yellow grass island and appearance mismatch: complete geometry and protected pixels were insufficient proof of visual integration. A real Remove submission restored flowers in place of that mushroom (generation 39), preserving all protected pixels; some boundary illumination/vegetation remained, so removal guidance now explicitly asks for room around shadows and glow. Two separate appearance-reference trials failed to insert the requested subject and their upload feature was removed before delivery.
+
+Follow-up trials found no reliable generic integration prompt; some omitted the requested mushroom. More steps and an additional low-strength harmonization pass did not resolve the earlier result. The native soft mask combined with 320 px context and 16 px blend produced a softer mushroom directly among continuing violet flowers (generation 50). Keeping the old 192/8 settings retained the grass island (generation 51). Final default validation reproduced 50 byte-for-byte (52), but the second seed omitted the subject (53); short prompt variants reversed which seed succeeded (55–57). Current defaults use the improved combination; subject reliability and universal seamless results remain unresolved evaluation work.
+
+A real UI submission with the new defaults produced generation 54 and preserved all 1,510,422 pixels outside its rectangle. Apply, Undo, Redo and Undo restored the original revision and 1254 × 1254 dimensions. Settings again passed widths 320, 390 and 1440 without horizontal overflow, with Done visible. No browser console or page errors were observed.
+
+The user's lucky-shot concern prompted a paired check on eight fresh, predeclared seeds (16 renders, generations 58–73). Every output preserved dimensions and all 1,525,188 protected pixels. Manual review rated 320 / 16 as four promising, two weak and two failed subjects; 192 / 8 as two promising, five weak and one failed subject. Broader context/blend improved some integrations but did not provide reliable subject insertion. This remains an experimental editing route rather than a validated general quality fix. The [inpainting reference](INPAINTING_2026-10-07.md) records the full protocol, every verdict and local contact sheets, plus the reusable API benchmark tool.
+
+The rightward-placement follow-up found a 92 px difference between the mask bounds centre and the 320 px context crop centre, caused by asymmetric image-edge clamping. Mask resampling showed no meaningful centroid translation. Four diagnostic renders with a selection-centred, reflected context window placed mushrooms nearer the selection centre, but changed scale/style and retained visible grass islands. Production crop behavior remains unchanged pending broader quality validation. The current reference distinguishes Klein's sampling-mask constraint from Fill's direct transformer mask input and records the next model/sampler comparisons and 16 GB constraints.
+
+The browser was checked at widths 1920, 1440, 1024, 736, 390 and 320 with no horizontal document overflow. Generation settings trap focus through the native dialog and restore focus on Escape. Library search, closing and thumbnail loading worked. A fresh validation tab reported no console or page errors.
+
+Image responses now vary by Origin even when first requested as a normal thumbnail. UI asset URLs retire old pre-CORS cache entries, and reopening saved images uses an uncached fetch.
+
+A fixed four-scene benchmark is now delivered with original generated images, binary/RGBA masks, prepared soft context crops, frozen prompts/seeds and hashes. A paired 24-output experiment using the official Klein NVFP4 transformer and native CUDA kernels completed: median warmed edits fell from 9.82 to 6.26 s, transformer storage from 7.22 to 2.29 GiB, and protected-pixel changes were zero. Full-pipeline peak allocation stayed near 9.1 GiB because the BF16 text encoder remains unchanged. Visual outcomes are similar, with residual shadow/glow/texture issues. The English review viewer supports every seed, original/mask toggles and full/detail views. See [protocol](benchmarks/README.md) and [full results](benchmarks/NVFP4_RESULTS_2026-10-07.md). NVFP4 remains isolated benchmark tooling; the app Quality provider still uses BF16.
+
+SAM 3 text/box selection, a validated general reference-image workflow, Qwen/LanPaint integration, broader quality validation, an application NVFP4 adapter, cloud providers, upscale controls and a packaged Tauri installer remain future work. Coarse job polling remains in place. No ComfyUI custom node was installed or copied; the optional benchmark uses the Apache-2.0 Comfy Kitchen kernel package.

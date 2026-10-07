@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MosImage · Klein precision review</title>
+<style>
+  :root{color-scheme:dark;font-family:Inter,Segoe UI,sans-serif;background:#12161b;color:#dce5ef}
+  *{box-sizing:border-box}body{margin:0;height:100dvh;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:24px;padding:18px 24px;border-bottom:1px solid #303a47;flex-wrap:wrap}
+  h1{font-size:18px;margin:0;font-weight:600}h1 span{color:#8aacdc}header p{margin:0;color:#97a7bb;font-size:13px}
+  nav{display:flex;gap:8px;margin-left:auto}button,select{font:inherit;border:1px solid #3a485a;border-radius:7px;background:#202934;color:inherit;padding:8px 12px;cursor:pointer}
+  button[aria-pressed=true]{background:#aac9fa;color:#132139;border-color:#aac9fa}button:focus-visible,select:focus-visible{outline:2px solid #aac9fa;outline-offset:3px}
+  .controls{display:flex;align-items:center;gap:10px;padding:12px 24px;font-size:13px;flex-wrap:wrap}.controls label{color:#97a7bb}.controls .spacer{flex:1}
+  #prompt{margin:0 24px 12px;font-size:14px;line-height:1.5;color:#bdcbdc}
+  main{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 24px 14px;flex:1;min-height:0}
+  figure{margin:0;display:flex;flex-direction:column;min-height:0;min-width:0;border:1px solid #303a47;border-radius:9px;overflow:hidden;background:#0c1015}
+  figcaption{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:#192029;font-size:14px;gap:12px}figcaption small{font-size:12px;color:#97a7bb}
+  .images{position:relative;flex:1;min-height:0}.images img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}.images .mask{filter:brightness(0) saturate(100%) invert(78%) sepia(50%) saturate(350%) hue-rotate(165deg);opacity:.3;pointer-events:none}
+  footer{padding:0 24px 16px;display:flex;gap:24px;align-items:center;color:#97a7bb;font-size:12px;flex-wrap:wrap}footer strong{font-weight:500;color:#dce5ef}a{color:#aac9fa}#criteria{line-height:1.6}
+  @media(max-width:850px){header{gap:12px;padding:12px}nav{margin-left:0;width:100%;overflow:auto}main{padding:0 12px 10px;gap:8px}.controls{padding:10px 12px}#prompt{margin:0 12px 10px}figcaption{padding:8px;font-size:12px;flex-wrap:wrap}footer{padding:0 12px 12px;font-size:11px}header p{font-size:12px}}
+</style>
+<header><h1><span>m.</span> MosImage / Precision review</h1><p>Four fixed scenes · Three seeds · Every outcome</p><nav aria-label="Test images"></nav></header>
+<div class="controls">
+  <label for="seed">Seed</label><select id="seed"></select>
+  <label for="view">View</label><select id="view"><option value="crop">Selection + context detail</option><option value="full">Full image</option></select>
+  <button id="source" aria-pressed="false">Show original</button><button id="mask" aria-pressed="false">Show mask</button>
+  <span class="spacer"></span><a href="summary.json">Measurements</a><a href="review-assets/garden.mask.png" id="download-mask" download>Download mask</a><a href="review-assets/garden.png" id="download-source" download>Download source</a>
+</div>
+<p id="prompt"></p>
+<main>
+  <figure><figcaption><strong>BF16</strong><small id="bf16-metric"></small></figcaption><div class="images"><img id="bf16-image" alt="BF16 inpainting result"><img id="bf16-mask" class="mask" alt="Selection overlay" hidden></div></figure>
+  <figure><figcaption><strong>Native NVFP4</strong><small id="nvfp4-metric"></small></figcaption><div class="images"><img id="nvfp4-image" alt="NVFP4 inpainting result"><img id="nvfp4-mask" class="mask" alt="Selection overlay" hidden></div></figure>
+</main>
+<footer><div id="criteria"></div><div><strong>0 protected pixels changed in 24 outputs.</strong><br>Whole warmed pipeline with CPU offload. Four synthetic scenes; quality review is subjective.</div></footer>
+<script>
+const data=__BENCHMARK_DATA__;
+let fixture=data.suite.fixtures[0],showSource=false,showMask=false;
+const seed=document.querySelector('#seed'),view=document.querySelector('#view');
+for(const s of data.suite.seeds){const option=new Option(String(s),String(s));seed.add(option)}
+const nav=document.querySelector('nav');
+for(const item of data.suite.fixtures){const button=document.createElement('button');button.textContent=item.name[0].toUpperCase()+item.name.slice(1);button.dataset.fixture=item.name;button.addEventListener('click',()=>{fixture=item;render()});nav.append(button)}
+function render(){
+  for(const button of nav.children)button.setAttribute('aria-pressed',String(button.dataset.fixture===fixture.name));
+  document.querySelector('#prompt').textContent=fixture.prompt;
+  document.querySelector('#criteria').textContent=fixture.criteria.join(' · ');
+  document.querySelector('#download-mask').href='review-assets/'+fixture.mask;
+  document.querySelector('#download-source').href='review-assets/'+fixture.image;
+  const crop=view.value==='crop',suffix=crop?'.crop.png':'.png';
+  for(const mode of ['bf16','nvfp4']){
+    const result=data.runs[mode].results.find(r=>r.fixture===fixture.name&&r.seed===Number(seed.value));
+    const image=document.querySelector('#'+mode+'-image');
+    image.src=showSource?'review-assets/'+fixture.name+suffix:crop?'review-assets/'+mode+'-'+fixture.name+'-'+seed.value+suffix:mode+'/'+result.output;
+    image.alt=showSource?fixture.name+' original':mode+' '+fixture.name+' seed '+seed.value;
+    const mask=document.querySelector('#'+mode+'-mask');mask.src='review-assets/'+fixture.name+'.mask'+suffix;mask.hidden=!showMask;
+    document.querySelector('#'+mode+'-metric').textContent=result.elapsed_seconds.toFixed(2)+' s · '+result.cuda_peak_allocated_gib.toFixed(2)+' GiB peak';
+  }
+}
+seed.addEventListener('change',render);view.addEventListener('change',render);
+document.querySelector('#source').addEventListener('click',event=>{showSource=!showSource;event.currentTarget.setAttribute('aria-pressed',String(showSource));render()});
+document.querySelector('#mask').addEventListener('click',event=>{showMask=!showMask;event.currentTarget.setAttribute('aria-pressed',String(showMask));render()});
+render();
+</script>
+</html>

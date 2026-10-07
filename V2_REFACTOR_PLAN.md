@@ -1,0 +1,586 @@
+# MosImage v2 — Refactor and Upgrade Plan
+
+**Status:** In progress\
+**Target:** Windows desktop, local-first\
+**Primary hardware:** Ryzen 7 9700X, 32 GB RAM, RTX 5070 Ti 16 GB VRAM
+**Plan date:** July 16, 2026
+
+**Current delivery:** [Focus implementation and validation, October 7, 2026](FOCUS_IMPLEMENTATION_2026-10-07.md). [Model research and product direction](MOSIMAGE_DIRECTION_2026-10-07.md) preserves the initial research snapshot and longer-term proposals.
+
+## Implementation status
+
+| Phase | Status | Delivered |
+|---|---|---|
+| 2 — Real canvas | Complete | Native-resolution masks; open, paste, drag/drop, save/export; move/pan, zoom, fit, actual size; brush, erase, rectangle, lasso, grow, shrink, feather, invert, clear; mask undo/redo. |
+| 3 — Documents and revisions | Complete | Persistent v2 documents, revisions, alternatives, metadata autosave, document undo/redo, close/reopen, and non-destructive v1-generation import. |
+| 4 — Object selection | Partial | SAM 2.1 Tiny point selection and positive/negative refinement, cached CPU image embeddings, and manual mask correction. SAM 3 text/box/hover selection remains future work. |
+| 5 — Inpainting | Core implemented; quality validation open | Native mask-conditioned Klein default, visible padded context rectangles, soft latent masks, inward edge blending, scene notes, sequential alternatives, in-place preview, explicit accept, and protected-pixel regression coverage. The optional FLUX Fill adapter still needs a viable 16 GB memory route. An eight-seed check found missing subjects and weak integrations. A fixed four-scene suite and 24-output BF16/NVFP4 comparison now exist: NVFP4 reduced median edit time by 36%, with similar visual limitations. App integration and broad reliability remain open; see the [experiment](benchmarks/NVFP4_RESULTS_2026-10-07.md). |
+| 6 — Generation and presets | Complete | FLUX.2 Klein Quality, Z-Image Fast, product-first controls, Advanced technical settings, aspect presets, and one-to-four sequential alternatives. Krea 2 Turbo was evaluated but remains disabled pending a measured 16 GB quantized path and the license-required safety controls. |
+| 7 — Outpainting | Complete for standard edge expansion | Draggable edges, format presets, exact margins, mask-conditioned Z-Image default, protected RGBA compositing, sequential proposals and revision dimension undo/redo. The optional FLUX Fill adapter requires a viable 16 GB route before use. Klein is excluded after retaining padding in local tests. Arbitrary interior transparent regions and a broad quality benchmark remain follow-up work. |
+
+Phase 4 is partially delivered; phase 5 still needs visual reliability validation, and phase 8 remains roadmap work. The English canvas-first Focus shell applies to new generation, selection, editing, expansion, and proposal review. Phase completion here refers to each phase's own exit criterion, not the full v2 definition of done. Sections below describe the target design where it extends beyond this implementation table.
+
+## 1. Objective
+
+Evolve the existing MosImage prototype into a focused local AI canvas editor.
+
+The core interaction should be:
+
+> Open or generate an image, select an area or object, describe the desired change, and generate it locally.
+
+MosImage v2 should retain the working runtime, model-provider, job, storage, API, React, and Tauri foundations. The primary refactor is from a generation form with an image preview into a document-oriented editor with an interactive canvas.
+
+This is an incremental upgrade of the current repository, not a clean rewrite.
+
+## 2. Product principles
+
+1. **The selection expresses intent.** When a selection exists, generation affects that selection.
+2. **Pixels outside the selection are protected.** Inpainting must not silently modify unrelated areas.
+3. **Models are implementation details.** Model loading and GPU placement should be automatic.
+4. **Every operation is reversible.** Generated changes, mask edits, and accepted alternatives support undo and redo.
+5. **Simple by default.** Technical inference controls belong in an Advanced panel.
+6. **Local-first.** Images and prompts remain on the machine unless a future cloud provider is explicitly enabled.
+7. **Keep the application runnable.** Each migration phase should leave a usable build.
+
+## 3. Current foundation
+
+MosImage v1 already provides:
+
+- React and TypeScript frontend.
+- Vite development and production builds.
+- Tauri desktop shell scaffold.
+- FastAPI backend.
+- Typed request and response schemas.
+- Model provider interface and registry.
+- Z-Image Turbo text-to-image and inpainting pipelines.
+- CUDA, BF16, TF32, CPU-offload, and one-pipeline residency controls.
+- A serialized single-worker GPU job queue.
+- Local image, mask, and output storage.
+- SQLite generation metadata and history.
+- Startup scripts tuned for the target machine.
+
+These parts should be retained and extended unless a milestone explicitly replaces them.
+
+## 4. Main differences from v1
+
+| Area | MosImage v1 | MosImage v2 |
+|---|---|---|
+| Main UI | Generation form and result preview | Interactive canvas and contextual actions |
+| Work modes | Separate text-to-image and inpaint tabs | One editor whose action follows canvas state |
+| Selection | White brush and clear | SAM, brush, erase, lasso, rectangle, add/subtract, invert, grow, shrink, feather |
+| Segmentation | None | Click, box, and text-prompt segmentation |
+| Inpainting | Full image and mask passed to model | Context crop, mask-aware generation, protected compositing |
+| Generation | One result | Multiple alternatives with in-place preview |
+| History | Flat generation list | Documents, revisions, undo, redo, and alternatives |
+| Model controls | Exposed in the main sidebar | Automatic presets; technical settings under Advanced |
+| Progress | Polling with coarse job state | Real progress events and cancellation |
+| Desktop runtime | Tauri scaffold plus separately launched API | Packaged desktop app supervising a Python sidecar |
+| Outpainting | None | Canvas extension and generated continuation |
+
+## 5. Target user experience
+
+### Primary tools
+
+- Move and zoom
+- Object Select
+- Mask Brush
+- Lasso or rectangle selection
+- Erase Mask
+
+### Context-sensitive generation
+
+- Empty canvas: **Generate image**
+- Image with selection: **Fill selection**
+- Image without selection: **Create variation**
+- Selection touching empty canvas space: **Extend image**
+
+### Object selection
+
+- Hover previews a segmentation mask.
+- Click selects an object.
+- Shift-click adds to the selection.
+- Alt-click subtracts from the selection.
+- A text prompt can select concepts such as `all windows`, `the person in red`, or `the background`.
+- Manual mask tools refine imperfect automatic masks.
+
+### Default controls
+
+- Prompt
+- Variation count
+- Creativity or strength
+- Feather
+- Generate or Cancel
+
+### Advanced controls
+
+- Model preset
+- Seed
+- Steps
+- Guidance
+- Negative prompt
+- Runtime placement
+- Output resolution
+
+## 6. Target model stack
+
+### Generation
+
+**Default:** FLUX.2 Klein 4B
+
+- Interactive four-step generation.
+- Suitable for the target 16 GB GPU.
+- Supports generation and image editing.
+- Apache 2.0 weights.
+
+**Fast alternative:** Z-Image Turbo
+
+- Preserve the existing provider.
+- Use for fast photorealistic iteration and batch alternatives.
+
+**Optional quality preset:** Krea 2 Turbo in a validated FP8 or NVFP4 format.
+
+- Load on demand.
+- Keep disabled by default until runtime and licensing are validated.
+
+### Segmentation
+
+**Current:** Meta SAM 2.1 Tiny for point selection on CPU. **Future target:** Meta SAM 3 for concept, box and text selection.
+
+- Support point, box, mask, example, and text prompts.
+- Cache image embeddings by document revision and image content hash.
+- Unload before heavy generation when required by VRAM pressure.
+
+### Inpainting and outpainting
+
+**Initial specialist:** FLUX.1 Fill Dev
+
+- Use for native image-plus-mask fill operations.
+- Validate licensing before commercial distribution.
+
+**Current regional default:** Native mask-conditioned FLUX.2 Klein editing through Diffusers 0.41.0
+
+- Uses a visible padded context crop, native soft latent masking and protected inward alpha compositing. See [inpainting validation](INPAINTING_2026-10-07.md).
+- The mushroom fixture validates this fix locally; a fixed multi-scene evaluation against Fill remains open. This does not promote Klein to the expansion route.
+
+## 7. Target architecture
+
+```text
+Tauri desktop shell
+├── React editor UI
+│   ├── document state
+│   ├── viewport state
+│   ├── mask state
+│   └── inference job state
+├── GPU-accelerated canvas
+└── supervised Python sidecar
+    ├── FastAPI or versioned local IPC
+    ├── model manager
+    ├── generation providers
+    ├── segmentation provider
+    ├── inpaint compositor
+    ├── serialized GPU jobs
+    └── SQLite and local assets
+```
+
+### Frontend boundaries
+
+Refactor the current monolithic `frontend/src/App.tsx` into:
+
+```text
+frontend/src/
+├── app/
+│   ├── App.tsx
+│   └── EditorShell.tsx
+├── canvas/
+│   ├── EditorCanvas.tsx
+│   ├── viewport.ts
+│   ├── coordinates.ts
+│   ├── compositor.ts
+│   └── overlays/
+├── documents/
+│   ├── documentTypes.ts
+│   ├── documentReducer.ts
+│   ├── history.ts
+│   └── persistence.ts
+├── masks/
+│   ├── maskTypes.ts
+│   ├── maskOperations.ts
+│   ├── BrushTool.ts
+│   ├── LassoTool.ts
+│   └── ObjectSelectTool.ts
+├── generation/
+│   ├── PromptPanel.tsx
+│   ├── AlternativesStrip.tsx
+│   └── generationState.ts
+├── api/
+│   ├── client.ts
+│   └── types.ts
+└── styles/
+```
+
+Folder names may be adjusted to established conventions during implementation. Avoid adding abstractions before they have a concrete owner or use.
+
+### Backend boundaries
+
+Retain the current structure and add focused modules:
+
+```text
+backend/app/
+├── models/
+│   ├── base.py
+│   ├── registry.py
+│   ├── z_image.py
+│   ├── flux2_klein.py
+│   ├── flux_fill.py
+│   └── segmentation/
+│       └── sam3.py
+├── documents.py
+├── masks.py
+├── compositing.py
+├── jobs.py
+├── services.py
+├── storage.py
+└── main.py
+```
+
+Keep provider-specific runtime code behind typed provider interfaces.
+
+## 8. Document and revision model
+
+The current `generations` table should remain readable during migration. Add a document-oriented schema rather than overloading flat generation records.
+
+```text
+Document
+├── id
+├── name
+├── canvas_width
+├── canvas_height
+├── color_profile
+├── current_revision_id
+├── created_at
+└── updated_at
+
+Revision
+├── id
+├── document_id
+├── parent_revision_id
+├── operation_type
+├── composite_image_path
+├── mask_image_path
+├── operation_parameters
+├── created_at
+└── selected_alternative_id
+
+Alternative
+├── id
+├── revision_id
+├── seed
+├── model_name
+├── output_image_path
+└── metadata
+```
+
+### Migration approach
+
+- Keep the v1 `generations` table initially.
+- New documents use the v2 schema.
+- Provide a one-time action to open a v1 result as a new v2 document.
+- Do not destructively migrate or delete existing generated images.
+
+## 9. Image-space correctness
+
+The v1 mask canvas is fixed at 1024×1024 while source images may have other aspect ratios. V2 must use image-space coordinates independent of viewport size.
+
+Requirements:
+
+- The mask buffer dimensions match the underlying document or source image.
+- Zoom and pan affect only viewport transforms.
+- Pointer coordinates are transformed into image coordinates before editing masks.
+- Letterboxing is excluded from mask coordinates.
+- Mask export preserves source dimensions exactly.
+- High-resolution masks may render through lower-resolution viewport textures, but editing remains image-space accurate.
+
+Add coordinate-transform and non-square-image regression tests before integrating SAM.
+
+## 10. Inpainting pipeline
+
+Replace direct full-image inpainting with an editor-grade pipeline:
+
+1. Validate that a non-empty mask exists.
+2. Calculate the mask bounding box.
+3. Expand the crop to include sufficient context.
+4. Grow the internal generation mask beneath the visible boundary.
+5. Run the fill model on the contextual crop.
+6. Feather the final compositing mask.
+7. Composite the generated pixels only through the protected mask.
+8. Compare the pre- and post-operation buffers outside the mask.
+9. Save the result as a new revision.
+10. Preserve all generated alternatives until the document is closed or explicitly cleaned up.
+
+The protected-pixel guarantee applies to the internal RGBA composite. Export encoding may change compressed file bytes without changing visible pixel values.
+
+## 11. API evolution
+
+Preserve existing v1 routes during the transition and introduce versioned v2 routes.
+
+```text
+GET    /api/v2/health
+GET    /api/v2/models
+POST   /api/v2/models/load
+POST   /api/v2/models/unload
+
+POST   /api/v2/documents
+GET    /api/v2/documents/{id}
+POST   /api/v2/documents/{id}/revisions
+POST   /api/v2/documents/{id}/undo
+POST   /api/v2/documents/{id}/redo
+
+POST   /api/v2/generate
+POST   /api/v2/inpaint
+POST   /api/v2/outpaint
+
+POST   /api/v2/segment/point
+POST   /api/v2/segment/box
+POST   /api/v2/segment/text
+
+GET    /api/v2/jobs/{id}
+GET    /api/v2/jobs/{id}/events
+POST   /api/v2/jobs/{id}/cancel
+```
+
+Use strict Pydantic models at every request boundary. Reject malformed dimensions, masks, model names, and operation types.
+
+## 12. Job and model management changes
+
+Current delivery already supports cooperative cancellation plus an eight-second supervised worker replacement fallback. The primary dock exposes Cancel throughout queued/loading/generation work; running cancellation remains `cancelling` until cleanup finishes, and the UI recovers from the replacement worker losing its in-memory job. The streamed stages below remain target scope.
+
+Retain the serialized GPU queue and extend it with:
+
+- Cooperative cancellation between inference steps.
+- Meaningful progress stages rather than only `0.05` and `1.0`.
+- Server-sent events or another simple streamed event mechanism.
+- Explicit queued, loading, encoding, generating, decoding, compositing, cancelling, completed, cancelled, and failed states.
+- Automatic model selection based on operation and quality preset.
+- Preloading based on the active editor tool.
+- Clean CUDA out-of-memory recovery.
+- Verified unloading and cache cleanup between incompatible pipelines.
+
+Do not introduce concurrent heavy GPU jobs on the 16 GB target profile.
+
+## 13. Refactor sequence
+
+### Phase 0 — Stabilize v1
+
+- Record current generation and inpaint behavior on the target machine.
+- Capture load time, inference time, peak VRAM, and output dimensions.
+- Add backend syntax checks and frontend build verification.
+- Add a minimal automated test harness.
+- Preserve representative inputs, masks, and expected metadata as fixtures without committing private user content.
+
+**Exit criterion:** Current text-to-image and manual inpainting behavior is reproducible and covered by smoke tests.
+
+### Phase 1 — Extract frontend boundaries
+
+- Split API types and client functions out of the current files.
+- Split status, prompt controls, history, and preview into focused components.
+- Introduce separate document, viewport, mask, and job state.
+- Preserve the existing v1 screens until the new editor shell can replace them.
+
+**Exit criterion:** No user-visible feature change; the frontend builds with smaller, owned modules.
+
+### Phase 2 — Introduce the real canvas
+
+- Add open, paste, drag-and-drop, save, and export.
+- Implement pan, zoom, fit, and actual-size controls.
+- Store source images and masks at their native dimensions.
+- Add brush, eraser, rectangle, lasso, clear, invert, expand, contract, and feather operations.
+- Add undo and redo for mask edits.
+- Replace `MaskCanvas` after parity is reached.
+
+**Exit criterion:** Non-square images and masks remain aligned at every zoom level and after export.
+
+### Phase 3 — Add documents and revisions
+
+- Add v2 document, revision, and alternative storage.
+- Implement non-destructive operation history.
+- Add document undo and redo.
+- Allow a v1 history item to open as a v2 document.
+- Add autosave of document metadata.
+
+**Exit criterion:** A generated or imported image can be edited, undone, redone, closed, and reopened.
+
+### Phase 4 — Add SAM 3 segmentation
+
+- Add the SAM 3 provider and model lifecycle.
+- Implement point, box, and text segmentation routes.
+- Cache embeddings by revision content hash.
+- Add hover preview, click selection, add, subtract, and text concept selection.
+- Ensure manual tools can refine SAM masks.
+
+**Exit criterion:** Common objects can be selected with one click and corrected without leaving the canvas.
+
+### Phase 5 — Upgrade inpainting
+
+- Add the specialist fill provider.
+- Implement contextual crop extraction.
+- Keep user-controlled mask growth separate from inward blending and protected compositing. Show the padded context rectangle.
+- Generate multiple alternatives.
+- Preview alternatives in place before accepting one.
+- Add protected-pixel regression tests.
+
+**Exit criterion:** Replacing an object does not modify pixels outside the protected selection.
+
+### Phase 6 — Upgrade generation and presets
+
+- Add FLUX.2 Klein 4B.
+- Retain Z-Image Turbo as the fast provider.
+- Add Fast and Quality product presets.
+- Hide raw model and runtime controls under Advanced.
+- Add aspect-ratio presets and multiple alternatives.
+- Evaluate Krea 2 only after the primary providers are stable.
+
+**Exit criterion:** A user can generate a new image without choosing a model or configuring inference terminology.
+
+### Phase 7 — Add outpainting
+
+- Support resizing the document canvas beyond the current image.
+- Detect transparent or empty canvas regions.
+- Build overlap masks and contextual crops.
+- Generate extensions and composite them as revisions.
+
+**Exit criterion:** A user can extend any canvas edge while preserving the existing image.
+
+### Phase 8 — Desktop packaging and recovery
+
+- Package the Python worker as a Tauri sidecar or controlled application component.
+- Supervise worker startup, health, restart, and shutdown.
+- Add first-run model download and validation.
+- Add disk-space and download progress reporting.
+- Add crash recovery and autosave restoration.
+- Produce a Windows installer.
+
+**Exit criterion:** A new user can install MosImage and complete the core workflow without manually starting a backend.
+
+## 14. Testing strategy
+
+### Frontend unit tests
+
+- Canvas-to-image and image-to-canvas coordinate transforms.
+- Mask add, subtract, invert, expand, contract, and feather.
+- Document reducer and revision traversal.
+- Undo and redo.
+- Context-sensitive action selection.
+
+### Backend unit tests
+
+- Strict schema validation.
+- Provider registry selection.
+- Context crop calculation.
+- Mask normalization and dimension validation.
+- Protected compositing.
+- Model placement decisions.
+- Job cancellation state transitions.
+
+### Integration tests
+
+- Worker startup, shutdown, crash, and restart.
+- Model download, load, unload, and switching.
+- Generate, segment, inpaint, outpaint, cancel, and export workflows.
+- CUDA out-of-memory fallback.
+- Opening v1 history as a v2 document.
+
+### Visual regression tests
+
+- Mask alignment on square, landscape, and portrait images.
+- Selection overlays at multiple zoom levels.
+- Feathered inpaint boundaries.
+- Crop reinsertion without seams.
+- Outpaint overlap regions.
+
+### Fixed model evaluation set
+
+Include non-private fixtures covering:
+
+- People and hair
+- Animals
+- Products
+- Vehicles
+- Buildings and windows
+- Foregrounds and backgrounds
+- Small and overlapping objects
+- Object removal and replacement
+- Material and color changes
+- Poster and text generation
+
+Record segmentation quality, protected-pixel changes, latency, peak VRAM, and subjective edit quality.
+
+## 15. Acceptance criteria
+
+- The application runs locally on the target Windows machine.
+- Images can be opened, pasted, dropped, generated, saved, and exported.
+- Users can select objects by click, box, text, lasso, rectangle, or brush.
+- Masks support add, subtract, erase, invert, expand, contract, and feather.
+- Inpainting offers alternatives and supports cancellation.
+- Pixels outside the protected mask remain unchanged in the internal composite.
+- Every accepted AI operation supports undo and redo.
+- Documents survive application restart.
+- Models load, unload, and switch automatically.
+- The primary workflow exposes no node graph or diffusion terminology.
+- A first-time user can generate an image and replace one object without documentation.
+
+## 16. Explicitly out of scope for v2 MVP
+
+- Full Photoshop-compatible layers and blend modes.
+- Vector drawing and typography tools.
+- Node graphs and arbitrary inference pipelines.
+- LoRA or full-model training.
+- Video editing.
+- Cloud generation providers.
+- Multi-user collaboration.
+- Mobile support.
+- Plugin marketplace.
+
+## 17. Risks and mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Frontend rewrite destabilizes working generation | Extract boundaries first and keep v1 screens until canvas parity. |
+| Model switching feels slow | Preload based on active tool and benchmark validated quantized formats. |
+| Inpainting changes unrelated pixels | Use crop generation plus explicit protected-mask compositing. |
+| SAM edges are imperfect | Pair segmentation with fast manual correction tools. |
+| Large images exhaust VRAM | Use contextual crops, tiled decoding, and controlled fallback presets. |
+| Windows Python and CUDA packaging is fragile | Pin a tested runtime and supervise it as an application component. |
+| New models exceed 16 GB | Preserve single-pipeline residency and validate FP8, NVFP4, or offload profiles. |
+| Licensing prevents redistribution | Track licenses per provider and separate optional model downloads from application code. |
+| Technical controls recreate Invoke complexity | Keep product presets in the main UI and raw controls under Advanced. |
+
+## 18. Historical first implementation slice
+
+This section records the original starting slice. The canvas, compositing, revisions and edge expansion have since been delivered; see the implementation status above. Remaining roadmap work includes the rest of phase 4 and desktop packaging in phase 8. The October product-direction proposal evaluates additional follow-up work.
+
+The first vertical slice should avoid model expansion and prove the editor architecture using the existing Z-Image provider:
+
+1. Refactor frontend state into document, viewport, mask, and job domains.
+2. Add a real image-space canvas.
+3. Fix non-square mask alignment.
+4. Add brush, erase, lasso, invert, expand, and feather.
+5. Send the resulting image and mask through the existing inpaint API.
+6. Composite the result only through the mask.
+7. Add undo and redo for the accepted edit.
+
+This creates the v2 product skeleton before introducing SAM 3 or additional large models.
+
+## 19. Definition of done
+
+MosImage v2 is complete when a non-technical user can:
+
+1. Launch the installed desktop application.
+2. Generate or open an image.
+3. Click an object to select it.
+4. Correct the mask if necessary.
+5. Describe a replacement.
+6. Preview several alternatives.
+7. Accept, undo, or redo the edit.
+8. Export the final image.
+
+The user should not need to know which model was used or understand samplers, schedulers, VAEs, CFG values, quantization, GPU placement, or node graphs.

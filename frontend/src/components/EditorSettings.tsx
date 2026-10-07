@@ -1,0 +1,48 @@
+import { ImageTask, ModelInfo, RuntimeMode } from "../api";
+import { ASPECT_PRESETS, AspectPreset, aspectPresetFor } from "../generation/aspectRatios";
+import { GENERATION_PRESETS, GenerationPreset } from "../generation/presets";
+
+export interface EditorSettings {
+  preset: GenerationPreset; model_name: string; prompt: string; negative_prompt: string;
+  runtime_mode: RuntimeMode; seed: string; steps: number; guidance: number;
+  width: number; height: number; strength: number; count: number;
+  blend_feather: number; context_padding: number; scene_context: string;
+}
+export const defaultSettings: EditorSettings = {
+  preset: "quality", model_name: "flux2-klein-4b", prompt: "", negative_prompt: "", runtime_mode: "balanced",
+  seed: "", steps: 4, guidance: 1, width: 1024, height: 1024, strength: 1, count: 1,
+  blend_feather: 16, context_padding: 320, scene_context: "",
+};
+interface Props { settings: EditorSettings; onChange: (settings: EditorSettings) => void; models: ModelInfo[]; task: ImageTask; disabled: boolean }
+
+export function SettingsControls({ settings, onChange, models, task, disabled }: Props) {
+  function preset(value: GenerationPreset) {
+    const config = GENERATION_PRESETS[value];
+    onChange({ ...settings, preset: value, model_name: config.modelName, steps: config.steps, guidance: config.guidance });
+  }
+  return <fieldset className="settings-controls" disabled={disabled}>
+    <div className="prompt-options">
+      <div className="segmented" aria-label="Quality">{task !== "outpaint" && <button aria-pressed={settings.model_name === GENERATION_PRESETS.quality.modelName} onClick={() => preset("quality")}>Quality</button>}<button aria-pressed={settings.model_name === GENERATION_PRESETS.fast.modelName} onClick={() => preset("fast")}>{task === "outpaint" ? "Standard" : "Fast"}</button></div>
+      {task === "text-to-image" && <select aria-label="Image format" value={aspectPresetFor(settings.width, settings.height) ?? "custom"} onChange={event => { const config = ASPECT_PRESETS[event.target.value as AspectPreset]; if (config) onChange({ ...settings, width: config.width, height: config.height }); }}><option value="square">Square · 1:1</option><option value="landscape">Landscape · 4:3</option><option value="portrait">Portrait · 3:4</option><option value="wide">Wide · 16:9</option><option value="custom" disabled>Custom</option></select>}
+      <select aria-label="Number of proposals" value={settings.count} onChange={event => onChange({ ...settings, count: Number(event.target.value) })}>{[1, 2, 3, 4].map(count => <option key={count} value={count}>{count} {count === 1 ? "proposal" : "proposals"}</option>)}</select>
+    </div>
+      {task === "inpaint" && <div className="blend-controls">
+        <label>Edge blend <output>{settings.blend_feather}px</output><input aria-label="Edge blend" type="range" min="0" max="64" step="1" value={settings.blend_feather} onChange={event => onChange({ ...settings, blend_feather: Number(event.target.value) })} /></label>
+        <small>Helps nearby details flow into your selection. Grow the selection to include room for shadows or glow.</small>
+        <label>Surrounding context <output>{settings.context_padding}px</output><input aria-label="Surrounding context" type="range" min="32" max="1024" step="32" value={settings.context_padding} onChange={event => onChange({ ...settings, context_padding: Number(event.target.value) })} /></label>
+        <small>More surroundings help match scale, perspective and lighting. They stay protected.</small>
+        <label>Scene notes <textarea aria-label="Scene notes" rows={3} maxLength={1500} placeholder="Optional: violet dusk, soft light from the left, flowers in front of the subject…" value={settings.scene_context} onChange={event => onChange({ ...settings, scene_context: event.target.value })} /></label>
+      </div>}
+      <details className="advanced"><summary>Advanced controls</summary><div className="advanced-content">
+        <label>Model<select aria-label="Model" value={settings.model_name} onChange={event => { const name = event.target.value; if (name === "flux1-fill-dev") onChange({ ...settings, model_name: name, steps: 28, guidance: 30, runtime_mode: "safe" }); else preset(name === GENERATION_PRESETS.fast.modelName ? "fast" : "quality"); }}>{models.filter(model => model.capabilities.includes(task)).map(model => <option key={model.name} value={model.name}>{model.display_name}</option>)}</select></label>
+        {settings.model_name === "flux1-fill-dev" && <p>FLUX Fill requires access to gated model weights on Hugging Face.</p>}
+        <label>Memory usage<select value={settings.runtime_mode} onChange={event => onChange({ ...settings, runtime_mode: event.target.value as RuntimeMode })}><option value="balanced">Balanced</option><option value="safe">Lower VRAM</option><option value="performance">GPU resident</option></select></label>
+        <div className="settings-grid"><label>Steps<input type="number" min="1" max="100" value={settings.steps} onChange={event => onChange({ ...settings, steps: Number(event.target.value) })} /></label><label>Guidance<input type="number" min="0" max="30" step="0.1" value={settings.guidance} onChange={event => onChange({ ...settings, guidance: Number(event.target.value) })} /></label></div>
+        <label>Seed<input type="number" min="0" max="4294967295" placeholder="Random" value={settings.seed} onChange={event => onChange({ ...settings, seed: event.target.value })} /></label>
+        {task === "text-to-image" && <div className="settings-grid"><label>Width<input type="number" min="256" max="2048" step="32" value={settings.width} onChange={event => onChange({ ...settings, width: Number(event.target.value) })} /></label><label>Height<input type="number" min="256" max="2048" step="32" value={settings.height} onChange={event => onChange({ ...settings, height: Number(event.target.value) })} /></label></div>}
+        {task === "inpaint" && <label>Edit strength<input type="range" min="0.25" max="1" step="0.05" value={settings.strength} onChange={event => onChange({ ...settings, strength: Number(event.target.value) })} /></label>}
+        {settings.model_name !== "flux2-klein-4b" && <label>Avoid<input value={settings.negative_prompt} onChange={event => onChange({ ...settings, negative_prompt: event.target.value })} /></label>}
+        <small>Proposals run one at a time. Your selection controls which pixels change.</small>
+      </div></details>
+  </fieldset>;
+}

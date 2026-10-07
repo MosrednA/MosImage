@@ -1,0 +1,3 @@
+# Isolated experimental CUDA kernel dependency; not part of the app runtime.
+# Install with --no-deps --only-binary=:all: --target .nvfp4-deps.
+comfy-kitchen==0.2.37 --hash=sha256:31e1b59351d10374b6351f62a9130712e0cb06c90f059c25522ac1f79249fdb8

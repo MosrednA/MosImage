@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "seeds": [
+    7,
+    42,
+    20261007
+  ],
+  "steps": 4,
+  "guidance": 1.0,
+  "strength": 1.0,
+  "context_padding": 320,
+  "blend_feather": 16,
+  "max_dimension": 1024,
+  "fixtures": [
+    {
+      "name": "garden",
+      "image": "garden.png",
+      "mask": "garden.mask.png",
+      "width": 1254,
+      "height": 1254,
+      "image_sha256": "9c24bd59f3d3ac071e5d77a4ff93167d50421521d3a1e8d0281d10c64614c816",
+      "mask_sha256": "a74206f85c9e4c720e624855fa73a2f3f5fa65525864d51e6db05a47c4d0cc14",
+      "operation": "replace",
+      "prompt": "A small glowing orange mushroom growing naturally among the purple flowers.",
+      "criteria": [
+        "Complete mushroom replaces the terracotta sphere",
+        "Stem is grounded and occluded by flowers",
+        "Glow, texture and focus match the garden"
+      ],
+      "mask_bbox": [
+        240,
+        725,
+        541,
+        1031
+      ],
+      "selected_pixels": 90958,
+      "context_box": [
+        0,
+        405,
+        861,
+        1254
+      ],
+      "model_size": [
+        832,
+        832
+      ]
+    },
+    {
+      "name": "kitchen",
+      "image": "kitchen.png",
+      "mask": "kitchen.mask.png",
+      "width": 1254,
+      "height": 1254,
+      "image_sha256": "882255db276b5e81330b1af02a1f1262b0fb5be3d3a5edb0dba5d9f5d073dd87",
+      "mask_sha256": "8bad00687b7839cec9d6d813eb3affa0c72dbb4063c9b0bc2740c7efad555c62",
+      "operation": "remove",
+      "prompt": "Continuous white marble countertop with subtle gray veins and natural daylight.",
+      "criteria": [
+        "Mug, handle, reflection and contact shadow are removed",
+        "Marble veins continue naturally",
+        "No seam, smear or yellow color residue"
+      ],
+      "mask_bbox": [
+        596,
+        515,
+        1225,
+        1071
+      ],
+      "selected_pixels": 264899,
+      "context_box": [
+        276,
+        195,
+        1254,
+        1254
+      ],
+      "model_size": [
+        928,
+        1024
+      ]
+    },
+    {
+      "name": "portrait",
+      "image": "portrait.png",
+      "mask": "portrait.mask.png",
+      "width": 1254,
+      "height": 1254,
+      "image_sha256": "cf4e19b8d39e68a9cd38e4e7cd3e992232d395a11f1526983130fc5f7b58001d",
+      "mask_sha256": "13be22b8d0fc6749635d93f773c5575ab60652b5547d0cb2a130cd50ed3d7991",
+      "operation": "replace",
+      "prompt": "A small embroidered white daisy stitched onto the blue denim shirt.",
+      "criteria": [
+        "Daisy replaces the coral brooch",
+        "Embroidery follows the denim folds and lighting",
+        "Face, hair and remaining shirt are protected"
+      ],
+      "mask_bbox": [
+        742,
+        655,
+        851,
+        770
+      ],
+      "selected_pixels": 9835,
+      "context_box": [
+        422,
+        335,
+        1171,
+        1090
+      ],
+      "model_size": [
+        736,
+        736
+      ]
+    },
+    {
+      "name": "architecture",
+      "image": "architecture.png",
+      "mask": "architecture.mask.png",
+      "width": 1254,
+      "height": 1254,
+      "image_sha256": "7249d55fea86bb41508a445b33f1471e4ee27aae4bfa26f5211c3cb1958caa5f",
+      "mask_sha256": "b0789565c277f9713a085579058de741d16d92e29a1ad026f82fd01c78bd65af",
+      "operation": "replace",
+      "prompt": "A minimalist blue botanical illustration printed on cream paper inside the existing poster frame.",
+      "criteria": [
+        "Blue botanical illustration replaces the orange leaf",
+        "Print follows the existing perspective and paper lighting",
+        "Frame and bricks are protected"
+      ],
+      "mask_bbox": [
+        295,
+        198,
+        544,
+        717
+      ],
+      "selected_pixels": 118909,
+      "context_box": [
+        0,
+        0,
+        864,
+        1037
+      ],
+      "model_size": [
+        832,
+        1024
+      ]
+    }
+  ]
+}
