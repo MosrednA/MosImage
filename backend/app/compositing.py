@@ -28,12 +28,17 @@ class InpaintWorkspace:
     model_mask_path: Path
     model_output_path: Path
     color_correction: bool = True
+    # The area the model saw; it may reach past the picture (mirrored there).
+    model_box: CropBox | None = None
 
     def composite_to(self, destination: Path) -> tuple[int, int]:
         left, top, right, bottom = self.crop_box
-        native_size = (right - left, bottom - top)
+        model_left, model_top, model_right, model_bottom = self.model_box or self.crop_box
         with Image.open(self.model_output_path) as generated_file:
-            generated = generated_file.convert(self.source.mode).resize(native_size, Image.Resampling.LANCZOS)
+            generated = generated_file.convert(self.source.mode).resize(
+                (model_right - model_left, model_bottom - model_top), Image.Resampling.LANCZOS
+            )
+        generated = generated.crop((left - model_left, top - model_top, right - model_left, bottom - model_top))
 
         source_crop = self.source.crop(self.crop_box)
         mask_crop = self.composite_mask.crop(self.crop_box)
@@ -56,6 +61,7 @@ def prepare_inpaint_workspace(
     mask_growth: int = 0,
     composite_feather: float = 8.0,
     generation_feather: float | None = None,
+    center_selection: bool = False,
 ) -> InpaintWorkspace:
     with Image.open(source_path) as source_file:
         source = source_file.convert("RGBA" if "A" in source_file.getbands() or "transparency" in source_file.info else "RGB")
@@ -69,10 +75,15 @@ def prepare_inpaint_workspace(
         raise ValueError("The inpaint mask is empty.")
 
     crop_box = _context_box(selection_box, source.size, context_ratio, minimum_context)
-    source_crop = source.crop(crop_box)
+    # Models place a new subject near the middle of what they see. A selection
+    # near the picture's edge would sit off-centre in a clamped crop, so the
+    # subject drifted away from it; mirroring the missing context keeps the
+    # selection in the middle.
+    model_box = _context_box(selection_box, None, context_ratio, minimum_context) if center_selection else crop_box
+    source_crop = _mirrored_crop(source, model_box)
     # Pipelines supporting soft latent masks retain the user's alpha as well
     # as the inward transition. Other providers receive a binary footprint.
-    generation_mask = mask.crop(crop_box)
+    generation_mask = mask.crop(model_box)
     if generation_feather is None:
         generation_mask = generation_mask.point(lambda value: 255 if value else 0)
     model_mask_crop = _grow_mask(generation_mask, mask_growth)
@@ -103,6 +114,7 @@ def prepare_inpaint_workspace(
         model_input_path=model_input_path,
         model_mask_path=model_mask_path,
         model_output_path=model_output_path,
+        model_box=model_box,
     )
 
 
@@ -203,13 +215,16 @@ def _selection_alpha(mask: Image.Image) -> Image.Image:
 
 def _context_box(
     selection: CropBox,
-    image_size: tuple[int, int],
+    image_size: tuple[int, int] | None,
     context_ratio: float,
     minimum_context: int,
 ) -> CropBox:
+    """The selection plus its context, kept within the picture unless `image_size` is None."""
     left, top, right, bottom = selection
     selection_size = max(right - left, bottom - top)
     padding = max(minimum_context, round(selection_size * context_ratio))
+    if image_size is None:
+        return (left - padding, top - padding, right + padding, bottom + padding)
     image_width, image_height = image_size
     return (
         max(left - padding, 0),
@@ -217,6 +232,20 @@ def _context_box(
         min(right + padding, image_width),
         min(bottom + padding, image_height),
     )
+
+
+def _mirrored_crop(image: Image.Image, box: CropBox) -> Image.Image:
+    """Crops `box`, mirroring the picture's edges where the box reaches past them."""
+    left, top, right, bottom = box
+    width, height = image.size
+    if left >= 0 and top >= 0 and right <= width and bottom <= height:
+        return image.crop(box)
+    pixels = np.asarray(image)
+    before_x, before_y = max(0, -left), max(0, -top)
+    padding = [(before_y, max(0, bottom - height)), (before_x, max(0, right - width))] + [(0, 0)] * (pixels.ndim - 2)
+    padded = np.pad(pixels, padding, mode="symmetric")
+    x, y = left + before_x, top + before_y
+    return Image.fromarray(padded[y:y + bottom - top, x:x + right - left], mode=image.mode)
 
 
 def _model_size(native_size: tuple[int, int], max_dimension: int) -> tuple[int, int]:

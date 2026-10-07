@@ -152,6 +152,34 @@ class InpaintCompositingTests(unittest.TestCase):
                 self.assertEqual(generated_mask.getpixel((32, 32)), 128)
 
 
+    def test_a_selection_near_the_edge_stays_centred_for_the_model(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = Image.new("RGB", (256, 256), (40, 50, 60))
+            source.paste((200, 10, 10), (0, 0, 8, 256))
+            source.save(root / "source.png")
+            mask = Image.new("L", source.size, 0)
+            mask.paste(255, (16, 96, 80, 160))
+            mask.save(root / "mask.png")
+            workspace = prepare_inpaint_workspace(root / "source.png", root / "mask.png", root, 1024, 0, 64, center_selection=True)
+            self.assertEqual(workspace.crop_box, (0, 32, 144, 224))
+            self.assertEqual(workspace.model_box, (-48, 32, 144, 224))
+            with Image.open(workspace.model_mask_path) as model_mask:
+                left, _top, right, _bottom = model_mask.getbbox()
+                self.assertEqual(left, model_mask.width - right)
+            with Image.open(workspace.model_input_path) as model_input:
+                # The red edge is mirrored into the missing context.
+                self.assertEqual(model_input.getpixel((44, 10)), (200, 10, 10))
+                self.assertEqual(model_input.getpixel((52, 10)), (200, 10, 10))
+                self.assertEqual(model_input.getpixel((30, 10)), (40, 50, 60))
+                Image.new("RGB", model_input.size, (0, 200, 0)).save(workspace.model_output_path)
+            workspace = replace(workspace, color_correction=False)
+            self.assertEqual(workspace.composite_to(root / "result.png"), source.size)
+            with Image.open(root / "result.png") as result:
+                self.assertEqual(result.getpixel((48, 128)), (0, 200, 0))
+                self.assertEqual(result.getpixel((4, 128)), (200, 10, 10))
+                self.assertEqual(result.getpixel((100, 128)), (40, 50, 60))
+
 
 class ColorDriftCorrectionTests(unittest.TestCase):
     @staticmethod

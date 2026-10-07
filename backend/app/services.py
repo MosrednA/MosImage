@@ -124,6 +124,7 @@ def _run_masked_edit(
                 mask_growth=16 if task == "outpaint" else 0,
                 composite_feather=0 if task == "outpaint" else request.blend_feather,
                 generation_feather=request.blend_feather if task == "inpaint" and request.model_name in KLEIN_MODELS else None,
+                center_selection=task == "inpaint",
             )
             for index in range(request.count):
                 output_path = _new_image_path(settings.output_dir, "output")
