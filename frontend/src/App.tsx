@@ -6,7 +6,7 @@ import {
   selectObject, undoDocument, updateDocument,
 } from "./api";
 import { EditorCanvas } from "./canvas/EditorCanvas";
-import { CanvasTool } from "./canvas/tools";
+import { CanvasTool, toolForKey } from "./canvas/tools";
 import { ImageSize } from "./canvas/coordinates";
 import { ExpansionCanvas } from "./canvas/ExpansionCanvas";
 import { validExpansion } from "./canvas/expansion";
@@ -23,6 +23,7 @@ import { ProposalTray } from "./components/ProposalTray";
 import { JobOverlay } from "./components/JobOverlay";
 import { ExpansionDialog } from "./components/ExpansionDialog";
 import { WelcomeCanvas } from "./components/WelcomeCanvas";
+import { ShortcutsDialog } from "./components/ShortcutsDialog";
 import { CancellationRequest, isActiveJob, useJobPolling } from "./hooks/useJobPolling";
 
 interface JobContext { jobId: string; documentId: number | null; revisionId: number | null; operation: "inpaint" | "outpaint" | null }
@@ -54,7 +55,7 @@ export default function App() {
   const [compare, setCompare] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
-  const [panel, setPanel] = useState<"settings" | "expansion" | null>(null);
+  const [panel, setPanel] = useState<"settings" | "expansion" | "shortcuts" | null>(null);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const upload = useRef<HTMLInputElement>(null);
   const context = useRef<JobContext | null>(null);
@@ -111,23 +112,34 @@ export default function App() {
     };
     const keys = (event: KeyboardEvent) => {
       const typing = event.target instanceof HTMLElement && !!event.target.closest("input, textarea, select, [contenteditable], dialog");
-      if (typing || locked) return;
+      if (typing) return;
       const key = event.key.toLowerCase();
-      if ((event.ctrlKey || event.metaKey) && key === "o") { event.preventDefault(); upload.current?.click(); }
-      if ((event.ctrlKey || event.metaKey) && key === "z" && document) {
+      const ctrl = event.ctrlKey || event.metaKey;
+      if (event.key === "?") { setPanel("shortcuts"); return; }
+      if (reviewing && !busy) {
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          event.preventDefault();
+          const step = event.key === "ArrowRight" ? 1 : -1;
+          setSelected(index => (index + step + alternatives.length) % alternatives.length); setCompare(false);
+        }
+        if (ctrl && event.key === "Enter") { event.preventDefault(); void apply(); }
+        return;
+      }
+      if (locked) return;
+      if (ctrl && key === "o") { event.preventDefault(); upload.current?.click(); }
+      if (ctrl && key === "z" && document) {
         event.preventDefault();
         if (event.shiftKey ? document.can_redo : document.can_undo) void perform(() => travel(event.shiftKey ? "redo" : "undo"));
       }
-      if (!event.ctrlKey && !event.metaKey && source) {
-        if (key === "b") chooseTool("brush");
-        if (key === "o") chooseTool("object");
-        if (key === "v") chooseTool("move");
-        if (key === "e") chooseExpansion();
+      if (!ctrl && !event.altKey && source) {
+        if (key === "c") { chooseExpansion(); return; }
+        const next = toolForKey(key);
+        if (next) chooseTool(next);
       }
     };
     window.addEventListener("paste", paste); window.addEventListener("keydown", keys);
     return () => { window.removeEventListener("paste", paste); window.removeEventListener("keydown", keys); };
-  }, [locked, document, source, models, settings.model_name]);
+  }, [locked, busy, reviewing, alternatives.length, selected, proposal, document, source, models, settings.model_name, operation]);
 
   useJobPolling({
     job, setJob, cancellation,
@@ -211,6 +223,13 @@ export default function App() {
       queued(await selectObject(source, next), null); setPoints(next);
     });
   }
+  async function removePoint(index: number) {
+    if (!source || locked || index < 0 || index >= points.length) return;
+    const next = points.filter((_, position) => position !== index);
+    // Without an include point, the remaining exclusions select nothing.
+    if (!next.some(point => point.label)) { clearSelection(); return; }
+    await perform(async () => { queued(await selectObject(source, next), null); setPoints(next); });
+  }
   async function submit() {
     if (locked || !online || cudaBlocked) return;
     await perform(async () => {
@@ -228,7 +247,8 @@ export default function App() {
         for (const [key, value] of Object.entries(parameters)) if (value !== undefined) form.set(key, String(value));
         form.set("strength", String(settings.strength)); form.set("image", source); form.set("mask", mask, "mask.png");
         form.set("edit_operation", operation === "remove" ? "remove" : "replace");
-        form.set("blend_feather", String(settings.blend_feather));
+        // The canvas sends the final soft mask (Expand/Soften), so no extra server-side ramp.
+        form.set("blend_feather", "0");
         form.set("context_padding", String(settings.context_padding));
         form.set("scene_context", settings.scene_context);
         queued(await inpaintImage(form), "inpaint");
@@ -293,7 +313,9 @@ export default function App() {
       <div className="canvas-area">
         {source && sourceUrl ? operation === "expand" && size
           ? <ExpansionCanvas imageUrl={sourceUrl} size={size} expansion={expansion} onChange={setExpansion} disabled={locked} reviewing={reviewing} previewUrl={previewUrl} previewSize={chosen?.width && chosen.height ? { width: chosen.width, height: chosen.height } : null} />
-          : <EditorCanvas imageUrl={sourceUrl} previewImageUrl={previewUrl} reviewing={reviewing} imageName={document?.name} onMaskChange={setMask} tool={tool} onToolChange={chooseTool} disabled={locked} maskImportUrl={maskUrl} clearToken={clearToken} points={points} onObjectPoint={point => void objectPoint(point)} onImageSize={setSize} onError={setError} contextPadding={settings.context_padding} />
+          : <EditorCanvas imageUrl={sourceUrl} previewImageUrl={previewUrl} reviewing={reviewing} imageName={document?.name} onMaskChange={setMask} tool={tool} disabled={locked} maskImportUrl={maskUrl} clearToken={clearToken}
+            points={points} onObjectPoint={point => void objectPoint(point)} onRemovePoint={index => void removePoint(index)} onClearSelection={clearSelection}
+            onImageSize={setSize} onError={setError} contextPadding={settings.context_padding} onContextPadding={context_padding => setSettings(current => ({ ...current, context_padding }))} onHelp={() => setPanel("shortcuts")} />
           : previewUrl ? <div className="generated-preview"><img crossOrigin="anonymous" src={previewUrl} alt={chosen.prompt} /><span>{chosen.width} × {chosen.height}</span></div>
           : <WelcomeCanvas disabled={locked} onOpen={() => upload.current?.click()} />}
         {busy && <JobOverlay job={job} />}
@@ -301,10 +323,10 @@ export default function App() {
       </div>
       {reviewing
         ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} />
-        : <CommandCard operation={operation} onOperation={setOperation} hasImage={!!source} hasSelection={!!mask || points.length > 0} locked={locked}
+        : <CommandCard operation={operation} onOperation={setOperation} hasImage={!!source} locked={locked}
           settingsLabel={settingsSummary(settings, task)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
           hint={operationHint(operation, !!source, !!mask, tool)} cancelled={job?.status === "cancelled"} jobActive={jobActive} cancelling={cancelling} canSubmit={canSubmit}
-          onDeselect={clearSelection} onCanvasSize={() => setPanel("expansion")} onSettings={() => setPanel("settings")} onSubmit={() => void submit()} onCancel={() => void cancel()} />}
+          onCanvasSize={() => setPanel("expansion")} onSettings={() => setPanel("settings")} onSubmit={() => void submit()} onCancel={() => void cancel()} />}
       {(cudaBlocked || error) && <div className="error-notice" role="alert">
         <span>{error ?? system?.setup_hint ?? "CUDA is unavailable. Check the local PyTorch installation."}</span>
         {!online && <button onClick={() => void connect()}>Reconnect</button>}
@@ -313,6 +335,7 @@ export default function App() {
     </section>
     {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} task={task} disabled={locked} /></ControlDialog>}
     {panel === "expansion" && size && <ExpansionDialog size={size} expansion={expansion} onChange={setExpansion} disabled={locked} onClose={() => setPanel(null)} />}
+    {panel === "shortcuts" && <ShortcutsDialog onClose={() => setPanel(null)} />}
     {libraryOpen && <LibraryDrawer documents={documents} history={history} onClose={() => setLibraryOpen(false)} onDocument={item => void perform(() => openSaved(item))} onGeneration={item => void perform(() => openGeneration(item))} />}
   </main>;
 }

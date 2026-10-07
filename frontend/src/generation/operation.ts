@@ -22,8 +22,8 @@ export function operationHint(operation: Operation, hasImage: boolean, hasMask: 
   if (!hasImage) return "Describe a new image, or open one to edit.";
   if (hasMask) {
     return operation === "remove"
-      ? "Include the object, its shadow and any glow. Grow the selection if edges remain."
-      : "Describe the change. Leave room in your selection for the full subject and its shadow.";
+      ? "Include the object's shadow and glow. The soft edge blends the fill into its surroundings."
+      : "Describe what should appear. Leave room in the selection for the whole subject and its shadow.";
   }
-  return tool === "object" ? "Click an object. Alt + click to exclude parts." : "Select the area you want to change.";
+  return tool === "object" ? "Click an object to select it. Right-click to exclude a part." : "Paint or draw the area you want to change.";
 }

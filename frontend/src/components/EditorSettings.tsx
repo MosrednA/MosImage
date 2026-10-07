@@ -6,12 +6,12 @@ export interface EditorSettings {
   preset: GenerationPreset; model_name: string; prompt: string; negative_prompt: string;
   runtime_mode: RuntimeMode; seed: string; steps: number; guidance: number;
   width: number; height: number; strength: number; count: number;
-  blend_feather: number; context_padding: number; scene_context: string;
+  context_padding: number; scene_context: string;
 }
 export const defaultSettings: EditorSettings = {
   preset: "quality", model_name: "flux2-klein-4b-nvfp4", prompt: "", negative_prompt: "", runtime_mode: "balanced",
   seed: "", steps: 4, guidance: 1, width: 1024, height: 1024, strength: 1, count: 1,
-  blend_feather: 16, context_padding: 320, scene_context: "",
+  context_padding: 320, scene_context: "",
 };
 export function settingsSummary(settings: EditorSettings, task: ImageTask): string {
   const quality = settings.model_name === "flux1-fill-dev" ? "Fill" : task === "outpaint" ? "Standard" : settings.preset === "fast" ? "Fast" : "Quality";
@@ -33,11 +33,8 @@ export function SettingsControls({ settings, onChange, models, task, disabled }:
       <select aria-label="Number of proposals" value={settings.count} onChange={event => onChange({ ...settings, count: Number(event.target.value) })}>{[1, 2, 3, 4].map(count => <option key={count} value={count}>{count} {count === 1 ? "proposal" : "proposals"}</option>)}</select>
     </div>
       {task === "inpaint" && <div className="blend-controls">
-        <label>Edge blend <output>{settings.blend_feather}px</output><input aria-label="Edge blend" type="range" min="0" max="64" step="1" value={settings.blend_feather} onChange={event => onChange({ ...settings, blend_feather: Number(event.target.value) })} /></label>
-        <small>Helps nearby details flow into your selection. Grow the selection to include room for shadows or glow.</small>
-        <label>Surrounding context <output>{settings.context_padding}px</output><input aria-label="Surrounding context" type="range" min="32" max="1024" step="32" value={settings.context_padding} onChange={event => onChange({ ...settings, context_padding: Number(event.target.value) })} /></label>
-        <small>More surroundings help match scale, perspective and lighting. They stay protected.</small>
         <label>Scene notes <textarea aria-label="Scene notes" rows={3} maxLength={1500} placeholder="Optional: violet dusk, soft light from the left, flowers in front of the subject…" value={settings.scene_context} onChange={event => onChange({ ...settings, scene_context: event.target.value })} /></label>
+        <small>Edge softness and surrounding context are set on the canvas, where you can see their effect.</small>
       </div>}
       <details className="advanced"><summary>Advanced controls</summary><div className="advanced-content">
         <label>Model<select aria-label="Model" value={settings.model_name} onChange={event => { const name = event.target.value; if (name === "flux1-fill-dev") onChange({ ...settings, model_name: name, steps: 28, guidance: 30, runtime_mode: "safe" }); else { const value = presetForModel(name); const config = GENERATION_PRESETS[value]; onChange({ ...settings, preset: value, model_name: name, steps: config.steps, guidance: config.guidance }); } }}>{models.filter(model => model.capabilities.includes(task)).map(model => <option key={model.name} value={model.name}>{model.display_name}</option>)}</select></label>

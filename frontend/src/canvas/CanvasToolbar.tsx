@@ -1,25 +1,15 @@
-import { CanvasTool, MASK_TOOLS, toolLabel } from "./tools";
-import { MaskTransform } from "./useMaskLayer";
+import { CanvasTool, TOOLS } from "./tools";
 
 interface Props {
   tool: CanvasTool;
-  onToolChange: (tool: CanvasTool) => void;
   reviewing: boolean;
   disabled: boolean;
-  hasImage: boolean;
-  hasSelection: boolean;
-  showContext: boolean;
-  onToggleContext: () => void;
   brushSize: number;
   onBrushSize: (size: number) => void;
-  edgeSize: number;
-  onEdgeSize: (size: number) => void;
-  canUndo: boolean;
-  canRedo: boolean;
-  onUndo: () => void;
-  onRedo: () => void;
-  onTransform: (transform: MaskTransform) => void;
-  onClear: () => void;
+  subtract: boolean;
+  onSubtract: (subtract: boolean) => void;
+  pointCount: number;
+  onUndoPoint: () => void;
   zoom: number;
   fitToStage: boolean;
   atActualSize: boolean;
@@ -27,41 +17,31 @@ interface Props {
   onFit: () => void;
 }
 
+export const BRUSH_RANGE = { min: 4, max: 400 } as const;
+
+/** Options for the active tool, plus zoom. Selection edges live in SelectionBar. */
 export function CanvasToolbar(props: Props) {
-  const { tool, reviewing, disabled, hasSelection } = props;
+  const { tool, reviewing, disabled } = props;
   return <div className="editor-toolbar">
-    {!reviewing && hasSelection && <button aria-pressed={props.showContext} className={props.showContext ? "selected" : ""} title="Show the protected context sent with your selection" onClick={props.onToggleContext}>Context</button>}
-    {reviewing ? <span className="canvas-context-label">Review your proposal</span>
-      : tool === "object" || tool === "move" ? <span className="canvas-context-label">{tool === "object" ? "Object selection" : "Pan image"}</span>
-        : <div className="tool-group" aria-label="Selection tools">
-          {MASK_TOOLS.map(candidate => <button key={candidate} className={tool === candidate ? "selected" : ""} disabled={disabled} onClick={() => props.onToolChange(candidate)}>{toolLabel(candidate)}</button>)}
-        </div>}
-    {!reviewing && (tool === "brush" || tool === "eraser") && <label className="brush-control">
-      <span>Brush</span>
-      <input type="range" min="8" max="256" value={props.brushSize} onChange={event => props.onBrushSize(Number(event.target.value))} />
+    <span className="canvas-context-label">{reviewing ? "Review your proposal" : TOOLS[tool].label}</span>
+    {!reviewing && (tool === "brush" || tool === "eraser") && <label className="brush-control" title="Brush size · [ and ]">
+      <span>Size</span>
+      <input type="range" min={BRUSH_RANGE.min} max={BRUSH_RANGE.max} value={props.brushSize} disabled={disabled} onChange={event => props.onBrushSize(Number(event.target.value))} />
       <output>{props.brushSize}px</output>
     </label>}
-    {!reviewing && hasSelection && <details className="selection-details"><summary>Refine selection</summary><div className="selection-popover">
-      <label className="edge-control">
-        <span>Edge</span>
-        <input type="range" min="1" max="64" value={props.edgeSize} onChange={event => props.onEdgeSize(Number(event.target.value))} />
-        <output>{props.edgeSize}px</output>
-      </label>
-      <div className="tool-group mask-actions">
-        <button disabled={disabled || !props.canUndo} onClick={props.onUndo}>Undo mask</button>
-        <button disabled={disabled || !props.canRedo} onClick={props.onRedo}>Redo mask</button>
-        <button disabled={disabled} onClick={() => props.onTransform("grow")}>Grow</button>
-        <button disabled={disabled} onClick={() => props.onTransform("shrink")}>Shrink</button>
-        <button disabled={disabled} onClick={() => props.onTransform("feather")}>Feather</button>
-        <button disabled={disabled || !props.hasImage} onClick={() => props.onTransform("invert")}>Invert</button>
-        <button disabled={disabled} onClick={props.onClear}>Clear</button>
-      </div>
-    </div></details>}
+    {!reviewing && (tool === "rectangle" || tool === "lasso") && <div className="segmented compact" aria-label="Selection mode">
+      <button aria-pressed={!props.subtract} disabled={disabled} onClick={() => props.onSubtract(false)}>Add</button>
+      <button aria-pressed={props.subtract} disabled={disabled} title="Or hold Alt" onClick={() => props.onSubtract(true)}>Subtract</button>
+    </div>}
+    {!reviewing && tool === "object" && props.pointCount > 0 && <>
+      <span className="point-count">{props.pointCount} {props.pointCount === 1 ? "point" : "points"}</span>
+      <button disabled={disabled} title="Remove the last point · Backspace" onClick={props.onUndoPoint}>Undo point</button>
+    </>}
     <div className="zoom-controls">
-      <button aria-label="Zoom out" onClick={() => props.onZoom(props.zoom - 0.1)}>−</button>
-      <button className={props.fitToStage ? "selected" : ""} onClick={props.onFit}>Fit</button>
-      <button className={props.atActualSize ? "selected" : ""} onClick={() => props.onZoom(1)}>100%</button>
-      <button aria-label="Zoom in" onClick={() => props.onZoom(props.zoom + 0.1)}>+</button>
+      <button aria-label="Zoom out" title="Zoom out · Ctrl + scroll" onClick={() => props.onZoom(props.zoom / 1.25)}>−</button>
+      <button className={props.fitToStage ? "selected" : ""} title="Fit to window · Ctrl + 0" onClick={props.onFit}>Fit</button>
+      <button className={props.atActualSize ? "selected" : ""} title="Actual pixels · Ctrl + 1" onClick={() => props.onZoom(1)}>100%</button>
+      <button aria-label="Zoom in" title="Zoom in · Ctrl + scroll" onClick={() => props.onZoom(props.zoom * 1.25)}>+</button>
       <output>{Math.round(props.zoom * 100)}%</output>
     </div>
   </div>;

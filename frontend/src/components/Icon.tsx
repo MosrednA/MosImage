@@ -1,8 +1,11 @@
-export type IconName = "object" | "brush" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings";
+export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help";
 
 const paths: Record<IconName, string> = {
   object: "M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5M8 9l4-2 4 2v6l-4 2-4-2z",
   brush: "M14 5l5-2 2 2-2 5-9 9-5-5zM5 14c-4 1-2 5-4 7 5 0 7-1 7-4",
+  eraser: "M8 20h12M4.6 14.6l9.2-9.2a2 2 0 012.8 0l2 2a2 2 0 010 2.8L11 18.8H8.8zM9 10l5 5",
+  lasso: "M12 4c5 0 9 2.2 9 5s-4 5-9 5-9-2.2-9-5 4-5 9-5zM6.5 13c-1.5 2-.5 4 1.5 4s2.5 2 .5 4",
+  rectangle: "M4 5h3m3 0h4m3 0h3v3m0 3v2m0 3v3h-3m-3 0h-4m-3 0H4v-3m0-3v-2m0-3V5",
   expand: "M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5M9 9h6v6H9z",
   move: "M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4",
   library: "M3 4h7l2 3h9v13H3zM7 11h10M7 15h6",
@@ -13,6 +16,10 @@ const paths: Record<IconName, string> = {
   spark: "M12 3l2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4z",
   close: "M6 6l12 12M18 6L6 18",
   settings: "M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6",
+  eye: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 9a3 3 0 100 6 3 3 0 000-6z",
+  eyeOff: "M3 3l18 18M10.6 5.1A10 10 0 0112 5c6.4 0 10 7 10 7a17 17 0 01-3.2 4M6.6 6.6A17 17 0 002 12s3.6 7 10 7a9.6 9.6 0 005.4-1.6M9.9 9.9a3 3 0 004.2 4.2",
+  invert: "M12 3a9 9 0 110 18 9 9 0 010-18zM12 3v18M12 7h4M12 11h6M12 15h5",
+  help: "M12 21a9 9 0 100-18 9 9 0 000 18zM9.6 9.2a2.5 2.5 0 014.9.6c0 1.6-2.5 2.2-2.5 3.7M12 17h.01",
 };
 
 export function Icon({ name }: { name: IconName }) {

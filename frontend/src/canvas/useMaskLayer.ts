@@ -1,11 +1,11 @@
 import { PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
-import { featherMaskPixels, growMaskPixels, invertMaskPixels, shrinkMaskPixels } from "../masks/maskOperations";
+import { invertMaskPixels } from "../masks/maskOperations";
+import { EdgeSettings, MaskField, alphaBounds, overlayPixels, refineAlpha, signedDistanceField } from "../masks/maskRefine";
 import { ImageBox, maskBounds } from "./context";
 import { ImageSize, Point, viewportPointToImage } from "./coordinates";
 import { MaskTool } from "./tools";
 
 type SelectionOperation = "add" | "subtract";
-export type MaskTransform = "invert" | "grow" | "shrink" | "feather";
 
 interface MaskSnapshot { bytes: number; imageData: ImageData }
 
@@ -23,7 +23,8 @@ interface Options {
   imageSize: ImageSize | null;
   disabled: boolean;
   brushSize: number;
-  edgeSize: number;
+  edges: EdgeSettings;
+  zoom: number;
   clearToken: number;
   maskImportUrl: string | null;
   onMaskChange: (mask: Blob | null) => void;
@@ -31,10 +32,24 @@ interface Options {
 }
 
 const MAX_HISTORY_BYTES = 96 * 1024 * 1024;
+const OVERLAY_COLOR: [number, number, number] = [96, 165, 255];
+const EXPORT_DELAY = 120;
 
-/** The editable selection: a native-resolution alpha canvas with undo history and drawing gestures. */
-export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edgeSize, clearToken, maskImportUrl, onMaskChange, onError }: Options) {
+interface RefinedMask { box: ImageBox; alpha: Uint8ClampedArray }
+
+/**
+ * The editable selection. The drawing canvas holds the painted selection at
+ * native resolution, with undo history and gestures. Expand/Soften are applied
+ * non-destructively on top; the overlay canvas shows exactly the mask that is
+ * sent for inpainting.
+ */
+export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edges, zoom, clearToken, maskImportUrl, onMaskChange, onError }: Options) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const fieldRef = useRef<MaskField | null>(null);
+  const refinedRef = useRef<RefinedMask | null>(null);
+  const [fieldVersion, setFieldVersion] = useState(0);
+  const [drawing, setDrawing] = useState(false);
   const gestureRef = useRef<PointerGesture | null>(null);
   const undoStackRef = useRef<MaskSnapshot[]>([]);
   const redoStackRef = useRef<MaskSnapshot[]>([]);
@@ -50,18 +65,50 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edgeSiz
     undoStackRef.current = [];
     redoStackRef.current = [];
     touchHistory();
+    fieldRef.current = null;
+    refinedRef.current = null;
     setHasSelection(false);
     setSelectionBounds(null);
     onMaskChange(null);
   }, [imageUrl, onMaskChange]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!imageSize || !canvas) return;
-    canvas.width = imageSize.width;
-    canvas.height = imageSize.height;
-    canvas.getContext("2d")?.clearRect(0, 0, imageSize.width, imageSize.height);
+    if (!imageSize) return;
+    for (const canvas of [canvasRef.current, overlayRef.current]) {
+      if (!canvas) continue;
+      canvas.width = imageSize.width;
+      canvas.height = imageSize.height;
+      canvas.getContext("2d")?.clearRect(0, 0, imageSize.width, imageSize.height);
+    }
   }, [imageSize]);
+
+  // Re-apply the edge settings whenever the painted selection or a slider changes.
+  useEffect(() => {
+    const field = fieldRef.current;
+    if (!field) {
+      refinedRef.current = null;
+      maskVersionRef.current += 1;
+      setSelectionBounds(null);
+      drawOverlay();
+      onMaskChange(null);
+      return;
+    }
+    const alpha = refineAlpha(field, edges);
+    const refined = { box: field.box, alpha };
+    refinedRef.current = refined;
+    const bounds = alphaBounds(alpha, field.box);
+    setSelectionBounds(bounds);
+    drawOverlay();
+    const version = ++maskVersionRef.current;
+    if (!bounds) { onMaskChange(null); return; }
+    const timer = window.setTimeout(() => exportMask(refined, version), EXPORT_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [fieldVersion, edges.expand, edges.soften]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(drawOverlay);
+    return () => window.cancelAnimationFrame(frame);
+  }, [zoom]);
 
   useEffect(() => {
     if (!clearToken) return;
@@ -147,19 +194,20 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edgeSiz
     return viewportPointToImage({ x: event.clientX, y: event.clientY }, canvas.getBoundingClientRect(), imageSize);
   }
 
-  function begin(event: ReactPointerEvent<HTMLCanvasElement>, tool: MaskTool) {
+  function begin(event: ReactPointerEvent<HTMLCanvasElement>, tool: MaskTool, subtract = false) {
     const point = pointFor(event);
     const base = rememberMask();
     if (!point || !base) return;
     const gesture: PointerGesture = {
       pointerId: event.pointerId,
       tool,
-      operation: tool === "eraser" || event.altKey ? "subtract" : "add",
+      operation: tool === "eraser" || subtract || event.altKey ? "subtract" : "add",
       start: point,
       points: [point],
       base,
     };
     gestureRef.current = gesture;
+    setDrawing(true);
     event.currentTarget.setPointerCapture(event.pointerId);
     if (tool === "brush" || tool === "eraser") drawBrushSegment(gesture, point);
   }
@@ -191,6 +239,7 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edgeSiz
       touchHistory();
     }
     gestureRef.current = null;
+    setDrawing(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     emitMask();
   }
@@ -201,6 +250,7 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edgeSiz
     context2d()?.putImageData(gesture.base, 0, 0);
     undoStackRef.current.pop();
     gestureRef.current = null;
+    setDrawing(false);
     touchHistory();
     emitMask();
   }
@@ -247,18 +297,13 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edgeSiz
     context.restore();
   }
 
-  function transform(kind: MaskTransform) {
+  function invert() {
     const canvas = canvasRef.current;
     const context = context2d();
     const source = rememberMask();
     if (!canvas || !context || !source) return;
-    const pixels = { width: canvas.width, height: canvas.height, data: source.data };
-    const transformed = kind === "invert" ? invertMaskPixels(pixels)
-      : kind === "grow" ? growMaskPixels(pixels, edgeSize)
-        : kind === "shrink" ? shrinkMaskPixels(pixels, edgeSize)
-          : featherMaskPixels(pixels, edgeSize);
     const result = context.createImageData(canvas.width, canvas.height);
-    result.data.set(transformed);
+    result.data.set(invertMaskPixels({ width: canvas.width, height: canvas.height, data: source.data }));
     context.putImageData(result, 0, 0);
     emitMask();
   }
@@ -299,25 +344,55 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edgeSiz
     emitMask();
   }
 
+  /** The painted selection changed: rebuild its distance field. */
   function emitMask() {
     const canvas = canvasRef.current;
     const context = context2d();
     if (!canvas || !context) return;
-    const bounds = maskBounds(context.getImageData(0, 0, canvas.width, canvas.height));
-    setSelectionBounds(bounds);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    const bounds = maskBounds(pixels);
+    fieldRef.current = bounds ? signedDistanceField(pixels.data, canvas.width, canvas.height, bounds) : null;
     setHasSelection(bounds !== null);
-    const version = ++maskVersionRef.current;
-    if (!bounds) { onMaskChange(null); return; }
-    canvas.toBlob(blob => { if (version === maskVersionRef.current) onMaskChange(blob); }, "image/png");
+    setFieldVersion(version => version + 1);
+  }
+
+  function exportMask(refined: RefinedMask, version: number) {
+    if (!imageSize) return;
+    const { box, alpha } = refined;
+    const output = document.createElement("canvas");
+    output.width = imageSize.width;
+    output.height = imageSize.height;
+    const rgba = new ImageData(box.width, box.height);
+    for (let index = 0; index < alpha.length; index += 1) {
+      const offset = index * 4;
+      rgba.data[offset] = rgba.data[offset + 1] = rgba.data[offset + 2] = 255;
+      rgba.data[offset + 3] = alpha[index];
+    }
+    output.getContext("2d")?.putImageData(rgba, box.x, box.y);
+    output.toBlob(blob => { if (version === maskVersionRef.current) onMaskChange(blob); }, "image/png");
+  }
+
+  function drawOverlay() {
+    const overlay = overlayRef.current;
+    const context = overlay?.getContext("2d");
+    if (!overlay || !context) return;
+    context.clearRect(0, 0, overlay.width, overlay.height);
+    const field = fieldRef.current, refined = refinedRef.current;
+    if (!field || !refined) return;
+    const image = context.createImageData(field.box.width, field.box.height);
+    image.data.set(overlayPixels(field, edges, refined.alpha, Math.max(1, 1.5 / zoom), OVERLAY_COLOR));
+    context.putImageData(image, field.box.x, field.box.y);
   }
 
   return {
     canvasRef,
+    overlayRef,
+    drawing,
     hasSelection,
     selectionBounds,
     canUndo: undoStackRef.current.length > 0,
     canRedo: redoStackRef.current.length > 0,
-    undo, redo, clear, transform,
+    undo, redo, clear, invert,
     gesture: { begin, update, finish, cancel },
   };
 }

@@ -5,7 +5,6 @@ interface Props {
   operation: Operation;
   onOperation: (operation: "replace" | "remove") => void;
   hasImage: boolean;
-  hasSelection: boolean;
   locked: boolean;
   settingsLabel: string;
   prompt: string;
@@ -15,7 +14,6 @@ interface Props {
   jobActive: boolean;
   cancelling: boolean;
   canSubmit: boolean;
-  onDeselect: () => void;
   onCanvasSize: () => void;
   onSettings: () => void;
   onSubmit: () => void;
@@ -32,7 +30,6 @@ export function CommandCard(props: Props) {
             <button aria-pressed={operation === "replace"} disabled={locked} onClick={() => props.onOperation("replace")}>Replace</button>
             <button aria-pressed={operation === "remove"} disabled={locked} onClick={() => props.onOperation("remove")}>Remove</button>
           </div>
-          {props.hasSelection && <button className="quiet-button" disabled={locked} onClick={props.onDeselect}>Deselect</button>}
         </> : operation === "expand" ? <>
           <span>Expand image</span>
           <button className="quiet-button" disabled={locked} onClick={props.onCanvasSize}><Icon name="expand" />Canvas size</button>
