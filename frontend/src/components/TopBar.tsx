@@ -8,6 +8,8 @@ interface Props {
   onRename: (name: string) => void;
   online: boolean;
   system: SystemInfo | null;
+  /** Still trying to reach the engine, for example while the desktop app starts it. */
+  connecting: boolean;
   warmUp: JobStatus | null;
   locked: boolean;
   canExport: boolean;
@@ -18,7 +20,7 @@ interface Props {
   onExport: () => void;
 }
 
-export function TopBar({ document, onRename, online, system, warmUp, locked, canExport, onUndo, onRedo, onOpen, onLibrary, onExport }: Props) {
+export function TopBar({ document, onRename, online, connecting, system, warmUp, locked, canExport, onUndo, onRedo, onOpen, onLibrary, onExport }: Props) {
   return <header className="topbar">
     <a className="brand" href="#" onClick={event => event.preventDefault()} aria-label="MosImage"><span className="brand-mark">m<span>•</span></span><strong>MosImage</strong></a>
     <div className="document-title">
@@ -32,15 +34,16 @@ export function TopBar({ document, onRename, online, system, warmUp, locked, can
         <button className="icon-button" aria-label="Redo edit" title="Redo edit · Ctrl + Shift + Z" disabled={locked || !document?.can_redo} onClick={onRedo}><Icon name="redo" /></button>
         <button className="quiet-button" aria-label="Open image" title="Open image · Ctrl + O" disabled={locked} onClick={onOpen}><Icon name="upload" /><span>Open</span></button>
       </div>
-      <EngineStatus online={online} system={system} warmUp={warmUp} />
+      <EngineStatus online={online} connecting={connecting} system={system} warmUp={warmUp} />
       <button className="quiet-button" aria-label="Library" disabled={locked} onClick={onLibrary}><Icon name="library" /><span>Library</span></button>
       <button className="export-button" aria-label="Export image" title="Export the current image" disabled={!canExport || locked} onClick={onExport}><Icon name="download" /><span>Export</span></button>
     </div>
   </header>;
 }
 
-function EngineStatus({ online, system, warmUp }: { online: boolean; system: SystemInfo | null; warmUp: JobStatus | null }) {
+function EngineStatus({ online, connecting, system, warmUp }: { online: boolean; connecting: boolean; system: SystemInfo | null; warmUp: JobStatus | null }) {
   const device = system?.cuda_device ?? "Local engine";
+  if (!online && connecting) return <span className="engine-status warming" role="status" title="Starting the local engine…"><i />Starting</span>;
   if (!online) return <span className="engine-status offline" title={device}><i />Offline</span>;
   if (warmUp && isActiveJob(warmUp)) {
     const text = describeJob(warmUp);

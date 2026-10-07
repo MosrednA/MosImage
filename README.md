@@ -154,9 +154,14 @@ With the default 16 GB profile, MosImage keeps one large model hot at a time. Sw
 
 ## Desktop Shell
 
-Tauri is scaffolded under `frontend/src-tauri`. After installing Rust and dependencies:
+The Tauri desktop app in `frontend/src-tauri` is the same UI in its own window. After installing Rust and dependencies:
 
 ```powershell
 cd frontend
-npm run tauri:dev
+npm run tauri:dev    # development, with Vite
+npm run tauri:build  # mosimage.exe plus MSI and NSIS installers under src-tauri/target/release
 ```
+
+The app starts the engine itself from `backend/.venv` in the checkout it was built from (override with `MOSIMAGE_ROOT`), without a console window; output goes to `data/logs/engine.log`. If an engine is already listening on port 8000, for example from `start.cmd`, the app uses it and leaves it running. Like `backend/supervisor.ps1`, the app restarts its engine after a hard cancel or crash. On close it asks the engine to cancel jobs and unload models through `/api/shutdown`, guarded by a per-launch token, and ends it after 20 s if needed. A Windows job object ends the engine as well if the app itself crashes, so no Python process keeps RAM or GPU memory.
+
+The engine is not bundled into the installer: Python with CUDA PyTorch, Diffusers and the NVFP4 kernels is several gigabytes, and the models download to the Hugging Face cache on first use.

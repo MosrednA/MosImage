@@ -29,5 +29,21 @@ class EngineWarmUpTests(unittest.TestCase):
             self.assertIsNone(TestClient(main.app).get("/api/engine").json()["warm_up"])
 
 
+class EngineShutdownTests(unittest.TestCase):
+    def test_shutdown_is_hidden_without_a_token_from_the_desktop_app(self) -> None:
+        with patch.object(settings, "shutdown_token", None):
+            self.assertEqual(TestClient(main.app).post("/api/shutdown").status_code, 404)
+
+    def test_shutdown_needs_the_matching_token_and_then_exits_gracefully(self) -> None:
+        with patch.object(settings, "shutdown_token", "secret"), patch("app.main._schedule_exit") as schedule:
+            client = TestClient(main.app)
+            self.assertEqual(client.post("/api/shutdown").status_code, 403)
+            self.assertEqual(client.post("/api/shutdown", headers={"X-MosImage-Token": "wrong"}).status_code, 403)
+            schedule.assert_not_called()
+            response = client.post("/api/shutdown", headers={"X-MosImage-Token": "secret"})
+        self.assertEqual(response.status_code, 202)
+        schedule.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

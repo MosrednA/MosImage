@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import secrets
+import signal
 from contextlib import asynccontextmanager
 from threading import Thread
 from typing import Awaitable, Callable
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
@@ -89,6 +92,22 @@ def health() -> dict[str, str]:
 @app.get("/api/system")
 def system() -> dict:
     return system_info()
+
+
+@app.post("/api/shutdown", status_code=202)
+async def shutdown_engine(x_mosimage_token: str | None = Header(None)) -> dict[str, str]:
+    """Stops the engine the way Ctrl+C does: cancel jobs, unload models, exit."""
+    if not settings.shutdown_token:
+        raise HTTPException(status_code=404, detail="Not Found")
+    if not x_mosimage_token or not secrets.compare_digest(x_mosimage_token, settings.shutdown_token):
+        raise HTTPException(status_code=403, detail="Invalid shutdown token.")
+    _schedule_exit()
+    return {"status": "stopping"}
+
+
+def _schedule_exit() -> None:
+    # Just after the response is sent; uvicorn then runs the lifespan shutdown.
+    asyncio.get_running_loop().call_later(0.1, signal.raise_signal, signal.SIGINT)
 
 
 @app.get("/api/engine", response_model=EngineStatus)

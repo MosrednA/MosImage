@@ -33,6 +33,10 @@ interface JobContext { jobId: string; documentId: number | null; revisionId: num
 const initialExpansion: Expansion = { left: 128, top: 0, right: 128, bottom: 0 };
 const REFERENCES_COLLAPSED_KEY = "mosimage.referencesCollapsed";
 
+/** Python and model imports take a while on a cold start. */
+const ENGINE_START_PATIENCE = 90_000;
+const ENGINE_RETRY_INTERVAL = 1000;
+
 export default function App() {
   const [settings, setSettings] = useState(defaultSettings);
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -41,6 +45,7 @@ export default function App() {
   const [document, setDocument] = useState<DocumentRecord | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [online, setOnline] = useState(false);
+  const [connecting, setConnecting] = useState(true);
   const [job, setJob] = useState<JobStatus | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,13 +97,25 @@ export default function App() {
     const [nextHistory, nextDocuments] = await Promise.all([listHistory(), listDocuments()]);
     setHistory(nextHistory); setDocuments(nextDocuments);
   }
-  async function connect() {
-    try {
-      const [nextModels, nextSystem] = await Promise.all([listModels(), getSystemInfo(), refresh()]);
-      setModels(nextModels); setSystem(nextSystem); setOnline(true); setError(null);
-    } catch { setOnline(false); setError("The local engine is unavailable. Start MosImage with start.cmd, then reconnect."); }
+  /** Connects to the engine, retrying for `patience` ms while it starts up. */
+  async function connect(patience = 0) {
+    const deadline = Date.now() + patience;
+    setConnecting(true);
+    for (;;) {
+      try {
+        const [nextModels, nextSystem] = await Promise.all([listModels(), getSystemInfo(), refresh()]);
+        setModels(nextModels); setSystem(nextSystem); setOnline(true); setError(null);
+        break;
+      } catch {
+        if (Date.now() < deadline) { await new Promise(resolve => window.setTimeout(resolve, ENGINE_RETRY_INTERVAL)); continue; }
+        setOnline(false); setError("The local engine is unavailable. Reopen the MosImage app or run start.cmd, then reconnect.");
+        break;
+      }
+    }
+    setConnecting(false);
   }
-  useEffect(() => { void connect(); }, []);
+  // The desktop app starts the engine alongside the window, so give it time to come up.
+  useEffect(() => { void connect(ENGINE_START_PATIENCE); }, []);
   const warmUp = useEngineWarmUp(online, setModels);
 
   // Debounced autosave of the document name.
@@ -334,7 +351,7 @@ export default function App() {
     : operation === "remove" && refs.active.length ? "Switch to Replace to place the selected references." : null;
 
   return <main className={"focus-app" + (document ? " with-references" : "")}>
-    <TopBar document={document} onRename={name => document && setDocument({ ...document, name })} online={online} system={system} warmUp={warmUp} locked={locked} canExport={!!source}
+    <TopBar document={document} onRename={name => document && setDocument({ ...document, name })} online={online} connecting={connecting} system={system} warmUp={warmUp} locked={locked} canExport={!!source}
       onUndo={() => void perform(() => travel("undo"))} onRedo={() => void perform(() => travel("redo"))}
       onOpen={() => upload.current?.click()} onLibrary={() => setLibraryOpen(true)} onExport={exportImage} />
     <input ref={upload} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={onFile} />
@@ -360,7 +377,7 @@ export default function App() {
           onCanvasSize={() => setPanel("expansion")} onSettings={() => setPanel("settings")} onSubmit={() => void submit()} onCancel={() => void cancel()} />}
       {(cudaBlocked || error) && <div className="error-notice" role="alert">
         <span>{error ?? system?.setup_hint ?? "CUDA is unavailable. Check the local PyTorch installation."}</span>
-        {!online && <button onClick={() => void connect()}>Reconnect</button>}
+        {!online && !connecting && <button onClick={() => void connect()}>Reconnect</button>}
         {error && <button className="icon-button" aria-label="Dismiss message" onClick={() => setError(null)}><Icon name="close" /></button>}
       </div>}
     </section>
