@@ -17,19 +17,20 @@ These controls have different responsibilities:
 | Control | What it changes | Default |
 |---|---|---|
 | Painted selection | Where generated pixels may be returned | User selection |
+| Expand | Grows (or shrinks) the selection before the edge ramp, shown live on the canvas | +4 native px |
+| Soften | Outward smoothstep from the selection to the untouched image, shown live on the canvas | Auto: longest side / 40, 8–64 px |
 | Surrounding context | How much nearby scenery the model sees around the selection's bounding rectangle | 320 native px per side |
-| Edge blend | Gradual native mask during Klein sampling and an inward transition when returning pixels | 16 native px |
 | Scene notes | Optional lighting, perspective, material or foreground cues | Empty |
 
 The crop clamps to image edges and is resized to a maximum model-facing edge of 1024, with dimensions divisible by 32. The canvas Context toggle shows its protected rectangle at the current zoom. Inpainting uses the exact chosen padding; no hidden proportional increase changes the displayed rectangle. A full-frame second reference is not added automatically.
 
-The Klein generation mask preserves selection alpha and uses an inward smoothstep from zero at the painted boundary to full opacity inside. Its native mask processor is configured with `do_binarize=False`; otherwise the vendor default discards the gradual transition. The pipeline resizes mask values into latent space and mixes source and generated latents at each denoising step. Original scenery therefore contributes progressively near the edge during generation, rather than only being pasted back afterward. Other providers continue to receive the binary selected footprint. Zero Edge blend retains the user's soft alpha for Klein without adding a ramp.
+The Klein generation mask preserves selection alpha and uses an inward smoothstep from zero at the painted boundary to full opacity inside. Its native mask processor is configured with `do_binarize=False`; otherwise the vendor default discards the gradual transition. The pipeline resizes mask values into latent space and mixes source and generated latents at each denoising step. Original scenery therefore contributes progressively near the edge during generation, rather than only being pasted back afterward. Other providers continue to receive the binary selected footprint. The editor now sends its final soft mask with `blend_feather=0`, so Klein receives exactly the alpha shown on the canvas. The API's inward blend remains for other clients.
 
-Final blending independently uses the inward transition at native resolution. Existing soft alpha caps that transition instead of being multiplied twice. Manual mask feathering also stays within the painted footprint. There is no hidden generation-mask growth. Grow/shrink remain deliberate user actions. Outpainting retains its separate 16 px model overlap and exact protected original; inpaint controls do not silently change its behavior.
+Final blending uses the same alpha at native resolution. Existing soft alpha caps any API-side inward transition instead of being multiplied twice. There is no hidden generation-mask growth: Expand and Soften are visible canvas controls. Outpainting retains its separate 16 px model overlap and exact protected original; inpaint controls do not silently change its behavior.
 
 Select enough room for the complete object, shadow and glow. A mask describes editable space, not a guaranteed subject silhouette. Add context when nearby lighting, scale or perspective is missing; excessive context can reduce the subject's model-facing resolution. Start with a concise subject description, then add specific scene notes if needed. More feather cannot repair an already-clipped subject.
 
-For removal, include the existing object's halo and shadow as well as its silhouette. An inward blend preserves original pixels at the selection boundary; Grow the selection if traces remain there. The removal UI sends concise background content to Klein, while the provider adds the removal instruction once.
+For removal, include the existing object's halo and shadow as well as its silhouette. The default +4 px Expand and outward Soften cover anti-aliased object edges; raise Expand if traces remain. The removal UI sends concise background content to Klein, while the provider adds the removal instruction once.
 
 ## Local evidence
 
@@ -59,7 +60,7 @@ Generations 35 and 54 were applied, undone, redone and undone again through real
 
 Context visibility and padding changes were checked against canvas geometry. Settings were inspected at widths 1440, 390 and 320 without horizontal overflow; the modal keeps its heading and Done action visible while its controls scroll. The frontend build and 17 tests, plus backend syntax and 38 tests, pass.
 
-One scene does not establish universal seamless blending or prompt compliance. In this fixture the second default seed failed to insert the subject, and prompt changes reversed which seed succeeded. Preview proposals before applying; use the existing proposal count control to compare alternatives. A broad fixed suite, repeated edits, reference identity, tiny/irregular selections, shadow boundaries and VRAM/latency measurements remain evaluation work. Automatic color matching was not added: it can suppress an intentional glow or material change. Separate appearance reference uploads are deferred after the failed local trials; the shipped image context is the padded rectangle from the current document.
+One scene does not establish universal seamless blending or prompt compliance. In this fixture the second default seed failed to insert the subject, and prompt changes reversed which seed succeeded. Preview proposals before applying; use the existing proposal count control to compare alternatives. A broad fixed suite, repeated edits, reference identity, tiny/irregular selections, shadow boundaries and VRAM/latency measurements remain evaluation work. Automatic colour drift correction was added later; see the follow-up below. Separate appearance reference uploads are deferred after the failed local trials; the shipped image context is the padded rectangle from the current document.
 
 ## Repeated-seed reliability check
 
@@ -151,3 +152,13 @@ The job was cancelled at the user's request without applying an image. The local
 - [FLUX.1 Fill model card](https://huggingface.co/black-forest-labs/FLUX.1-Fill-dev) describes the 12B specialist, gate/license and possible color/texture edge artifacts; it does not guarantee seamless results.
 - [Klein Base 4B model card](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B) describes the undistilled Apache model and its sampling/offload example. [Klein 9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) documents the larger model and hardware/license differences.
 - [Qwen-Image 2.1 model card](https://huggingface.co/Qwen/Qwen-Image-2.1) describes region/reference editing and the visual component size. [Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) remains an Apache alternative with a different architecture and memory profile.
+
+## Follow-up: outward soft edge and colour drift correction
+
+Users could still see where the mask had been. Two causes were addressed.
+
+**Inward-only transition.** The old ramp started at zero on the painted boundary, so the original object's anti-aliased rim stayed in the result and the generated pixels reached full opacity only inside. The canvas now builds a signed chamfer distance field from the painted selection. Expand moves the boundary, then Soften adds an outward smoothstep. The overlay draws exactly the alpha that is uploaded. This matches Krita AI Diffusion's grow plus outward feather and the Klein guidance of a blur near width / 30 plus expansion for removals.
+
+**VAE colour drift.** Klein's untouched latents still pass through the VAE, which shifts colour and saturation slightly. A patch can show a uniform cast next to exact source pixels. `correct_color_drift` compares generated and source pixels in the unselected ring, skipping 12 px beyond any visible alpha and transparent outpaint padding. It extrapolates the difference with normalized Gaussian convolution at 128 px working size, clamps it to ±24 levels and adds it to the generated crop before compositing. Only very low frequencies move. The correction is estimated from surroundings the model was meant to reproduce, so an intentional glow or material change inside the selection keeps its relative contrast. A 2048 px crop takes about 0.2 s on the CPU. `InpaintWorkspace.color_correction=False` disables it.
+
+Object selection also uses SAM's three-mask output only for the first click. Refinement clicks ask for one mask, following the SAM authors' guidance for unambiguous prompts.

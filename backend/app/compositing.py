@@ -4,10 +4,19 @@ from dataclasses import dataclass
 from math import ceil
 from pathlib import Path
 
+import numpy as np
 from PIL import Image, ImageChops, ImageFilter
 
 
 CropBox = tuple[int, int, int, int]
+
+# Colour drift correction: the generated crop is compared with the source in
+# the untouched ring around the selection, and the smooth difference is added
+# to the generated pixels. This removes the faint "patch" left by VAE colour
+# drift without touching detail, because only very low frequencies are moved.
+DRIFT_LIMIT = 24.0
+DRIFT_GUARD = 12
+DRIFT_WORKING_SIZE = 128
 
 
 @dataclass(frozen=True)
@@ -18,6 +27,7 @@ class InpaintWorkspace:
     model_input_path: Path
     model_mask_path: Path
     model_output_path: Path
+    color_correction: bool = True
 
     def composite_to(self, destination: Path) -> tuple[int, int]:
         left, top, right, bottom = self.crop_box
@@ -27,6 +37,8 @@ class InpaintWorkspace:
 
         source_crop = self.source.crop(self.crop_box)
         mask_crop = self.composite_mask.crop(self.crop_box)
+        if self.color_correction:
+            generated = correct_color_drift(generated, source_crop, mask_crop)
         protected_crop = Image.composite(generated, source_crop, mask_crop)
         result = self.source.copy()
         result.paste(protected_crop, (left, top))
@@ -92,6 +104,59 @@ def prepare_inpaint_workspace(
         model_mask_path=model_mask_path,
         model_output_path=model_output_path,
     )
+
+
+def correct_color_drift(generated: Image.Image, source: Image.Image, mask: Image.Image) -> Image.Image:
+    """Match the generated crop's low-frequency colour to the source around the mask."""
+    # Reference pixels: unselected, a few pixels clear of the soft edge, and
+    # opaque in the source (outpaint padding carries no colour information).
+    # A box blur spreads any visible alpha over the guard radius cheaply.
+    reference = mask.filter(ImageFilter.BoxBlur(DRIFT_GUARD)).point(lambda value: 0 if value else 255)
+    if source.mode == "RGBA":
+        reference = ImageChops.darker(reference, source.getchannel("A").point(lambda value: 255 if value == 255 else 0))
+    if reference.getbbox() is None or mask.getbbox() is None:
+        return generated
+
+    bands = 3
+    generated_pixels = np.asarray(generated, dtype=np.float32)
+    source_pixels = np.asarray(source, dtype=np.float32)[..., :bands]
+    weight = np.asarray(reference, dtype=np.float32) / 255
+    difference = (source_pixels - generated_pixels[..., :bands]) * weight[..., None]
+
+    # Normalized convolution at a small working size: blur(weight * diff) /
+    # blur(weight) extrapolates the ring's drift smoothly into the selection.
+    height, width = weight.shape
+    scale = min(1.0, DRIFT_WORKING_SIZE / max(width, height))
+    small = (max(1, round(width * scale)), max(1, round(height * scale)))
+    small_weight = _resize_float(weight, small)
+    small_difference = np.stack([_resize_float(difference[..., band], small) for band in range(bands)], axis=-1)
+    sigma = max(2.0, max(small) / 10)
+    blur_x, blur_y = _gaussian_matrix(small[0], sigma), _gaussian_matrix(small[1], sigma)
+    blurred_weight = blur_y @ small_weight @ blur_x.T
+    blurred_difference = np.stack([blur_y @ small_difference[..., band] @ blur_x.T for band in range(bands)], axis=-1)
+    # A tiny share of the global mean fills regions far from any reference.
+    epsilon = 1e-3
+    global_drift = difference.sum(axis=(0, 1)) / max(float(weight.sum()), 1.0)
+    correction = (blurred_difference + epsilon * global_drift) / (blurred_weight[..., None] + epsilon)
+    correction = np.clip(correction, -DRIFT_LIMIT, DRIFT_LIMIT)
+    full = np.stack([_resize_float(correction[..., band], (width, height)) for band in range(bands)], axis=-1)
+
+    corrected = generated_pixels.copy()
+    corrected[..., :bands] = np.clip(generated_pixels[..., :bands] + full, 0, 255)
+    return Image.fromarray(np.rint(corrected).astype(np.uint8), mode=generated.mode)
+
+
+def _resize_float(values: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    image = Image.fromarray(values.astype(np.float32), mode="F")
+    if image.size == size:
+        return values.astype(np.float32)
+    resample = Image.Resampling.BOX if size[0] < image.width else Image.Resampling.BILINEAR
+    return np.asarray(image.resize(size, resample), dtype=np.float32)
+
+
+def _gaussian_matrix(length: int, sigma: float) -> np.ndarray:
+    positions = np.arange(length, dtype=np.float32)
+    return np.exp(-((positions[:, None] - positions[None, :]) ** 2) / (2 * sigma * sigma))
 
 
 def _grow_mask(mask: Image.Image, radius: int) -> Image.Image:

@@ -62,6 +62,9 @@ class ObjectSelector:
                 image_embeddings=self._embeddings,
                 input_points=inputs["input_points"],
                 input_labels=inputs["input_labels"],
+                # One click is ambiguous (part, object, group); pick the best of
+                # three. Refined clicks are not, and one mask follows them better.
+                multimask_output=len(request.points) == 1,
             )
             masks = processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"])[0]
             best = int(outputs.iou_scores[0, 0].argmax())

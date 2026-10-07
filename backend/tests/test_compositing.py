@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
-from app.compositing import _grow_mask, _inner_feather, prepare_inpaint_workspace
+from app.compositing import DRIFT_LIMIT, _grow_mask, _inner_feather, correct_color_drift, prepare_inpaint_workspace
 
 
 class InpaintCompositingTests(unittest.TestCase):
@@ -43,6 +45,8 @@ class InpaintCompositingTests(unittest.TestCase):
                 self.assertEqual(model_input.width % 32, 0)
 
             Image.new("RGB", model_size, (200, 0, 0)).save(workspace.model_output_path)
+            # Exact compositing values; colour drift correction is covered below.
+            workspace = replace(workspace, color_correction=False)
             self.assertEqual(workspace.composite_to(destination), source.size)
 
             with Image.open(destination) as result:
@@ -146,6 +150,63 @@ class InpaintCompositingTests(unittest.TestCase):
             workspace = prepare_inpaint_workspace(root / "source.png", root / "mask.png", root, 1024, 0, 32, generation_feather=0)
             with Image.open(workspace.model_mask_path) as generated_mask:
                 self.assertEqual(generated_mask.getpixel((32, 32)), 128)
+
+
+
+class ColorDriftCorrectionTests(unittest.TestCase):
+    @staticmethod
+    def _square_mask(size: int, start: int, end: int) -> Image.Image:
+        mask = Image.new("L", (size, size), 0)
+        mask.paste(255, (start, start, end, end))
+        return mask
+
+    def test_uniform_drift_inside_the_selection_is_removed(self) -> None:
+        source = Image.new("RGB", (160, 160), (100, 120, 140))
+        generated = Image.new("RGB", source.size, (110, 112, 146))
+        corrected = correct_color_drift(generated, source, self._square_mask(160, 50, 110))
+        for point in ((80, 80), (52, 52), (5, 5)):
+            for value, expected in zip(corrected.getpixel(point), (100, 120, 140)):
+                self.assertLessEqual(abs(value - expected), 1)
+
+    def test_new_detail_is_kept_while_its_colour_cast_is_corrected(self) -> None:
+        source = np.full((128, 128, 3), 90, dtype=np.uint8)
+        generated = source.astype(np.int16) + 12
+        generated[40:88, 40:88:2] += 60  # high-frequency stripes in the new content
+        corrected = np.asarray(correct_color_drift(
+            Image.fromarray(np.clip(generated, 0, 255).astype(np.uint8)), Image.fromarray(source), self._square_mask(128, 36, 92)
+        ), dtype=np.int16)
+        self.assertLessEqual(abs(int(corrected[64, 65, 0]) - 90), 1)
+        self.assertEqual(int(corrected[64, 64, 0]) - int(corrected[64, 65, 0]), 60)
+
+    def test_correction_is_clamped(self) -> None:
+        source = Image.new("RGB", (96, 96), (200, 200, 200))
+        generated = Image.new("RGB", source.size, (100, 100, 100))
+        corrected = correct_color_drift(generated, source, self._square_mask(96, 32, 64))
+        self.assertEqual(corrected.getpixel((48, 48)), (100 + int(DRIFT_LIMIT),) * 3)
+
+    def test_transparent_padding_and_full_masks_are_ignored(self) -> None:
+        source = Image.new("RGBA", (96, 96), (0, 0, 0, 0))
+        source.paste((50, 60, 70, 255), (0, 0, 48, 96))
+        generated = Image.new("RGBA", source.size, (55, 60, 70, 255))
+        mask = Image.new("L", source.size, 0)
+        mask.paste(255, (48, 0, 96, 96))
+        corrected = correct_color_drift(generated, source, mask)
+        self.assertEqual(corrected.getpixel((80, 48)), (50, 60, 70, 255))
+        full = Image.new("L", source.size, 255)
+        self.assertIs(correct_color_drift(generated, source, full), generated)
+
+    def test_workspace_composite_applies_the_correction_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (128, 128), (80, 90, 100)).save(root / "source.png")
+            self._square_mask(128, 48, 80).save(root / "mask.png")
+            workspace = prepare_inpaint_workspace(root / "source.png", root / "mask.png", root, 1024, 0, 32, composite_feather=0)
+            with Image.open(workspace.model_input_path) as model_input:
+                Image.new("RGB", model_input.size, (88, 90, 94)).save(workspace.model_output_path)
+            workspace.composite_to(root / "result.png")
+            with Image.open(root / "result.png") as result:
+                for value, expected in zip(result.getpixel((64, 64)), (80, 90, 100)):
+                    self.assertLessEqual(abs(value - expected), 1)
 
 
 if __name__ == "__main__":
