@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 
 from app.config import settings
+from app.jobs import JobCancelled
 from app.models.flux2_klein import Flux2KleinProvider, _inpaint_prompt
 from app.models.registry import ModelRegistry
 from app.models.z_image import ZImageTurboProvider
@@ -37,13 +38,28 @@ class Flux2KleinPlacementTests(unittest.TestCase):
         inpaint = MagicMock()
         vendor = SimpleNamespace(Flux2KleinPipeline=generation, Flux2KleinInpaintPipeline=inpaint)
         with patch.dict("sys.modules", {"diffusers": vendor}), patch.object(self.provider, "_place_pipeline"), patch.object(self.provider, "_collect") as collect:
-            self.provider._load_pipe("offload", "text-to-image")
-            self.provider._load_pipe("offload", "inpaint")
+            self.provider._load_pipe("offload", "text-to-image", MagicMock())
+            self.provider._load_pipe("offload", "inpaint", MagicMock())
             collect.assert_called_once()
             inpaint.from_pretrained.assert_called_once()
             inpaint.from_pretrained.return_value.mask_processor.register_to_config.assert_called_once_with(do_binarize=False)
             self.assertEqual(self.provider._task, "inpaint")
             self.assertIs(self.provider._pipe, inpaint.from_pretrained.return_value)
+
+    def test_failed_placement_is_not_reported_as_a_loaded_model(self) -> None:
+        with patch.object(self.provider, "_create_pipeline", return_value=MagicMock()), patch.object(self.provider, "_place_pipeline", side_effect=RuntimeError("out of memory")), patch.object(self.provider, "_collect"):
+            with self.assertRaisesRegex(RuntimeError, "out of memory"):
+                self.provider._load_pipe("offload", "inpaint", MagicMock())
+        self.assertFalse(self.provider.info().loaded)
+        self.assertEqual(self.provider.info().loaded_pipelines, [])
+
+    def test_cancel_during_placement_does_not_publish_the_pipeline(self) -> None:
+        control = MagicMock()
+        control.raise_if_cancelled.side_effect = [None, None, JobCancelled()]
+        with patch.object(self.provider, "_create_pipeline", return_value=MagicMock()), patch.object(self.provider, "_place_pipeline"), patch.object(self.provider, "_collect"):
+            with self.assertRaises(JobCancelled):
+                self.provider._load_pipe("offload", "inpaint", control)
+        self.assertFalse(self.provider.info().loaded)
 
     def test_inpaint_passes_mask_and_strength_to_the_model(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -76,7 +92,16 @@ class Flux2KleinPlacementTests(unittest.TestCase):
 class ModelRegistryTests(unittest.TestCase):
     def test_registry_lists_quality_fast_and_specialist_models(self) -> None:
         names = [model.name for model in ModelRegistry().list()]
-        self.assertEqual(names, ["flux2-klein-4b", "z-image-turbo", "flux1-fill-dev"])
+        self.assertEqual(names, ["flux2-klein-4b-nvfp4", "flux2-klein-4b", "z-image-turbo", "flux1-fill-dev"])
+
+    def test_switching_precision_releases_the_other_klein_pipeline(self) -> None:
+        registry = ModelRegistry()
+        for source, target in (("flux2-klein-4b", "flux2-klein-4b-nvfp4"), ("flux2-klein-4b-nvfp4", "flux2-klein-4b")):
+            with self.subTest(source=source):
+                provider = registry.get(source)
+                provider._pipe = object()
+                registry.activate(target)
+                self.assertFalse(provider.info().loaded)
 
     def test_activating_quality_releases_the_fast_pipeline(self) -> None:
         registry = ModelRegistry()

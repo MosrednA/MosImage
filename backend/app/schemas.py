@@ -19,7 +19,7 @@ class ModelInfo(BaseModel):
 
 
 class LoadModelRequest(BaseModel):
-    model_name: str = "flux2-klein-4b"
+    model_name: str = "flux2-klein-4b-nvfp4"
     task: Literal["text-to-image", "inpaint"] = "text-to-image"
     runtime_mode: RuntimeMode = "balanced"
     width: int = Field(default=1024, ge=256, le=2048)
@@ -29,7 +29,7 @@ class LoadModelRequest(BaseModel):
 class TextToImageRequest(BaseModel):
     prompt: str = Field(min_length=1)
     negative_prompt: str | None = None
-    model_name: str = "flux2-klein-4b"
+    model_name: str = "flux2-klein-4b-nvfp4"
     seed: int | None = None
     runtime_mode: RuntimeMode = "balanced"
     steps: int = Field(default=4, ge=1, le=100)
@@ -42,7 +42,7 @@ class TextToImageRequest(BaseModel):
 class InpaintForm(BaseModel):
     prompt: str = Field(min_length=1)
     negative_prompt: str | None = None
-    model_name: str = "flux2-klein-4b"
+    model_name: str = "flux2-klein-4b-nvfp4"
     seed: int | None = None
     runtime_mode: RuntimeMode = "balanced"
     steps: int = Field(default=4, ge=1, le=100)

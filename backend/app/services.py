@@ -14,6 +14,7 @@ from .compositing import prepare_inpaint_workspace
 from .config import settings
 from .jobs import JobControl
 from .models.registry import registry
+from .models.flux2_klein_nvfp4 import KLEIN_MODELS
 from .schemas import InpaintForm, OutpaintForm, TextToImageRequest
 
 
@@ -115,7 +116,7 @@ def _run_masked_edit(
                 settings.inpaint_minimum_context if task == "outpaint" else request.context_padding,
                 mask_growth=16 if task == "outpaint" else 0,
                 composite_feather=0 if task == "outpaint" else request.blend_feather,
-                generation_feather=request.blend_feather if task == "inpaint" and request.model_name == "flux2-klein-4b" else None,
+                generation_feather=request.blend_feather if task == "inpaint" and request.model_name in KLEIN_MODELS else None,
             )
             for index in range(request.count):
                 output_path = _new_image_path(settings.output_dir, "output")

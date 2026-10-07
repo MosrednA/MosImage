@@ -110,7 +110,7 @@ def generate(request: TextToImageRequest) -> JobResponse:
 async def inpaint(
     prompt: str = Form(...),
     negative_prompt: str | None = Form(None),
-    model_name: str = Form("flux2-klein-4b"),
+    model_name: str = Form("flux2-klein-4b-nvfp4"),
     seed: int | None = Form(None),
     runtime_mode: str = Form("balanced"),
     steps: int = Form(4),

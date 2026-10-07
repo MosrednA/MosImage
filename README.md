@@ -1,6 +1,6 @@
 # MosImage
 
-MosImage is a local AI canvas editor with an English Focus interface. Generate an image, select an object, replace or remove it, or expand the canvas. FLUX.2 Klein 4B is the Quality default for generation and editing; Z-Image Turbo is the Fast option and the automatic Standard route for expansion. SAM 2.1 Tiny provides local point selection and refinement.
+MosImage is a local AI canvas editor with an English Focus interface. Generate an image, select an object, replace or remove it, or expand the canvas. FLUX.2 Klein 4B Distilled NVFP4 is the Quality default for generation and editing on the target RTX 5070 Ti; BF16 remains selectable in Advanced controls; Z-Image Turbo is the Fast option and the automatic Standard route for expansion. SAM 2.1 Tiny provides local point selection and refinement.
 
 ## Product direction and implementation status
 
@@ -49,7 +49,9 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-The default profile is tuned for Ryzen 7 9700X, 32 GB RAM, and RTX 5070 Ti 16 GB:
+The default profile is tuned for Ryzen 7 9700X, 32 GB RAM, and RTX 5070 Ti 16 GB. `requirements.txt` includes Comfy Kitchen 0.2.37; an existing environment can install the validated Windows wheel separately with `python -m pip install --no-deps --only-binary=:all: --require-hashes -r requirements-nvfp4-benchmark.txt` from `backend/`. Restart the API after installing. Other GPUs can select FLUX.2 Klein 4B (BF16) under Generation settings → Advanced controls → Model.
+
+Default runtime behavior:
 
 - CUDA is preferred with `bfloat16`.
 - TF32 is enabled for faster CUDA matrix operations.
@@ -112,7 +114,7 @@ Transparent images stay RGBA in documents and protected compositing. Model input
 
 The UI exposes Quality/Fast presets and keeps technical controls under Settings:
 
-- `Quality` uses FLUX.2 Klein 4B at its distilled 4-step, guidance 1.0 settings. Generation uses `Flux2KleinPipeline`; editing uses `Flux2KleinInpaintPipeline`, which receives the actual mask and edit strength. Switching tasks releases the previous pipeline. Balanced mode uses model CPU offload while inference runs on CUDA.
+- `Quality` uses FLUX.2 Klein 4B Distilled NVFP4 at four steps and guidance 1.0; BF16 remains selectable in Advanced controls. Generation uses `Flux2KleinPipeline`; editing uses `Flux2KleinInpaintPipeline`, which receives the actual mask and edit strength. Switching tasks or precision releases the previous pipeline. Balanced mode uses model CPU offload while inference runs on CUDA.
 - `Fast` uses Z-Image Turbo at 8 steps for quick iteration.
 - `FLUX.1 Fill Dev (specialist)` has an optional Advanced adapter, but its current BF16 component-offload route is not ready for the 16 GB profile: the 12B transformer alone exceeds that GPU's memory. A measured quantized or finer-grained offload route is required before use on this profile. The weights are gated and non-commercially licensed. Quality remains on FLUX.2 Klein by default; see the [next model comparisons](INPAINTING_2026-10-07.md#next-model-and-sampling-comparisons).
 
@@ -136,7 +138,7 @@ While a job is queued, loading or generating, **Cancel** replaces the primary Ge
 
 When launched with `start.cmd`, the backend runs under a local supervisor. Cancel first uses the model's cooperative diffusion callback; if native CUDA code does not yield within eight seconds, the worker is replaced automatically so GPU memory is released. The UI tolerates the brief reconnection and the cancelled job disappearing from the replacement worker, then restores the editing controls. A cancelled queued job can finish immediately; a running job reports `cancelling` until its callback and cleanup return.
 
-The current Klein app adapter loads `black-forest-labs/FLUX.2-klein-4B`, the distilled four-step checkpoint, in BF16. An isolated native NVFP4 benchmark now loads the official quantized transformer through Comfy Kitchen CUDA kernels and the same inpaint pipeline. Across four fixed scenes and three seeds each, median warmed edit time fell from 9.82 to 6.26 s, with similar visual behavior and exact protected pixels. Transformer storage fell from 7.22 to 2.29 GiB; whole-pipeline peak PyTorch GPU allocation stayed near 9.1 GiB because text encoding remains BF16. NVFP4 is experimental tooling, not yet an app model option. See the [full results and limitations](benchmarks/NVFP4_RESULTS_2026-10-07.md).
+The Quality app adapter loads the official `black-forest-labs/FLUX.2-klein-4b-nvfp4` distilled transformer with native Comfy Kitchen CUDA kernels, plus the original BF16 text encoder and VAE. The NVFP4 transformer and base components use the exact revisions in the benchmark protocol. The BF16 adapter remains available for comparison. Both support generation and native masked editing with one resident pipeline, cancellation, local context and inward feathering. NVFP4 requires a Blackwell GPU, CUDA 13 and the BF16 component profile; unsupported configurations report an explicit error before downloading weights. Across four fixed scenes and three seeds each, median warmed edit time fell from 9.82 to 6.26 s, with similar visual behavior and exact protected pixels. Transformer storage fell from 7.22 to 2.29 GiB; whole-pipeline peak PyTorch GPU allocation stayed near 9.1 GiB because text encoding remains BF16. The app and cached-only benchmark now share the same native loader. Quality uses four steps and guidance 1; inpainting defaults remain strength 1, context 320 px and edge blend 16 px. See the [full results and limitations](benchmarks/NVFP4_RESULTS_2026-10-07.md).
 
 ## Hot Loading
 

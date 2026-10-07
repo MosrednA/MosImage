@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.models.base import ImageModelProvider
 from app.jobs import JobControl
 from app.models.flux2_klein import Flux2KleinProvider
+from app.models.flux2_klein_nvfp4 import Flux2KleinNvfp4Provider
 from app.models.flux_fill import FluxFillProvider
 from app.models.z_image import ZImageTurboProvider
 from app.schemas import LoadModelRequest, ModelInfo
@@ -11,6 +12,7 @@ from app.schemas import LoadModelRequest, ModelInfo
 class ModelRegistry:
     def __init__(self) -> None:
         self._providers: dict[str, ImageModelProvider] = {
+            "flux2-klein-4b-nvfp4": Flux2KleinNvfp4Provider(),
             "flux2-klein-4b": Flux2KleinProvider(),
             "z-image-turbo": ZImageTurboProvider(),
             "flux1-fill-dev": FluxFillProvider(),

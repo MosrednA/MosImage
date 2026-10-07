@@ -32,7 +32,7 @@ class Flux2KleinProvider:
     """Generation and mask-conditioned editing with one resident pipeline."""
 
     name = "flux2-klein-4b"
-    display_name = "FLUX.2 Klein 4B"
+    display_name = "FLUX.2 Klein 4B (BF16)"
     model_id = "black-forest-labs/FLUX.2-klein-4B"
 
     def __init__(self) -> None:
@@ -57,7 +57,7 @@ class Flux2KleinProvider:
             control.raise_if_cancelled()
             require_generation_device()
             torch = self._load_torch()
-            pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image")
+            pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
             control.set_progress(0.15)
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
             generator = torch.Generator(selected_device(torch)).manual_seed(seed)
@@ -89,7 +89,7 @@ class Flux2KleinProvider:
             control.raise_if_cancelled()
             require_generation_device()
             torch = self._load_torch()
-            pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint")
+            pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control)
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
             generator = torch.Generator(selected_device(torch)).manual_seed(seed)
             with Image.open(input_path) as source:
@@ -120,7 +120,7 @@ class Flux2KleinProvider:
         try:
             control.raise_if_cancelled()
             require_generation_device()
-            self._load_pipe(self._placement_for(request.runtime_mode), request.task)
+            self._load_pipe(self._placement_for(request.runtime_mode), request.task, control)
             control.set_progress(0.95)
         except JobCancelled:
             self.unload()
@@ -132,31 +132,45 @@ class Flux2KleinProvider:
         self._task = None
         self._collect()
 
-    def _load_pipe(self, placement: Placement, task: PipelineTask) -> Any:
+    def _load_pipe(self, placement: Placement, task: PipelineTask, control: JobControl) -> Any:
+        control.raise_if_cancelled()
         if self._pipe is not None and (self._placement != placement or self._task != task):
             self._pipe = None
             self._placement = None
             self._task = None
             self._collect()
         if self._pipe is None:
-            from diffusers import Flux2KleinInpaintPipeline, Flux2KleinPipeline
-
-            pipeline_class = Flux2KleinInpaintPipeline if task == "inpaint" else Flux2KleinPipeline
-            self._pipe = pipeline_class.from_pretrained(
-                self.model_id,
-                torch_dtype=selected_dtype(),
-                low_cpu_mem_usage=True,
-                token=settings.huggingface_token,
-                use_safetensors=True,
-            )
-            if task == "inpaint":
-                # Keep the inward alpha ramp during latent sampling; the
-                # default binary processor would discard the soft boundary.
-                self._pipe.mask_processor.register_to_config(do_binarize=False)
-            self._place_pipeline(self._pipe, placement)
+            pipe = None
+            try:
+                pipe = self._create_pipeline(task, control)
+                control.raise_if_cancelled()
+                if task == "inpaint":
+                    # Preserve the inward ramp during latent sampling.
+                    pipe.mask_processor.register_to_config(do_binarize=False)
+                self._place_pipeline(pipe, placement)
+                control.raise_if_cancelled()
+            except BaseException:
+                pipe = None
+                self._collect()
+                raise
+            # Publish only after loading, placement and cancellation checks.
+            self._pipe = pipe
             self._placement = placement
             self._task = task
         return self._pipe
+
+    def _create_pipeline(self, task: PipelineTask, control: JobControl) -> Any:
+        from diffusers import Flux2KleinInpaintPipeline, Flux2KleinPipeline
+
+        control.raise_if_cancelled()
+        pipeline_class = Flux2KleinInpaintPipeline if task == "inpaint" else Flux2KleinPipeline
+        return pipeline_class.from_pretrained(
+            self.model_id,
+            torch_dtype=selected_dtype(),
+            low_cpu_mem_usage=True,
+            token=settings.huggingface_token,
+            use_safetensors=True,
+        )
 
     def _load_torch(self) -> Any:
         if self._torch is None:

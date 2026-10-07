@@ -12,6 +12,8 @@ safetensors==0.8.0
 # Hub 2.x conflicts with Diffusers 0.41; newest compatible 1.x release.
 huggingface_hub[hf_xet]==1.33.0
 diffusers==0.41.0
+# Native Blackwell NVFP4 kernels; validated Windows cp312-abi3 wheel.
+comfy-kitchen==0.2.37
 # Security-sensitive transitive dependencies: do not regress on a fresh install.
 anyio==4.15.1
 fsspec==2026.9.0

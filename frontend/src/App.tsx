@@ -9,7 +9,7 @@ import { CanvasTool, EditorCanvas } from "./canvas/EditorCanvas";
 import { ImageSize } from "./canvas/coordinates";
 import { ExpansionCanvas } from "./canvas/ExpansionCanvas";
 import { expansionForRatio, expansionSize, validExpansion } from "./canvas/expansion";
-import { GENERATION_PRESETS } from "./generation/presets";
+import { GENERATION_PRESETS, isKleinModel } from "./generation/presets";
 import { SettingsControls, defaultSettings } from "./components/EditorSettings";
 import { Icon } from "./components/Icon";
 import { ControlDialog } from "./components/ControlDialog";
@@ -233,7 +233,7 @@ export default function App() {
     await perform(async () => {
       let prompt = settings.prompt.trim();
       if (operation === "remove") {
-        prompt = settings.model_name === "flux2-klein-4b"
+        prompt = isKleinModel(settings.model_name)
           ? prompt || "Continue the surrounding background."
           : "Remove the selected object completely. Reconstruct the background naturally, matching the surrounding lighting, texture and perspective. " + prompt;
       }

@@ -32,13 +32,13 @@ cd backend
 
 The evaluation cohort is seeds **7, 42, 20261007** for each image and precision: 12 outputs per model, all retained. A separate seed 99999 warms the pipeline and is excluded from visual/performance results. Both precisions use the same native `Flux2KleinInpaintPipeline`, BF16 text encoder and VAE, four distilled steps, guidance 1.0, strength 1.0, prompt construction and exact compositor. The only changed component is the transformer and its GEMM precision.
 
-NVFP4 uses the official distilled transformer checkpoint with its calibrated input/global/block scales. The experimental loader calls Comfy Kitchen's CUDA activation quantization and NVFP4 GEMM directly, disables eager/Triton fallbacks and records successful kernel calls. It does not dequantize weights to BF16 for inference. Remaining transformer projections/norms and pipeline components retain their original BF16 precision. QKV splits preserve complete 128-row scale tiles.
+NVFP4 uses the official distilled transformer checkpoint with its calibrated input/global/block scales. The native loader shared with the app calls Comfy Kitchen's CUDA activation quantization and NVFP4 GEMM directly, disables eager/Triton fallbacks and records successful kernel calls. It does not dequantize weights to BF16 for inference. Remaining transformer projections/norms and pipeline components retain their original BF16 precision. QKV splits preserve complete 128-row scale tiles.
 
-The kernel library is an isolated optional install, separate from the application requirements:
+The kernel library is pinned in the application requirements. The original experiment used an isolated install; the benchmark now imports the same app runtime. For a separately hash-verified Windows wheel install:
 
 ```powershell
 cd backend
-.\.venv\Scripts\python.exe -m pip install --only-binary=:all: --no-deps --target .nvfp4-deps -r requirements-nvfp4-benchmark.txt
+.\.venv\Scripts\python.exe -m pip install --only-binary=:all: --no-deps --require-hashes -r requirements-nvfp4-benchmark.txt
 ```
 
 Version 0.2.37 was checked against PyPI on 7 October 2026, supports the local Windows/Python 3.13/CUDA 13.0 runtime, and had no known OSV advisory at the time of the check. This is not a security audit. Model files use safetensors. The Apache-2.0 kernel package is used directly; no ComfyUI GPL source is copied into MosImage.
@@ -55,7 +55,7 @@ The script refuses to run if the API has a loaded model and verifies frozen asse
 
 Review **every seed**, scoring requested-content compliance, grounding/perspective and texture/lighting/seams separately. Protected pixels and output dimensions are automated checks, not evidence of a visually seamless edit. Matching seeds do not imply pixel-identical results after quantization. Never pick only the best seed when deciding the default runtime.
 
-The UI's Quality provider remains BF16 until an application adapter and broader reliability validation are completed. This fixture suite can also compare future models and masking/context approaches without changing the source images or seed cohort.
+The UI's Quality provider now uses native NVFP4 on the target Blackwell GPU; BF16 remains selectable in Advanced controls. Integration does not establish broadly seamless editing quality. This fixture suite can also compare future models and masking/context approaches without changing the source images or seed cohort.
 
 ## Completed run and review
 
@@ -74,7 +74,7 @@ Open `data/nvfp4-benchmark/index.html` in a browser, or run the restricted local
 
 The review then appears at `http://127.0.0.1:5182`. It serves only benchmark results/assets, not the repository or environment files. The main editor remains on `http://localhost:5173`.
 
-Optional adapter verification, requiring CUDA and the isolated kernel dependency:
+Optional adapter verification, requiring a Blackwell CUDA GPU and the app kernel dependency:
 
 ```powershell
 cd backend

@@ -19,13 +19,15 @@ class OutpaintTests(unittest.TestCase):
     def test_expansion_uses_a_mask_conditioned_default_and_rejects_klein(self) -> None:
         request = OutpaintForm(prompt="scene", left=32)
         self.assertEqual((request.model_name, request.steps, request.guidance), ("z-image-turbo", 8, 0))
-        response = TestClient(app).post(
-            "/api/outpaint",
-            files={"image": ("source.png", b"not read for an unsupported model", "image/png")},
-            data={"parameters": '{"prompt":"scene","left":32,"model_name":"flux2-klein-4b"}'},
-        )
-        self.assertEqual(response.status_code, 422)
-        self.assertIn("mask-conditioned", response.json()["detail"])
+        for model in ("flux2-klein-4b", "flux2-klein-4b-nvfp4"):
+            with self.subTest(model=model):
+                response = TestClient(app).post(
+                    "/api/outpaint",
+                    files={"image": ("source.png", b"not read for an unsupported model", "image/png")},
+                    data={"parameters": '{"prompt":"scene","left":32,"model_name":"' + model + '"}'},
+                )
+                self.assertEqual(response.status_code, 422)
+                self.assertIn("mask-conditioned", response.json()["detail"])
 
     def test_expansion_preserves_every_original_rgba_pixel(self) -> None:
         source = Image.new("RGBA", (96, 64), (10, 20, 30, 125))
