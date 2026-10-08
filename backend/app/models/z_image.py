@@ -89,8 +89,9 @@ class ZImageTurboProvider:
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
             generator = torch.Generator(selected_device(torch)).manual_seed(seed)
 
-            init_image = Image.open(input_path).convert("RGB")
-            mask_image = Image.open(mask_path).convert("L").resize(init_image.size)
+            with Image.open(input_path) as source_file, Image.open(mask_path) as mask_file:
+                init_image = source_file.convert("RGB")
+                mask_image = mask_file.convert("L").resize(init_image.size)
             placement = self._inpaint_placement_for(request.runtime_mode)
             if self._inpaint_pipe is None or self._inpaint_placement != placement:
                 control.set_phase("loading", self.display_name)
@@ -147,19 +148,22 @@ class ZImageTurboProvider:
             self._text_placement = None
             self._collect()
         if self._text_pipe is None:
-            if settings.max_loaded_pipelines <= 1:
-                self._inpaint_pipe = None
-                self._inpaint_placement = None
-                self._collect()
             from diffusers import ZImagePipeline
 
-            self._text_pipe = ZImagePipeline.from_pretrained(
-                self.model_id,
-                torch_dtype=selected_dtype(),
-                low_cpu_mem_usage=True,
-                token=settings.huggingface_token,
-                use_safetensors=True,
-            )
+            if self._inpaint_pipe is not None:
+                self._text_pipe = ZImagePipeline.from_pipe(self._inpaint_pipe, dtype=selected_dtype())
+                if settings.max_loaded_pipelines <= 1:
+                    self._inpaint_pipe = None
+                    self._inpaint_placement = None
+                    self._collect()
+            else:
+                self._text_pipe = ZImagePipeline.from_pretrained(
+                    self.model_id,
+                    torch_dtype=selected_dtype(),
+                    low_cpu_mem_usage=True,
+                    token=settings.huggingface_token,
+                    use_safetensors=True,
+                )
             self._place_pipeline(self._text_pipe, placement)
             self._text_placement = placement
         return self._text_pipe
@@ -170,19 +174,22 @@ class ZImageTurboProvider:
             self._inpaint_placement = None
             self._collect()
         if self._inpaint_pipe is None:
-            if settings.max_loaded_pipelines <= 1:
-                self._text_pipe = None
-                self._text_placement = None
-                self._collect()
             from diffusers import ZImageInpaintPipeline
 
-            self._inpaint_pipe = ZImageInpaintPipeline.from_pretrained(
-                self.model_id,
-                torch_dtype=selected_dtype(),
-                low_cpu_mem_usage=True,
-                token=settings.huggingface_token,
-                use_safetensors=True,
-            )
+            if self._text_pipe is not None:
+                self._inpaint_pipe = ZImageInpaintPipeline.from_pipe(self._text_pipe, dtype=selected_dtype())
+                if settings.max_loaded_pipelines <= 1:
+                    self._text_pipe = None
+                    self._text_placement = None
+                    self._collect()
+            else:
+                self._inpaint_pipe = ZImageInpaintPipeline.from_pretrained(
+                    self.model_id,
+                    torch_dtype=selected_dtype(),
+                    low_cpu_mem_usage=True,
+                    token=settings.huggingface_token,
+                    use_safetensors=True,
+                )
             self._place_pipeline(self._inpaint_pipe, placement)
             self._inpaint_placement = placement
         return self._inpaint_pipe

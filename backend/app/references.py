@@ -36,11 +36,15 @@ MAX_PIXELS = 16_777_216
 SUBJECT_BACKGROUND = (232, 232, 232)
 
 
+REFERENCE_MIGRATIONS: list[storage.Migration] = [
+    ("references.0001_create", lambda db: db.executescript(REFERENCE_SCHEMA)),
+]
+
+
 def ensure_reference_storage() -> None:
     settings.reference_dir.mkdir(parents=True, exist_ok=True)
     with storage.connect() as db:
-        db.executescript(REFERENCE_SCHEMA)
-        db.commit()
+        storage.apply_migrations(db, REFERENCE_MIGRATIONS)
 
 
 def list_references(document_id: int) -> list[dict[str, Any]]:

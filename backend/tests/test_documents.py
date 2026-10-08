@@ -107,8 +107,20 @@ class DocumentPersistenceTests(unittest.TestCase):
         self.assertEqual((undone["canvas_width"], undone["canvas_height"]), (96, 64))
         redone = documents.redo(document["id"])
         self.assertEqual((redone["canvas_width"], redone["canvas_height"]), (160, 96))
-        with self.assertRaisesRegex(ValueError, "changed"):
-            documents.create_alternative_proposal(document["id"], [generation_id], "outpaint", document["current_revision_id"])
+        with self.assertRaises(documents.RevisionConflict):
+            documents.create_alternative_proposal(document["id"], [generation_id], "outpaint", document["current_revision_id"] - 1)
+
+    def test_delete_document_removes_records_and_files(self) -> None:
+        document = documents.create_from_upload("ToDelete", png_bytes((10, 10, 10)), "delete.png")
+        doc_id = document["id"]
+        doc = documents.get_document(doc_id)
+        self.assertIsNotNone(doc)
+        image_path = settings.data_dir / doc["current_image_url"].replace("/files/", "")
+        self.assertTrue(image_path.exists())
+
+        documents.delete_document(doc_id)
+        self.assertIsNone(documents.get_document(doc_id))
+        self.assertFalse(image_path.exists())
 
 
 if __name__ == "__main__":

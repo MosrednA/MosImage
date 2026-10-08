@@ -102,6 +102,8 @@ Open `http://localhost:5173`. The frontend expects the API at `http://127.0.0.1:
 
 The English Focus layout gives most of the viewport to the image in every mode. A compact tool rail and command dock stay visible; Generation settings and Canvas size open modal panels, selection refinement opens a contextual popover, and Library opens a separate drawer. Results replace the command dock with a small review strip; compare them with the original, then Apply or Discard. Fit, zoom, open and document undo/redo remain directly accessible. The engine indicator shows connection state; `/api/system` exposes the detailed hardware profile.
 
+Library can delete saved documents and generation history entries after confirmation. Deleting a document removes its revisions, alternatives, references and unused layer images/masks, including assets kept only by older revisions. Assets shared with another document's revision history stay available for undo/redo. Deleting a generation retains input and mask files still used by another generation; imported documents and proposals keep their own copies.
+
 Object selection runs SAM 2.1 Tiny on CPU and caches one image embedding. Click to include a point, Alt+click to exclude a point, or use Brush/Eraser/Rectangle/Lasso to correct the mask. The first selection downloads the model. Ctrl+Z/Shift+Ctrl+Z undo/redo the mask first when its history is available, then document revisions. O/B/E/V choose Object/Brush/Expand/Pan; Ctrl+O opens an image and Ctrl+Enter submits an instruction.
 
 References place a person, pet or object from a concept image into the open document. Drop or browse images into the References panel on the right; each document keeps up to 24. Pick up to three (a single upload is picked automatically; the In use badge shows the order), select where they go, then describe what they do, for example "Anna and Tom sitting on the bench". References are passed to FLUX.2 Klein as `image_reference` for Replace edits only, so it requires the Quality model; picking one switches to Quality and two proposals. The scissors button optionally isolates the subject with SAM 2.1 Tiny on a neutral background; the full image is used by default because it was more reliable in the local trial. Several references are padded to one shared size of about 0.36 MP each and named in order in the prompt ("Anna is reference image 1"), so each likeness stays separate. See [the reference trial](INPAINTING_2026-10-07.md#reference-images).
@@ -119,7 +121,7 @@ Transparent images stay RGBA in documents and protected compositing. Model input
 The UI exposes Quality/Fast presets and keeps technical controls under Settings:
 
 - `Quality` uses FLUX.2 Klein 4B Distilled NVFP4 at four steps and guidance 1.0; BF16 remains selectable in Advanced controls. Generation uses `Flux2KleinPipeline`; editing uses `Flux2KleinInpaintPipeline`, which receives the actual mask and edit strength. Switching tasks or precision releases the previous pipeline. Balanced mode uses model CPU offload while inference runs on CUDA.
-- `Fast` uses Z-Image Turbo at 8 steps for quick iteration.
+- `Fast` uses Z-Image Turbo at 8 steps for quick iteration. Text-to-image and inpaint task switches reuse their components with an explicit runtime dtype, preserving BF16 on the default CUDA profile.
 - `FLUX.1 Fill Dev (specialist)` has an optional Advanced adapter, but its current BF16 component-offload route is not ready for the 16 GB profile: the 12B transformer alone exceeds that GPU's memory. A measured quantized or finer-grained offload route is required before use on this profile. The weights are gated and non-commercially licensed. Quality remains on FLUX.2 Klein by default; see the [next model comparisons](INPAINTING_2026-10-07.md#next-model-and-sampling-comparisons).
 
 The three runtime modes are:
@@ -153,6 +155,14 @@ Measured on the RTX 5070 Ti: loading Klein NVFP4 takes 5–9 s from the local ca
 Prompt encodings are cached per loaded model, so a second proposal or "generate again" skips moving the 8 GB text encoder to the GPU. Two proposals with two references went from 22 s to about 18 s, and 15 s when repeated. Progress shows the phase, proposal, step and an estimate measured from the step time.
 
 With the default 16 GB profile, MosImage keeps one large model hot at a time. Switching between Quality and Fast unloads the previous provider, and switching between GPU-resident and CPU-offload placement reloads the pipeline.
+
+## Local storage and request limits
+
+SQLite uses WAL and records named, idempotent schema migrations. HTTP file access is restricted to `/files/images/`; the database and other files under `data/` are not served.
+
+Each uploaded image or mask is limited to 64 MiB by `MOSIMAGE_MAX_UPLOAD_BYTES`. The API reads at most the limit plus one byte before returning HTTP 413 for an oversized file. `MOSIMAGE_MAX_IMAGE_PIXELS=64000000` sets Pillow's pixel warning threshold; decoding is refused above twice that value. Completed, failed and cancelled jobs remain queryable for `MOSIMAGE_JOB_RETENTION_SECONDS=600` seconds and are removed on the next status check or submission. Subject isolation shares the CPU worker with object selection.
+
+See [runtime refactor validation, 8 October 2026](FOCUS_IMPLEMENTATION_2026-10-07.md#runtime-refactor-validation-8-october-2026) for regression coverage and its limits.
 
 ## Desktop Shell
 

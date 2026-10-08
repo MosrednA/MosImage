@@ -7,6 +7,7 @@ from time import monotonic
 from typing import Any, Callable
 from uuid import uuid4
 
+from .config import settings
 from .schemas import JobPhase, JobState, JobStatus, TaskKind
 
 
@@ -99,6 +100,7 @@ class Job:
     items: int | None = None
     started_at: float | None = None
     phase_started_at: float | None = None
+    completed_at: float | None = None
     # Timing of the current proposal and the finished ones, for the estimate.
     timed_item: int | None = None
     item_started_at: float | None = None
@@ -124,9 +126,28 @@ class JobManager:
     def submit(self, kind: TaskKind, fn: Callable[[JobControl], JobResult]) -> Job:
         job = Job(id=str(uuid4()), kind=kind)
         with self._lock:
+            self._cleanup_retained_jobs()
             self._jobs[job.id] = job
         job.future = self._executors[_lane(kind)].submit(self._run, job.id, fn)
         return job
+
+    def run_cpu(self, fn: Callable[[], Any]) -> Any:
+        """Runs a synchronous operation on the CPU worker lane, sharing it with selection jobs."""
+        future = self._executors["cpu"].submit(fn)
+        return future.result()
+
+    def _cleanup_retained_jobs(self) -> None:
+        now = monotonic()
+        retention = getattr(settings, "job_retention_seconds", 600.0)
+        expired = [
+            job_id
+            for job_id, job in self._jobs.items()
+            if job.status in {"completed", "failed", "cancelled"}
+            and job.completed_at is not None
+            and (now - job.completed_at) > retention
+        ]
+        for job_id in expired:
+            del self._jobs[job_id]
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
@@ -134,6 +155,7 @@ class JobManager:
 
     def status(self, job_id: str) -> JobStatus | None:
         with self._lock:
+            self._cleanup_retained_jobs()
             job = self._jobs.get(job_id)
             if job is None:
                 return None
@@ -154,6 +176,7 @@ class JobManager:
             job.cancel_event.set()
             if job.future is not None and job.future.cancel():
                 job.status = "cancelled"
+                job.completed_at = monotonic()
             else:
                 # Keep the client busy until the callback finishes cleanup or
                 # the supervisor replaces a worker blocked in native code.
@@ -238,6 +261,7 @@ class JobManager:
             job = self._jobs[job_id]
             if job.cancel_event.is_set():
                 job.status = "cancelled"
+                job.completed_at = monotonic()
                 return
             job.status = "running"
             job.progress = 0.05
@@ -245,22 +269,26 @@ class JobManager:
         try:
             result = fn(control)
         except JobCancelled:
-            self._update(job_id, status="cancelled")
+            self._update(job_id, status="cancelled", completed_at=monotonic())
             return
         except Exception as exc:  # The API should expose failures without killing the worker.
+            now = monotonic()
             if self.is_cancel_requested(job_id):
-                self._update(job_id, status="cancelled")
+                self._update(job_id, status="cancelled", completed_at=now)
                 return
-            self._update(job_id, status="failed", progress=1.0, error=str(exc))
+            self._update(job_id, status="failed", progress=1.0, error=str(exc), completed_at=now)
             return
         selection = result if isinstance(result, SelectionResult) else None
         generation_ids = result if isinstance(result, list) else ([result] if isinstance(result, int) else [])
         with self._lock:
             job = self._jobs[job_id]
+            now = monotonic()
             if job.cancel_event.is_set():
                 job.status = "cancelled"
+                job.completed_at = now
                 return
             job.status = "completed"
+            job.completed_at = now
             job.progress = 1.0
             job.generation_id = generation_ids[0] if generation_ids else None
             job.generation_ids = generation_ids

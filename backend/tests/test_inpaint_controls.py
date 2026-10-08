@@ -87,6 +87,24 @@ class InpaintControlTests(unittest.TestCase):
                 for field in ("edit_operation", "blend_feather", "context_padding", "scene_context"):
                     self.assertIsNone(record[field])
 
+    def test_delete_generation_removes_record_and_exclusive_files(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(settings, "data_dir", root), patch.object(settings, "image_dir", root / "images"), patch.object(settings, "db_path", root / "app.db"):
+                storage.ensure_storage()
+                out_path = root / "images" / "outputs" / "sample.png"
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_bytes(b"image")
+                gen_id = storage.create_generation({
+                    "task": "text-to-image", "prompt": "test", "model_name": "flux",
+                    "seed": 1, "steps": 4, "guidance": 1.0,
+                    "output_image_path": storage.to_relative(out_path),
+                })
+                self.assertTrue(out_path.exists())
+                storage.delete_generation(gen_id)
+                self.assertIsNone(storage.get_generation(gen_id))
+                self.assertFalse(out_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

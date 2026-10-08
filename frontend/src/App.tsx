@@ -1,7 +1,7 @@
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import {
   DocumentRecord, Expansion, GenerationRecord, JobResponse, JobStatus, LayerRecord, ModelInfo, RevisionRecord, SelectionPoint, SystemInfo,
-  acceptAlternative, cancelJob, createDocument, fileUrl, generateImage, getDocument, getGeneration, getSystemInfo,
+  acceptAlternative, cancelJob, createDocument, deleteDocument, deleteGeneration, fileUrl, generateImage, getDocument, getGeneration, getSystemInfo,
   importGeneration, inpaintImage, listDocuments, listHistory, listModels, outpaintImage, proposeAlternatives, redoDocument,
   selectObject, undoDocument, updateDocument,
 } from "./api";
@@ -601,7 +601,11 @@ export default function App() {
     {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} task={task} disabled={locked} /></ControlDialog>}
     {panel === "expansion" && size && <ExpansionDialog size={size} expansion={expansion} onChange={setExpansion} disabled={locked} onClose={() => setPanel(null)} />}
     {panel === "shortcuts" && <ShortcutsDialog onClose={() => setPanel(null)} />}
-    {libraryOpen && <LibraryDrawer documents={documents} history={history} onClose={() => setLibraryOpen(false)} onDocument={item => void perform(() => openSaved(item))} onGeneration={item => void perform(() => openGeneration(item))} />}
+    {libraryOpen && <LibraryDrawer documents={documents} history={history} onClose={() => setLibraryOpen(false)}
+      onDocument={item => void perform(() => openSaved(item))}
+      onGeneration={item => void perform(() => openGeneration(item))}
+      onDeleteDocument={id => void perform(async () => { await deleteDocument(id); if (document?.id === id) newImage(); await refresh(); })}
+      onDeleteGeneration={id => void perform(async () => { await deleteGeneration(id); await refresh(); })} />}
   </main>;
 }
 

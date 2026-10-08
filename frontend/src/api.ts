@@ -356,6 +356,14 @@ export async function setReferenceIsolation(referenceId: number, isolated: boole
   return request(`/api/v2/references/${referenceId}/subject`, { method: isolated ? "POST" : "DELETE" });
 }
 
+export async function deleteGeneration(id: number): Promise<void> {
+  await request(`/api/history/${id}`, { method: "DELETE" });
+}
+
+export async function deleteDocument(id: number): Promise<void> {
+  await request(`/api/v2/documents/${id}`, { method: "DELETE" });
+}
+
 export async function undoDocument(documentId: number): Promise<DocumentRecord> {
   return request(`/api/v2/documents/${documentId}/undo`, { method: "POST" });
 }

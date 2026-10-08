@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     inpaint_max_dimension: int = 1024
     inpaint_context_ratio: float = 0.5
     inpaint_minimum_context: int = 128
+    # Uploads are read into memory, so cap them before they reach the job queue.
+    max_upload_bytes: int = 64 * 1024 * 1024
+    # Pillow refuses to decode images above twice this many pixels (decompression bombs).
+    max_image_pixels: int = 64_000_000
+    # Finished jobs stay queryable this long, so a slow poll still sees the result.
+    job_retention_seconds: float = 600.0
     # Load and warm the Quality model and SAM while the UI opens.
     warm_up_on_start: bool = True
     warm_up_model: str = "flux2-klein-4b-nvfp4"

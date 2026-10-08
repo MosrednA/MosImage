@@ -58,14 +58,20 @@ CREATE INDEX IF NOT EXISTS alternatives_revision_idx ON alternatives(revision_id
 """
 
 
+DOCUMENT_MIGRATIONS: list[storage.Migration] = [
+    ("documents.0001_create", lambda db: db.executescript(DOCUMENT_SCHEMA)),
+    ("documents.0002_revision_layers", lambda db: storage.add_column_if_missing(db, "revisions", "layers", "TEXT NOT NULL DEFAULT '[]'")),
+]
+
+
+class RevisionConflict(ValueError):
+    """The document moved on to another revision while a change was prepared."""
+
+
 def ensure_document_storage() -> None:
     layer_store.ensure_layer_storage()
     with storage.connect() as db:
-        db.executescript(DOCUMENT_SCHEMA)
-        columns = {row["name"] for row in db.execute("PRAGMA table_info(revisions)")}
-        if "layers" not in columns:
-            db.execute("ALTER TABLE revisions ADD COLUMN layers TEXT NOT NULL DEFAULT '[]'")
-        db.commit()
+        storage.apply_migrations(db, DOCUMENT_MIGRATIONS)
 
 
 def create_from_upload(name: str, content: bytes, filename: str | None) -> dict[str, Any]:
@@ -202,7 +208,7 @@ def create_alternative_proposal(
     if document is None:
         raise LookupError("Document not found")
     if base_revision_id is not None and document["current_revision_id"] != base_revision_id:
-        raise ValueError("The document changed while these alternatives were generated")
+        raise RevisionConflict("The document changed while these alternatives were generated")
     generations = [storage.get_generation(item) for item in generation_ids]
     if any(item is None for item in generations):
         raise LookupError("One or more generations were not found")
@@ -290,7 +296,7 @@ def accept_alternative(document_id: int, revision_id: int, alternative_id: int) 
         if current is None:
             raise LookupError("Document not found")
         if current["current_revision_id"] != revision["parent_revision_id"]:
-            raise ValueError("The document changed after these alternatives were generated")
+            raise RevisionConflict("The document changed after these alternatives were generated")
 
         db.execute("UPDATE alternatives SET selected = 0 WHERE revision_id = ?", (revision_id,))
         db.execute("UPDATE alternatives SET selected = 1 WHERE id = ?", (alternative_id,))
@@ -315,7 +321,7 @@ def save_layers(document_id: int, base_revision_id: int, layers: list[dict[str, 
         if document is None:
             raise LookupError("Document not found")
         if document["current_revision_id"] != base_revision_id:
-            raise ValueError("The document changed. Try again.")
+            raise RevisionConflict("The document changed. Try again.")
         base = db.execute("SELECT composite_image_path FROM revisions WHERE id = ?", (base_revision_id,)).fetchone()
         revision_id = _insert_revision(
             db,
@@ -331,6 +337,65 @@ def save_layers(document_id: int, base_revision_id: int, layers: list[dict[str, 
         _set_current_revision(db, document_id, revision_id)
         db.commit()
     return get_document(document_id) or _missing_document(document_id)
+
+
+def delete_document(document_id: int) -> None:
+    """Removes a document, all its revisions and associated reference records and files."""
+    with storage.connect() as db:
+        document = db.execute("SELECT id FROM documents WHERE id = ?", (document_id,)).fetchone()
+        if document is None:
+            raise LookupError("Document not found")
+        revisions = db.execute("SELECT id, composite_image_path, mask_image_path, layers FROM revisions WHERE document_id = ?", (document_id,)).fetchall()
+        layer_paths = _revision_layer_paths(revisions)
+        rev_ids = [r["id"] for r in revisions]
+        alt_paths: list[str] = []
+        if rev_ids:
+            placeholders = ",".join("?" for _ in rev_ids)
+            alternatives = db.execute(f"SELECT output_image_path FROM alternatives WHERE revision_id IN ({placeholders})", rev_ids).fetchall()
+            alt_paths = [a["output_image_path"] for a in alternatives]
+            db.execute(f"DELETE FROM alternatives WHERE revision_id IN ({placeholders})", rev_ids)
+            db.execute("DELETE FROM revisions WHERE document_id = ?", (document_id,))
+        refs = []
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='document_references'").fetchone():
+            refs = db.execute("SELECT image_path, subject_path FROM document_references WHERE document_id = ?", (document_id,)).fetchall()
+            db.execute("DELETE FROM document_references WHERE document_id = ?", (document_id,))
+        db.execute("DELETE FROM documents WHERE id = ?", (document_id,))
+        if layer_paths:
+            # Undo and unapplied proposals also keep their layer assets alive.
+            remaining_revisions = db.execute("SELECT layers FROM revisions").fetchall()
+            layer_paths.difference_update(_revision_layer_paths(remaining_revisions))
+        db.commit()
+
+    # Clean up physical files
+    files_to_remove: list[str] = []
+    for r in revisions:
+        if r["composite_image_path"]:
+            files_to_remove.append(r["composite_image_path"])
+        if r["mask_image_path"]:
+            files_to_remove.append(r["mask_image_path"])
+    files_to_remove.extend(alt_paths)
+    files_to_remove.extend(layer_paths)
+    for ref in refs:
+        if ref["image_path"]:
+            files_to_remove.append(ref["image_path"])
+        if ref["subject_path"]:
+            files_to_remove.append(ref["subject_path"])
+
+    for relative in files_to_remove:
+        try:
+            _absolute_path(relative).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _revision_layer_paths(revisions: list[Row]) -> set[str]:
+    paths: set[str] = set()
+    for revision in revisions:
+        for layer in layer_store.parse(revision["layers"]):
+            paths.add(layer["image_path"])
+            if layer.get("mask_path"):
+                paths.add(layer["mask_path"])
+    return paths
 
 
 def undo(document_id: int) -> dict[str, Any]:

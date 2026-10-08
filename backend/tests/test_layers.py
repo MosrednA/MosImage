@@ -54,6 +54,43 @@ class LayerTests(unittest.TestCase):
         self.assertEqual(documents.undo(moved["id"])["layers"], [])
         self.assertEqual(documents.redo(moved["id"])["layers"][0]["x"], 48.0)
 
+    def test_deleting_document_cleans_layer_assets_from_its_entire_history(self) -> None:
+        asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 128)), "image")
+        mask = layers.save_asset(image_bytes("L", (20, 10), 255), "mask")
+        added = documents.save_layers(
+            self.document["id"], self.document["current_revision_id"],
+            [self.layer(asset, mask_path=mask["path"])], "Add layer",
+        )
+        documents.save_layers(added["id"], added["current_revision_id"], [], "Remove layer")
+
+        documents.delete_document(self.document["id"])
+
+        self.assertIsNone(documents.get_document(self.document["id"]))
+        self.assertFalse(storage.absolute_path(asset["path"]).exists())
+        self.assertFalse(storage.absolute_path(mask["path"]).exists())
+
+    def test_deleting_document_preserves_assets_in_another_documents_history(self) -> None:
+        asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 128)), "image")
+        mask = layers.save_asset(image_bytes("L", (20, 10), 255), "mask")
+        shared = self.layer(asset, mask_path=mask["path"])
+        documents.save_layers(
+            self.document["id"], self.document["current_revision_id"], [shared], "Add layer",
+        )
+        other = documents.create_from_upload("Other", image_bytes("RGB", (96, 64), (20, 30, 40)), "other.png")
+        added = documents.save_layers(other["id"], other["current_revision_id"], [shared], "Add shared layer")
+        documents.save_layers(other["id"], added["current_revision_id"], [], "Remove shared layer")
+
+        documents.delete_document(self.document["id"])
+
+        self.assertTrue(storage.absolute_path(asset["path"]).exists())
+        self.assertTrue(storage.absolute_path(mask["path"]).exists())
+        restored = documents.undo(other["id"])
+        self.assertEqual(restored["layers"][0]["image_path"], asset["path"])
+
+        documents.delete_document(other["id"])
+        self.assertFalse(storage.absolute_path(asset["path"]).exists())
+        self.assertFalse(storage.absolute_path(mask["path"]).exists())
+
     def test_background_edits_keep_layers_and_expand_moves_them_with_the_content(self) -> None:
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
         document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset)], "Add layer")

@@ -4,7 +4,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator, Sequence
 
 from .config import settings
 
@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS generations (
 );
 """
 
+MIGRATIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    name TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+Migration = tuple[str, Callable[[sqlite3.Connection], object]]
+
 
 def ensure_storage() -> None:
     for directory in [
@@ -48,11 +57,44 @@ def ensure_storage() -> None:
     ]:
         directory.mkdir(parents=True, exist_ok=True)
     with connect() as db:
-        db.execute(SCHEMA)
-        _add_column_if_missing(db, "generations", "runtime_mode", "TEXT NOT NULL DEFAULT 'balanced'")
-        for column, definition in (("edit_operation", "TEXT"), ("blend_feather", "REAL"), ("context_padding", "INTEGER"), ("scene_context", "TEXT"), ("reference_image_paths", "TEXT")):
-            _add_column_if_missing(db, "generations", column, definition)
+        # WAL lets the UI read history while a job writes its result. The mode
+        # is stored in the database file, so this only changes it once.
+        db.execute("PRAGMA journal_mode=WAL")
+        apply_migrations(db, GENERATION_MIGRATIONS)
+
+
+def apply_migrations(db: sqlite3.Connection, migrations: Sequence[Migration]) -> None:
+    """Runs each named migration once, in order, and records it.
+
+    Steps must stay idempotent: databases created before migrations were
+    recorded already contain their effects without a record of them.
+    """
+    db.execute(MIGRATIONS_SCHEMA)
+    applied = {row["name"] for row in db.execute("SELECT name FROM schema_migrations")}
+    for name, step in migrations:
+        if name in applied:
+            continue
+        step(db)
+        db.execute("INSERT INTO schema_migrations (name) VALUES (?)", (name,))
         db.commit()
+
+
+def add_column_if_missing(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _add_generation_edit_metadata(db: sqlite3.Connection) -> None:
+    for column, definition in (("edit_operation", "TEXT"), ("blend_feather", "REAL"), ("context_padding", "INTEGER"), ("scene_context", "TEXT"), ("reference_image_paths", "TEXT")):
+        add_column_if_missing(db, "generations", column, definition)
+
+
+GENERATION_MIGRATIONS: list[Migration] = [
+    ("generations.0001_create", lambda db: db.execute(SCHEMA)),
+    ("generations.0002_runtime_mode", lambda db: add_column_if_missing(db, "generations", "runtime_mode", "TEXT NOT NULL DEFAULT 'balanced'")),
+    ("generations.0003_edit_metadata", _add_generation_edit_metadata),
+]
 
 
 @contextmanager
@@ -69,6 +111,13 @@ def to_relative(path: Path | None) -> str | None:
     if path is None:
         return None
     return path.resolve().relative_to(settings.data_dir.resolve()).as_posix()
+
+
+def absolute_path(relative: str) -> Path:
+    """A stored relative path inside the data directory; refuses anything outside it."""
+    path = (settings.data_dir / relative).resolve()
+    path.relative_to(settings.data_dir.resolve())
+    return path
 
 
 def image_url(relative_path: str) -> str:
@@ -111,14 +160,30 @@ def get_generation(generation_id: int) -> dict[str, Any] | None:
     return row_to_record(row) if row else None
 
 
+def delete_generation(generation_id: int) -> None:
+    """Removes a generation and the files only it uses.
+
+    Proposals made together share one input and mask; those stay until the
+    last proposal that uses them is gone. Documents copy what they keep, so
+    deleting a generation never breaks a document.
+    """
+    with connect() as db:
+        row = db.execute("SELECT * FROM generations WHERE id = ?", (generation_id,)).fetchone()
+        if row is None:
+            raise LookupError("Generation not found")
+        db.execute("DELETE FROM generations WHERE id = ?", (generation_id,))
+        orphaned = [row["output_image_path"]]
+        for column in ("input_image_path", "mask_image_path"):
+            relative = row[column]
+            if relative and db.execute(f"SELECT 1 FROM generations WHERE {column} = ? LIMIT 1", (relative,)).fetchone() is None:
+                orphaned.append(relative)
+        db.commit()
+    for relative in orphaned:
+        absolute_path(relative).unlink(missing_ok=True)
+
+
 def row_to_record(row: sqlite3.Row) -> dict[str, Any]:
     record = dict(row)
     record["output_image_url"] = image_url(record["output_image_path"])
     record["reference_image_paths"] = json.loads(record.get("reference_image_paths") or "[]")
     return record
-
-
-def _add_column_if_missing(db: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-    columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
-    if column not in columns:
-        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")

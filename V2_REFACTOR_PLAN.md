@@ -20,6 +20,8 @@
 
 Phase 4 is partially delivered; phase 5 still needs visual reliability validation, and phase 8 remains roadmap work. The English canvas-first Focus shell applies to new generation, selection, editing, expansion, and proposal review. Phase completion here refers to each phase's own exit criterion, not the full v2 definition of done. Sections below describe the target design where it extends beyond this implementation table.
 
+**Runtime maintenance, 8 October 2026:** Named SQLite migrations/WAL, bounded upload reads, image-only file serving, finished-job retention, typed revision conflicts, serialized CPU subject isolation and Library deletion are implemented. Review fixes preserve the Z-Image runtime dtype and clean unused layer assets across revision history. See [maintenance validation and limits](FOCUS_IMPLEMENTATION_2026-10-07.md#runtime-refactor-validation-8-october-2026); broader editing-quality and phase 8 work remain open.
+
 ## 1. Objective
 
 Evolve the existing MosImage prototype into a focused local AI canvas editor.

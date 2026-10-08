@@ -4,6 +4,7 @@ import time
 import unittest
 from threading import Event
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.jobs import FINISH_SECONDS, Job, JobControl, JobManager, _estimate_remaining
 
@@ -254,6 +255,28 @@ class JobProgressDetailTests(unittest.TestCase):
             self.assertIsNone(manager.status(edit.id).waiting_for)
         finally:
             release.set()
+            manager.shutdown()
+
+    def test_run_cpu_executes_on_cpu_worker_lane(self) -> None:
+        manager = JobManager()
+        try:
+            result = manager.run_cpu(lambda: 42 * 2)
+            self.assertEqual(result, 84)
+        finally:
+            manager.shutdown()
+
+    def test_expired_retained_jobs_are_cleaned_up(self) -> None:
+        manager = JobManager()
+        try:
+            job = manager.submit("select", lambda control: None)
+            wait_for_status(manager, job.id, "completed")
+            self.assertIsNotNone(manager.status(job.id))
+            # Simulate passage of time past retention window
+            with patch("app.jobs.settings.job_retention_seconds", 0.05):
+                time.sleep(0.06)
+                # Next status check or submit triggers cleanup
+                self.assertIsNone(manager.status(job.id))
+        finally:
             manager.shutdown()
 
 

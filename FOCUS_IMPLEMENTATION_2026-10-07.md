@@ -1,6 +1,6 @@
 # Focus implementation and validation
 
-**Status:** Delivered locally, 7 October 2026. This is the current implementation reference, linked from [README](README.md). The [model research](MOSIMAGE_DIRECTION_2026-10-07.md) preserves the starting snapshot and longer-term recommendations; the [v2 roadmap](V2_REFACTOR_PLAN.md) records remaining scope.
+**Status:** Delivered locally, 7 October 2026; runtime maintenance updated 8 October 2026. This is the current implementation reference, linked from [README](README.md). The [model research](MOSIMAGE_DIRECTION_2026-10-07.md) preserves the starting snapshot and longer-term recommendations; the [v2 roadmap](V2_REFACTOR_PLAN.md) records remaining scope.
 
 ## Overall interface
 
@@ -83,3 +83,13 @@ SAM 3 text/box selection, a validated general reference-image workflow, Qwen/Lan
 The running API now lists `flux2-klein-4b-nvfp4` for generation and inpainting, alongside the BF16 comparison adapter. Main-app generation produced a 1024 × 1024 proposal through the visible Quality control. Advanced model selection preserves the selected precision; both Klein variants hide the unsupported negative-prompt field. Expand chooses Z-Image and excludes both Klein variants. The NVFP4 settings dialog fits a 390 px viewport without horizontal overflow and retains context 320 / blend 16.
 
 All four frozen edits were repeated through `/api/inpaint` at seed 7 (generations 88–91). They changed zero protected pixels and were pixel-identical to their corresponding NVFP4 benchmark outputs. BF16 → NVFP4 preload switches left exactly one pipeline loaded. A warmed API edit cancelled in 0.84 s, a separate loading job cancelled in 0.59 s without a worker restart, and the visible UI Cancel action also reached a cancelled state without creating a generation. These are integration checks, not a new latency cohort or broader editing-quality claim. Evidence is stored locally under `data/nvfp4-app-validation/`.
+
+## Runtime refactor validation, 8 October 2026
+
+The maintenance refactor adds named, idempotent SQLite migrations with WAL, limits HTTP file access to the image directory, caps per-file upload reads, expires finished job records after ten minutes, serializes subject isolation on the CPU selection worker and returns typed revision conflicts as HTTP 409. Library deletion removes documents or generation history, retaining generation inputs/masks used by another generation and preserving documents' copied results.
+
+Review found three defects: Z-Image's component reuse defaulted to FP32, document deletion skipped layer assets, and the upload size check ran after an unbounded read. Task switches now pass the runtime dtype explicitly; deletion collects layer images/masks from every deleted revision and preserves any still referenced by other revisions; upload reads stop after the configured limit plus one byte. Regression cases reproduce the earlier failures and cover shared historical layer assets and an upload exactly at the limit.
+
+The dtype regression uses the installed Diffusers pipelines with tiny CPU modules and verifies BF16 plus component reuse in both task directions. It does not load model weights or establish new CUDA memory, speed or image-quality measurements. Earlier GPU and browser evidence above belongs to the dated validations described there; the maintenance changes require a backend restart to affect an already running local app.
+
+Validation on 8 October: 96 backend unit tests and 46 frontend unit tests pass; Python compilation and the frontend TypeScript/Vite build pass. The updated README, implementation reference and roadmap have 24 verified local file/heading links. Backend checks use an isolated database and temporary directory under `data/`, preserving the user's live documents and running engine.
