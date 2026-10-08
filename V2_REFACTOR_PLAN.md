@@ -9,6 +9,8 @@
 
 ## Implementation status
 
+Latest quality evidence: [8 October mask/reference investigation](benchmarks/INPAINT_QUALITY_2026-10-08.md). These are reproducible experiments; general inpainting-quality acceptance remains open.
+
 | Phase | Status | Delivered |
 |---|---|---|
 | 2 — Real canvas | Complete | Native-resolution masks; open, paste, drag/drop, save/export; move/pan, zoom, fit, actual size; brush, erase, rectangle, lasso, grow, shrink, feather, invert, clear; mask undo/redo. |
@@ -21,6 +23,8 @@
 Phase 4 is partially delivered; phase 5 still needs visual reliability validation, and phase 8 remains roadmap work. The English canvas-first Focus shell applies to new generation, selection, editing, expansion, and proposal review. Phase completion here refers to each phase's own exit criterion, not the full v2 definition of done. Sections below describe the target design where it extends beyond this implementation table.
 
 **Runtime maintenance, 8 October 2026:** Named SQLite migrations/WAL, bounded upload reads, image-only file serving, finished-job retention, typed revision conflicts, serialized CPU subject isolation and Library deletion are implemented. Review fixes preserve the Z-Image runtime dtype and clean unused layer assets across revision history. See [maintenance validation and limits](FOCUS_IMPLEMENTATION_2026-10-07.md#runtime-refactor-validation-8-october-2026); broader editing-quality and phase 8 work remain open.
+
+**Phase 5 follow-up, 7 October 2026:** [Scale-aware placement research](INPAINTING_2026-10-07.md#scale-aware-placement-research) diagnoses the supplied garden/reference edit and proposes separate subject placement geometry, deliberate scene context, optional local visual planning and controlled renderer comparisons. The [controlled Anna/park tests](INPAINTING_2026-10-07.md#controlled-annapark-experiments) retain 72 completed outputs, including 18 prompt renders, nine visual-guide renders and six paired mask-shape rerenders. The user rejected all earlier 39 images for size, seated pose and ground contact. Smaller-crop NVFP4 remains a fast diagnostic baseline; Base at 28/50 steps offers no convincing advantage. Explicit parallel-leg prompts improve pose but do not reliably solve fit, scale or contact. The visual seated-layout comparison with role-aware identity/structure references is complete: whole-body fit improves at about 2.6 s per local render, while exact pose/scale/contact remain open. The curved/soft mask crosses baseline faces; a same-crop box restores complete faces in 3/3 seeds while expanding the visible edit footprint. Prioritize an opaque subject core, independent placement geometry and mask-fit preview before broader model sweeps. Bench-first/person-second construction and learned pose/depth conditioning remain candidates; see the [community leads](INPAINTING_2026-10-07.md#comfyui-community-leads-checked-7-october-2026). Automatic scale/layout planning remains proposed, and the encoder-separated runtime requires wider quality and end-to-end UI validation before integration.
 
 ## 1. Objective
 

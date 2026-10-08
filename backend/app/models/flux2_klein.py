@@ -206,7 +206,11 @@ class Flux2KleinProvider:
         if embeds is None:
             if control is not None:
                 control.set_phase("preparing")
-            embeds = pipe.encode_prompt(prompt=prompt, device=pipe._execution_device)[0]
+            # This call runs outside Diffusers' no-grad pipeline __call__.
+            # Caching its autograd graph retains encoder activations per prompt
+            # and can push subsequent edits into shared GPU memory on Windows.
+            with self._load_torch().inference_mode():
+                embeds = pipe.encode_prompt(prompt=prompt, device=pipe._execution_device)[0]
             self._prompt_cache[prompt] = embeds
             while len(self._prompt_cache) > PROMPT_CACHE_SIZE:
                 self._prompt_cache.popitem(last=False)

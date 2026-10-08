@@ -1,5 +1,7 @@
 # Inpainting benchmark fixtures
 
+The [8 October mask/reference investigation](INPAINT_QUALITY_2026-10-08.md) extends these fixtures with paired context/resolution tests, local identity and object references, and a separate measurement of the real app provider. Its recipes and all outcomes are retained under `data/inpaint-quality-2026-10-08/`.
+
 The [v1 overview](fixtures/v1/overview.jpg) contains four original AI-generated scenes at 1254 × 1254. All four sources, masks and edit prompts were fixed before inspecting benchmark outputs.
 
 | Fixture | Edit | What it exercises |
@@ -82,3 +84,51 @@ cd backend
 ```
 
 For separate component-residency sampling, run each precision sequentially with `--fixture garden --seed-count 1 --profile-components` and a fresh output directory. These diagnostic runs are excluded from the latency/visual cohort. The returned samples include live tensors and are not component peak VRAM.
+
+## Anna/park reference insertion experiments
+
+The [7 October Anna/park results](../INPAINTING_2026-10-07.md#controlled-annapark-experiments) use frozen local document assets, separate from the versioned v1 suite. They retain 72 completed outputs across 24 settings/model/prompt/guide/mask variants (three prompt-baseline outputs repeat previous PNGs exactly), plus failures and explicitly skipped seeds. The scripts require the original local source, mask and Anna reference paths recorded in the manifest; copying this checkout alone does not provide those ignored assets.
+
+Run from `backend/`. The original API ablation tool requires explicit `--variants`; do not repeat the known failing long-Scene/BF16 context-320 profiles on this machine. The memory-bounded follow-up refuses a loaded API model, encodes text separately, releases it before loading a renderer, caps PyTorch allocation at 65%, and stops after a slow step or insufficient RAM. This is a diagnostic budget, not a total-system memory guarantee. Preserve every declared result and use a fresh output directory for another run.
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe tools/benchmark_park_reference.py --output ../data/park-scale-new --variants context32 context192 context320 context512 strength075 steps8
+# Unload all API models or stop the API before the isolated follow-up.
+.\.venv\Scripts\python.exe tools/benchmark_park_base.py --input ../data/park-scale-new --output ../data/park-scale-new/base
+.\.venv\Scripts\python.exe tools/benchmark_park_prompts.py --input ../data/park-scale-new --output ../data/park-scale-new/prompts
+.\.venv\Scripts\python.exe tools/benchmark_park_prompts.py --input ../data/park-scale-new --output ../data/park-scale-new/prompts-contact --variants prompt-parallel prompt-short
+.\.venv\Scripts\python.exe tools/summarize_park_reference.py --input ../data/park-scale-new
+```
+
+The Base tool needs the pinned, locally cached Base transformer described in the results and the existing distilled components. No editor provider is registered for Base. Manually review all outputs before writing `review.json`; the viewer compares settings by seed and preserves failures. Setup/encoding costs are separate from render times in the split-runtime phase. Serve only the review directory if using a local HTTP server.
+
+The prompt tool uses the same bounded runner but needs only the cached distilled NVFP4 checkpoint and components; it does not require the Base transformer. Source, mask, reference resolution, seeds, context and eight-step settings are fixed. The first four prompts and the separately declared parallel/short follow-up are reviewed in separate result manifests. It uses a 15-second post-step render budget. All earlier 39 images were rejected by the user; relative research ratings and new prompt comparisons do not imply acceptance.
+
+## Pose/layout reference follow-up
+
+The [visual guide comparison](../INPAINTING_2026-10-07.md#visual-poselayout-guide-comparison) adds nine local renders on the same frozen scene. A generated transparent dummy/bench is a supporting fixture; final images still use local Klein NVFP4. The new identity and structural references share a 384 × 512 canvas, and auxiliary hashes are checked before loading. Both guided conditions share one role-aware prompt. The benchmark registers no new provider.
+
+Use a new frozen fixture directory/output for another run; the preparation tool refuses to overwrite a completed guides directory. The source directory must already contain `results.json`, unchanged source/mask/reference files and `dummy-generation.json` recording the built-in generator's full prompt. The local cutout path comes from the built-in tool; copy it into the prepared fixture with this command:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe tools/prepare_park_guides.py --input ../data/park-scale-new --cutout C:/path/to/generated-dummy.png
+.\.venv\Scripts\python.exe tools/benchmark_park_guides.py --input ../data/park-scale-new --output ../data/park-scale-new/guide-tests
+.\.venv\Scripts\python.exe tools/summarize_park_reference.py --input ../data/park-scale-new
+```
+
+Placement centre, bottom and maximum size are explicit constants in the preparation script. They describe this garden fixture, not a generic scale estimator. Check that the complete dummy/bench fits the true mask before inference; the script rejects a meaningful-alpha overlap with protected pixels. The original document is preserved. Model loading, pose-asset generation and preparation are excluded from per-render timing and need separate product measurements.
+
+
+## Paired mask-shape follow-up
+
+The [paired mask comparison](../INPAINTING_2026-10-07.md#paired-mask-shape-comparison) adds six renders with exactly the guide cohort's prompts/references/seeds/crop, changing only its alpha mask. The box keeps the original bounding rectangle with a 16-px inward smooth edge. Its opaque interior restores baseline faces in all three seeds. Size, pose/contact and background seams remain imperfect.
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe tools/benchmark_park_masks.py --input ../data/park-scale-new --output ../data/park-scale-new/mask-tests
+.\.venv\Scripts\python.exe tools/summarize_park_reference.py --input ../data/park-scale-new
+```
+
+Run after preparing the same guide assets. The runner checks frozen hashes, refuses a loaded API pipeline and preserves the original selection. The box **expands test permissions inside the same rectangle**; its protection counters must not be represented as zero changes outside the original mask. The review displays both counters and the mask footprint. Do not apply this diagnostic mask silently to a user's document.

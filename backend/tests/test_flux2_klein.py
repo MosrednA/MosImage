@@ -166,6 +166,23 @@ class Flux2KleinPlacementTests(unittest.TestCase):
         self.provider._encode_prompt(pipe, "a cat")
         self.assertEqual(pipe.encode_prompt.call_count, 3)
 
+    def test_cached_prompt_embeddings_do_not_retain_autograd_graphs(self) -> None:
+        import torch
+
+        encoder = torch.nn.Linear(4, 4)
+        pipe = SimpleNamespace(
+            _execution_device="cpu",
+            encode_prompt=lambda **_kwargs: (encoder(torch.ones(1, 4)), None),
+        )
+        with torch.enable_grad():
+            first = self.provider._encode_prompt(pipe, "a cat")
+            second = self.provider._encode_prompt(pipe, "a dog")
+            self.assertTrue(torch.is_grad_enabled())
+        for embedding in (first, second):
+            self.assertFalse(embedding.requires_grad)
+            self.assertIsNone(embedding.grad_fn)
+        self.assertIs(self.provider._encode_prompt(pipe, "a cat"), first)
+
     def test_generic_reference_names_are_not_used_as_names(self) -> None:
         prompt = _inpaint_prompt(InpaintForm(prompt="two people on a bench"), ["Reference 1", "Reference 2"])
         self.assertIn("from the 2 reference images.", prompt)

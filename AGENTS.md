@@ -13,14 +13,13 @@ MosImage uses a split local app architecture:
 
 ## Build, Test, and Development Commands
 
-Use `rtk` when running commands in Codex sessions.
-
-- `rtk proxy powershell -NoProfile -Command "cd backend; uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"` starts the API.
-- `rtk proxy powershell -NoProfile -Command ".\start.cmd"` starts backend and frontend together from the repository root.
-- `rtk npm install` from `frontend/` installs UI dependencies.
-- `rtk npm run dev` from `frontend/` starts Vite on port `5173`.
-- `rtk npm run build` from `frontend/` type-checks and builds the UI.
-- `rtk proxy powershell -NoProfile -Command "cd frontend; npm run tauri:dev"` starts the optional desktop shell after Rust/Tauri prerequisites are installed.
+- `cd backend; uvicorn app.main:app --reload --host 127.0.0.1 --port 8000` starts the API.
+- `.\start.cmd` starts backend and frontend together from the repository root.
+- `npm install` from `frontend/` installs UI dependencies.
+- `npm run dev` from `frontend/` starts Vite on port `5173`.
+- `npm run build` from `frontend/` type-checks and builds the UI.
+- `npm run tauri:dev` from `frontend/` starts the optional desktop shell after Rust/Tauri prerequisites are installed.
+- `npm run tauri:build` from `frontend/` rebuilds `src-tauri/target/release/mosimage.exe`. The user's desktop shortcut opens that file, so a build updates the app they launch. Close a running `mosimage.exe` first, because Windows locks it.
 
 ## Coding Style & Naming Conventions
 
@@ -32,9 +31,9 @@ Default runtime assumptions are Ryzen 7 9700X, 32 GB RAM, and RTX 5070 Ti 16 GB.
 
 ## Testing Guidelines
 
-Backend tests live under `backend/tests/`. Frontend Vitest tests live beside their modules; run them with `rtk npm test` from `frontend/`. Extend these suites for behavior changes and add regression tests for bug fixes where practical.
+Backend tests live under `backend/tests/`. Frontend Vitest tests live beside their modules; run them with `npm test` from `frontend/`. Extend these suites for behavior changes and add regression tests for bug fixes where practical.
 
-Before submitting changes, run `rtk npm run build` in `frontend/` and at least `rtk proxy powershell -NoProfile -Command "python -m compileall backend\app"` for backend syntax checks.
+Before submitting changes, run `npm run build` in `frontend/` and at least `python -m compileall backend\app` for backend syntax checks.
 
 ## Commit & Pull Request Guidelines
 

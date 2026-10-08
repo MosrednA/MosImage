@@ -4,9 +4,15 @@ MosImage is a local AI canvas editor with an English Focus interface. Generate a
 
 ## Product direction and implementation status
 
+- [Mask, context and reference quality investigation, 8 October 2026](benchmarks/INPAINT_QUALITY_2026-10-08.md) — controlled local GPU comparisons, complete output galleries and separate app latency measurements.
 - [Current v2 implementation and roadmap](V2_REFACTOR_PLAN.md)
 - [Current Focus implementation and validation, 7 October 2026](FOCUS_IMPLEMENTATION_2026-10-07.md)
 - [Inpainting, context crops and blending, 7 October 2026](INPAINTING_2026-10-07.md)
+- [Scale-aware placement investigation and proposed comparison](INPAINTING_2026-10-07.md#scale-aware-placement-research) — scene context, intended subject size, local visual planning and alternative editing models; automatic planning remains proposed.
+- [Controlled Anna/park settings and model experiments](INPAINTING_2026-10-07.md#controlled-annapark-experiments) — 72 retained outputs, including 18 prompt renders, nine pose/layout renders and six paired mask-shape renders, user quality rejection, split-runtime timing and failure accounting; no production defaults changed.
+- [Paired mask-shape comparison](INPAINTING_2026-10-07.md#paired-mask-shape-comparison) — the curved/soft mask cuts through baseline faces; identical-crop box rerenders restore complete faces in 3/3 seeds, with a visibly expanded edit footprint.
+- [Visual pose/layout comparison](INPAINTING_2026-10-07.md#visual-poselayout-guide-comparison) — paired identity/structural references improve complete-body fit in one scene; exact scale and contact remain unresolved.
+- [ComfyUI community leads and prompt follow-up](INPAINTING_2026-10-07.md#comfyui-community-leads-checked-7-october-2026) — visual pose/layout guides, RefControl, alternate sampling and Qwen collage candidates; untested techniques remain proposals.
 - [Four-image benchmark suite](benchmarks/README.md) and [Klein BF16/NVFP4 results, 7 October 2026](benchmarks/NVFP4_RESULTS_2026-10-07.md)
 - [Model research and proposed tech/UX direction, 7 October 2026](MOSIMAGE_DIRECTION_2026-10-07.md) — research snapshot and longer-term proposals; Focus, point selection, and basic outpainting are now implemented.
 
@@ -124,6 +130,8 @@ The UI exposes Quality/Fast presets and keeps technical controls under Settings:
 - `Fast` uses Z-Image Turbo at 8 steps for quick iteration. Text-to-image and inpaint task switches reuse their components with an explicit runtime dtype, preserving BF16 on the default CUDA profile.
 - `FLUX.1 Fill Dev (specialist)` has an optional Advanced adapter, but its current BF16 component-offload route is not ready for the 16 GB profile: the 12B transformer alone exceeds that GPU's memory. A measured quantized or finer-grained offload route is required before use on this profile. The weights are gated and non-commercially licensed. Quality remains on FLUX.2 Klein by default; see the [next model comparisons](INPAINTING_2026-10-07.md#next-model-and-sampling-comparisons).
 
+Prompt embeddings are cached without autograd graphs. The [8 October app-provider check](benchmarks/INPAINT_QUALITY_2026-10-08.md#actual-app-performance-and-the-verified-fix) fixed retained encoder activations: repeated reference edits used about 3.0 GiB of PyTorch allocation, and a changed prompt completed in 4.2 seconds on the target GPU. Cold loading remained about 33 seconds; these are measured small-crop results, not promises for every resolution. Restart the backend after updating to pick up this fix.
+
 The three runtime modes are:
 
 - `Balanced` uses model CPU offload for FLUX.2 Klein on the default 16 GB profile. Z-Image keeps text-to-image on GPU up to `896x896` and uses component-level offload for inpainting. Start here for these validated providers. Fill's current component-offload adapter needs a separate 16 GB memory implementation and validation.
@@ -175,5 +183,21 @@ npm run tauri:build  # mosimage.exe plus MSI and NSIS installers under src-tauri
 ```
 
 The app starts the engine itself from `backend/.venv` in the checkout it was built from (override with `MOSIMAGE_ROOT`), without a console window; output goes to `data/logs/engine.log`. If an engine is already listening on port 8000, for example from `start.cmd`, the app uses it and leaves it running. Like `backend/supervisor.ps1`, the app restarts its engine after a hard cancel or crash. On close it asks the engine to cancel jobs and unload models through `/api/shutdown`, guarded by a per-launch token, and ends it after 20 s if needed. A Windows job object ends the engine as well if the app itself crashes, so no Python process keeps RAM or GPU memory.
+
+For everyday use, start the app from a desktop shortcut to `frontend\src-tauri\target\release\mosimage.exe` instead of installing the MSI. `npm run tauri:build` replaces that file in place, so the shortcut always opens the newest build:
+
+- Backend changes apply the next time the app starts, without a rebuild, because the engine runs from the checkout.
+- Frontend changes are embedded in the executable, so they need `npm run tauri:build`.
+- Close MosImage before building. Windows locks a running `mosimage.exe`, and the build cannot replace it.
+
+To create the shortcut:
+
+```powershell
+$exe = "$PWD\frontend\src-tauri\target\release\mosimage.exe"
+$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut("$([Environment]::GetFolderPath('Desktop'))\MosImage.lnk")
+$shortcut.TargetPath = $exe; $shortcut.WorkingDirectory = Split-Path $exe; $shortcut.IconLocation = "$exe,0"; $shortcut.Save()
+```
+
+Run it from the repository root.
 
 The engine is not bundled into the installer: Python with CUDA PyTorch, Diffusers and the NVFP4 kernels is several gigabytes, and the models download to the Hugging Face cache on first use.
