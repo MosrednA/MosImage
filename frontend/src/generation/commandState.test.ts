@@ -1,0 +1,56 @@
+import { describe, expect, it } from "vitest";
+import { CommandState, canSubmit, commandHint } from "./commandState";
+
+const base: CommandState = {
+  operation: "replace", prompt: "a hat", quality: true, hasImage: true, hasMask: true, hasSketch: false, expansionValid: false,
+  editScope: "visible", editLayerName: null, sketchScope: "strokes", referenceNames: [], tool: "object",
+  activeLayerName: null, layerMasking: false, blendingName: null,
+};
+const state = (overrides: Partial<CommandState>): CommandState => ({ ...base, ...overrides });
+
+describe("canSubmit", () => {
+  it("needs a prompt and a selection for regional edits, except removal", () => {
+    expect(canSubmit(base)).toBe(true);
+    expect(canSubmit(state({ hasMask: false }))).toBe(false);
+    expect(canSubmit(state({ prompt: " " }))).toBe(false);
+    expect(canSubmit(state({ operation: "remove", prompt: "" }))).toBe(true);
+  });
+  it("needs the Quality model for references, sketches and faces", () => {
+    expect(canSubmit(state({ referenceNames: ["Anna"], quality: false }))).toBe(false);
+    expect(canSubmit(state({ operation: "sketch", hasSketch: true }))).toBe(true);
+    expect(canSubmit(state({ operation: "sketch", hasSketch: true, quality: false }))).toBe(false);
+    expect(canSubmit(state({ operation: "sketch", hasSketch: false }))).toBe(false);
+    expect(canSubmit(state({ operation: "faces", prompt: "", hasMask: false }))).toBe(true);
+    expect(canSubmit(state({ operation: "faces", quality: false }))).toBe(false);
+  });
+  it("edits the visible picture, or a picked layer", () => {
+    expect(canSubmit(state({ operation: "edit", hasMask: false }))).toBe(true);
+    expect(canSubmit(state({ operation: "edit", hasMask: false, editScope: "layer" }))).toBe(false);
+    expect(canSubmit(state({ operation: "edit", hasMask: false, editScope: "layer", editLayerName: "Hat" }))).toBe(true);
+  });
+  it("expands to a valid size with a prompt", () => {
+    expect(canSubmit(state({ operation: "expand", expansionValid: true }))).toBe(true);
+    expect(canSubmit(state({ operation: "expand" }))).toBe(false);
+  });
+  it("generates from a prompt alone", () => {
+    expect(canSubmit(state({ operation: "generate", hasImage: false, hasMask: false }))).toBe(true);
+  });
+});
+
+describe("commandHint", () => {
+  it("puts the layer being worked on first", () => {
+    expect(commandHint(state({ activeLayerName: "Hat", layerMasking: true }))).toContain("Masking layer “Hat”");
+    expect(commandHint(state({ activeLayerName: "Hat" }))).toContain("Editing layer “Hat”");
+  });
+  it("asks for the Quality model where needed", () => {
+    expect(commandHint(state({ referenceNames: ["Anna"], quality: false }))).toContain("References need the Quality model");
+    expect(commandHint(state({ operation: "sketch", quality: false }))).toBe("Sketches need the Quality model. Choose Quality in generation settings.");
+    expect(commandHint(state({ operation: "faces", quality: false }))).toBe("Fix faces needs the Quality model. Choose Quality in generation settings.");
+  });
+  it("explains blending and that results become layers", () => {
+    expect(commandHint(state({ blendingName: "Hat" }))).toContain("Blending “Hat” in");
+    expect(commandHint(base)).toContain("Apply adds the result as a new layer.");
+    // Whole-picture hints say it themselves, once.
+    expect(commandHint(state({ operation: "edit" })).split("Apply adds the result as a new layer.")).toHaveLength(2);
+  });
+});

@@ -223,3 +223,10 @@ export function invertMask(mask: HTMLCanvasElement): HTMLCanvasElement {
   context.drawImage(mask, 0, 0);
   return canvas;
 }
+
+export async function fileFromUrl(url: string, name: string): Promise<File> {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error("Could not open the saved image.");
+  const blob = await response.blob();
+  return new File([blob], name, { type: blob.type || "image/png" });
+}

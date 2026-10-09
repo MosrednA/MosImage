@@ -1,6 +1,7 @@
 import { PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
 import { invertMaskPixels } from "../masks/maskOperations";
-import { EdgeSettings, MaskField, alphaBounds, overlayPixels, refineAlpha, signedDistanceField } from "../masks/maskRefine";
+import { EdgeSettings, MaskField, alphaBounds, overlayPixels, refineAlpha } from "../masks/maskRefine";
+import { signedDistanceFieldAsync } from "../masks/fieldWorker";
 import { ImageBox, maskBounds } from "./context";
 import { ImageSize, Point, viewportPointToImage } from "./coordinates";
 import { MaskTool } from "./tools";
@@ -47,6 +48,8 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edges, 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const fieldRef = useRef<MaskField | null>(null);
+  /** Only the newest painted selection may set the field. */
+  const fieldRequestRef = useRef(0);
   const refinedRef = useRef<RefinedMask | null>(null);
   const [fieldVersion, setFieldVersion] = useState(0);
   const [drawing, setDrawing] = useState(false);
@@ -65,6 +68,7 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edges, 
     undoStackRef.current = [];
     redoStackRef.current = [];
     touchHistory();
+    fieldRequestRef.current += 1;
     fieldRef.current = null;
     refinedRef.current = null;
     setHasSelection(false);
@@ -344,16 +348,22 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edges, 
     emitMask();
   }
 
-  /** The painted selection changed: rebuild its distance field. */
+  /** The painted selection changed: rebuild its distance field, off the main thread. */
   function emitMask() {
     const canvas = canvasRef.current;
     const context = context2d();
     if (!canvas || !context) return;
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
     const bounds = maskBounds(pixels);
-    fieldRef.current = bounds ? signedDistanceField(pixels.data, canvas.width, canvas.height, bounds) : null;
+    const request = ++fieldRequestRef.current;
     setHasSelection(bounds !== null);
-    setFieldVersion(version => version + 1);
+    if (!bounds) { fieldRef.current = null; setFieldVersion(version => version + 1); return; }
+    void signedDistanceFieldAsync(pixels.data, canvas.width, canvas.height, bounds).then(field => {
+      // A newer stroke or another picture replaces this one.
+      if (request !== fieldRequestRef.current) return;
+      fieldRef.current = field;
+      setFieldVersion(version => version + 1);
+    });
   }
 
   function exportMask(refined: RefinedMask, version: number) {

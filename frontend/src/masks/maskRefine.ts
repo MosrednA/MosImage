@@ -38,32 +38,42 @@ export function fieldMargin(): number {
 
 /** Signed chamfer distance for the RGBA alpha mask, limited to `bounds` padded by `margin`. */
 export function signedDistanceField(rgba: Uint8ClampedArray, imageWidth: number, imageHeight: number, bounds: ImageBox, margin = fieldMargin()): MaskField {
+  const crop = cropSelection(rgba, imageWidth, imageHeight, bounds, margin);
+  return distanceField(crop.box, crop.selected);
+}
+
+/** The selected pixels (alpha ≥ 128) within `bounds` padded by `margin`: the cheap first half of the field. */
+export function cropSelection(rgba: Uint8ClampedArray, imageWidth: number, imageHeight: number, bounds: ImageBox, margin = fieldMargin()): { box: ImageBox; selected: Uint8Array } {
   const x0 = Math.max(0, bounds.x - margin);
   const y0 = Math.max(0, bounds.y - margin);
   const x1 = Math.min(imageWidth, bounds.x + bounds.width + margin);
   const y1 = Math.min(imageHeight, bounds.y + bounds.height + margin);
-  const width = x1 - x0, height = y1 - y0, count = width * height;
-  const inside = new Float32Array(count);
-  const outside = new Float32Array(count);
-  const selected = new Uint8Array(count);
+  const width = x1 - x0, height = y1 - y0;
+  const selected = new Uint8Array(width * height);
   for (let y = 0; y < height; y += 1) {
     const row = ((y + y0) * imageWidth + x0) * 4 + 3;
-    for (let x = 0; x < width; x += 1) {
-      const index = y * width + x;
-      const isSelected = rgba[row + x * 4] >= 128;
-      selected[index] = isSelected ? 1 : 0;
-      inside[index] = isSelected ? Infinity : 0;
-      outside[index] = isSelected ? 0 : Infinity;
-    }
+    for (let x = 0; x < width; x += 1) selected[y * width + x] = rgba[row + x * 4] >= 128 ? 1 : 0;
   }
-  chamfer(inside, width, height);
-  chamfer(outside, width, height);
+  return { box: { x: x0, y: y0, width, height }, selected };
+}
+
+/** Signed distance for a cropped selection: the expensive half, safe to run in a worker. */
+export function distanceField(box: ImageBox, selected: Uint8Array): MaskField {
+  const count = box.width * box.height;
+  const inside = new Float32Array(count);
+  const outside = new Float32Array(count);
+  for (let index = 0; index < count; index += 1) {
+    inside[index] = selected[index] ? Infinity : 0;
+    outside[index] = selected[index] ? 0 : Infinity;
+  }
+  chamfer(inside, box.width, box.height);
+  chamfer(outside, box.width, box.height);
   const signed = new Float32Array(count);
   for (let index = 0; index < count; index += 1) {
     // Pixel centres sit half a pixel from the boundary between classes.
     signed[index] = selected[index] ? Math.min(inside[index], 1e6) - 0.5 : 0.5 - Math.min(outside[index], 1e6);
   }
-  return { box: { x: x0, y: y0, width, height }, signed };
+  return { box, signed };
 }
 
 /** Alpha (0–255) for every pixel of the field's box. */

@@ -1,5 +1,6 @@
 import { blankCanvas, canvasBlob } from "../layers/bitmaps";
-import { refineAlpha, signedDistanceField } from "../masks/maskRefine";
+import { refineAlpha } from "../masks/maskRefine";
+import { signedDistanceFieldAsync } from "../masks/fieldWorker";
 import { ImageBox, maskBounds } from "./context";
 import { ImageSize } from "./coordinates";
 
@@ -13,17 +14,17 @@ export function sketchReach(size: ImageSize): number {
 }
 
 /** Soft coverage around the strokes: fully redrawn within `reach`, then blending out over another `reach`. */
-export function sketchFootprint(rgba: Uint8ClampedArray, size: ImageSize, reach: number): { box: ImageBox; alpha: Uint8ClampedArray } | null {
+export async function sketchFootprint(rgba: Uint8ClampedArray, size: ImageSize, reach: number): Promise<{ box: ImageBox; alpha: Uint8ClampedArray } | null> {
   const bounds = maskBounds({ data: rgba, width: size.width, height: size.height });
   if (!bounds) return null;
-  const field = signedDistanceField(rgba, size.width, size.height, bounds, reach * 2 + 2);
+  const field = await signedDistanceFieldAsync(rgba, size.width, size.height, bounds, reach * 2 + 2);
   return { box: field.box, alpha: refineAlpha(field, { expand: reach, soften: reach }) };
 }
 
 /** The sketch's footprint as a selection mask (white, coverage in alpha), like the selection tools make. */
 export async function sketchMask(sketch: Blob, size: ImageSize): Promise<Blob | null> {
   const strokes = await pixels(sketch, size);
-  const footprint = sketchFootprint(strokes, size, sketchReach(size));
+  const footprint = await sketchFootprint(strokes, size, sketchReach(size));
   if (!footprint) return null;
   const { box, alpha } = footprint;
   const rgba = new ImageData(box.width, box.height);

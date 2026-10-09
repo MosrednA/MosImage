@@ -1,0 +1,159 @@
+import { EditParameters, Expansion, JobResponse, LayerRecord, editWholeImage, fileUrl, fixFaces, generateImage, inpaintImage, outpaintImage } from "../api";
+import { ImageSize } from "../canvas/coordinates";
+import { validExpansion } from "../canvas/expansion";
+import { sketchMask, sketchedPicture } from "../canvas/sketch";
+import { EditorSettings } from "../components/EditorSettings";
+import { canvasBlob, loadImage, loadMask, maskedLayer } from "../layers/bitmaps";
+import { MAX_LAYERS } from "../layers/stack";
+import { EditScope, Operation, SketchScope, taskFor } from "./operation";
+import { isKleinModel } from "./presets";
+
+/** A full generation, the selected footprint of a regional AI edit, an edit of one layer, or the fixed faces. */
+export type LayerResult = { kind: "selection"; mask: Blob; name: string; replaces: string | null }
+  | { kind: "generation"; name: string }
+  | { kind: "layer"; layerId: string; name: string }
+  | { kind: "faces"; name: string };
+
+export interface JobExtras {
+  /** An object selection on this layer cuts it out, instead of selecting on the background. */
+  layerId?: string;
+  /** Undo label for that layer mask change. */
+  maskLabel?: string;
+  /** Expand adds canvas on the left and top; layers move along with the content. */
+  layerOffset?: { x: number; y: number };
+  /** The accepted generation or regional edit becomes a layer. */
+  result?: LayerResult;
+}
+
+/** A queued AI job and how its result comes back into the document. */
+export interface Submission {
+  created: JobResponse;
+  /** Expand proposes new revisions; everything else comes back as a layer or a new image. */
+  operation: "outpaint" | null;
+  extras: JobExtras;
+  /** Start-screen references behind a new image, copied along when it opens. */
+  startReferences?: number[];
+}
+
+export interface SubmissionInput {
+  operation: Operation;
+  settings: EditorSettings;
+  referenceIds: number[];
+  source: File | null;
+  size: ImageSize | null;
+  hasDocument: boolean;
+  layerCount: number;
+  mask: Blob | null;
+  sketch: Blob | null;
+  sketchScope: SketchScope;
+  editScope: EditScope;
+  /** The layer Edit works on alone. */
+  editLayer: LayerRecord | null;
+  /** The layer a regional edit blends into the scene. */
+  blendLayer: LayerRecord | null;
+  expansion: Expansion;
+  /** What the AI works on: the picture as you see it, with its visible layers. */
+  picture: () => Promise<File>;
+}
+
+/** Blending keeps most of the layer and redraws its light and edges. */
+export const BLEND_STRENGTH = 0.6;
+const FILL_REMOVE_PROMPT = "Remove the selected object completely. Reconstruct the background naturally, matching the surrounding lighting, texture and perspective. ";
+
+export function requestPrompt(operation: Operation, settings: EditorSettings): string {
+  const prompt = settings.prompt.trim();
+  if (operation !== "remove") return prompt;
+  return isKleinModel(settings.model_name) ? prompt || "Continue the surrounding background." : FILL_REMOVE_PROMPT + prompt;
+}
+
+export function requestParameters(settings: EditorSettings, prompt: string): EditParameters {
+  return {
+    prompt, negative_prompt: settings.negative_prompt || undefined, model_name: settings.model_name, runtime_mode: settings.runtime_mode,
+    seed: settings.seed ? Number(settings.seed) : undefined, steps: settings.steps, guidance: settings.guidance, count: settings.count,
+  };
+}
+
+/** A short layer name for an AI result. */
+export function resultName(blended: string | null, operation: Operation, prompt: string): string {
+  if (blended) return `${blended} blended`;
+  if (operation === "remove") return "AI removal";
+  const words = prompt.split(/\s+/).filter(Boolean).slice(0, 5).join(" ");
+  return words ? `AI · ${words}` : "AI edit";
+}
+
+interface InpaintOptions { strength: number; editOperation: "replace" | "remove" | "sketch"; contextPadding: number }
+
+function inpaintForm(parameters: EditParameters, image: File, mask: Blob, { strength, editOperation, contextPadding }: InpaintOptions): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(parameters)) if (value !== undefined) form.set(key, String(value));
+  form.set("strength", String(strength));
+  form.set("image", image); form.set("mask", mask, "mask.png");
+  form.set("edit_operation", editOperation);
+  // The canvas sends the final soft mask (Expand/Soften), so no extra server-side ramp.
+  form.set("blend_feather", "0");
+  form.set("context_padding", String(contextPadding));
+  return form;
+}
+
+/** Sends the current operation to the engine. */
+export async function submitJob(input: SubmissionInput): Promise<Submission> {
+  const { operation, settings, referenceIds, source, size, mask } = input;
+  const task = taskFor(operation);
+  const prompt = requestPrompt(operation, settings);
+  const parameters = requestParameters(settings, prompt);
+  const withReferences = { ...parameters, reference_ids: referenceIds };
+  if (input.hasDocument && task !== "outpaint" && input.layerCount >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one before generating.`);
+  const asLayer = (created: JobResponse, result: LayerResult): Submission => ({ created, operation: null, extras: { result } });
+
+  if (operation === "sketch") {
+    if (!source || !input.hasDocument || !size) throw new Error("Open an image first.");
+    const footprint = input.sketch && await sketchMask(input.sketch, size);
+    if (!input.sketch || !footprint) throw new Error("Sketch something first: paint rough shapes with the Sketch tool.");
+    const picture = await sketchedPicture(await input.picture(), input.sketch, size);
+    const name = resultName(null, operation, prompt);
+    if (input.sketchScope === "whole") return asLayer(await editWholeImage(picture, { ...parameters, mode: "sketch" }), { kind: "generation", name });
+    // Only the sketch and a margin around it are redrawn; the rest of the picture stays exact.
+    const form = inpaintForm(parameters, picture, footprint, { strength: 1, editOperation: "sketch", contextPadding: settings.context_padding });
+    return asLayer(await inpaintImage(form), { kind: "selection", mask: footprint, name, replaces: null });
+  }
+  if (operation === "faces") {
+    if (!source || !input.hasDocument) throw new Error("Open an image first.");
+    // A selection limits which faces are fixed.
+    return asLayer(await fixFaces(await input.picture(), withReferences, mask), { kind: "faces", name: "Fixed faces" });
+  }
+  if (task === "text-to-image") {
+    const created = await generateImage({ ...withReferences, width: settings.width, height: settings.height });
+    if (!input.hasDocument) return { created, operation: null, extras: {}, startReferences: referenceIds };
+    return { ...asLayer(created, { kind: "generation", name: resultName(null, operation, prompt) }), startReferences: [] };
+  }
+  if (task === "edit") {
+    if (!source || !input.hasDocument) throw new Error("Open an image first.");
+    const layer = input.editLayer;
+    if (layer) {
+      // Only this layer, through its mask; the result replaces it in place.
+      const image = await loadImage(fileUrl(layer.image_url));
+      const layerMask = layer.mask_url ? await loadMask(fileUrl(layer.mask_url)) : null;
+      const picture = new File([await canvasBlob(maskedLayer(image, layerMask, layer.width, layer.height))], "layer.png", { type: "image/png" });
+      return asLayer(await editWholeImage(picture, withReferences), { kind: "layer", layerId: layer.id, name: `${layer.name} · AI` });
+    }
+    if (input.editScope !== "visible") throw new Error("Pick the layer to edit in the Layers panel.");
+    // The AI sees every visible layer; the result covers the canvas as a new layer.
+    return asLayer(await editWholeImage(await input.picture(), withReferences), { kind: "generation", name: resultName(null, operation, prompt) });
+  }
+  if (task === "outpaint") {
+    if (!source || !size || !validExpansion(size, input.expansion)) throw new Error("Choose a valid canvas size first.");
+    const { expansion } = input;
+    return { created: await outpaintImage(source, { ...parameters, ...expansion }), operation: "outpaint", extras: { layerOffset: { x: expansion.left, y: expansion.top } } };
+  }
+  if (!source || !mask || !input.hasDocument) throw new Error("Select the area you want to change first.");
+  // Every regional edit becomes a layer over the picture the AI saw.
+  const blendLayer = input.blendLayer;
+  const form = inpaintForm(parameters, await input.picture(), mask, {
+    strength: blendLayer ? Math.min(settings.strength, BLEND_STRENGTH) : settings.strength,
+    editOperation: operation === "remove" ? "remove" : "replace",
+    contextPadding: settings.context_padding,
+  });
+  form.set("scene_context", settings.scene_context);
+  for (const id of referenceIds) form.append("reference_ids", String(id));
+  return asLayer(await inpaintImage(form), { kind: "selection", mask, name: resultName(blendLayer?.name ?? null, operation, prompt), replaces: blendLayer?.id ?? null });
+}

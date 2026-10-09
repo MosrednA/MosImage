@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { alphaBounds, autoSoften, edgeAlpha, refineAlpha, signedDistanceField } from "./maskRefine";
+import { alphaBounds, autoSoften, cropSelection, distanceField, edgeAlpha, refineAlpha, signedDistanceField } from "./maskRefine";
+import { signedDistanceFieldAsync } from "./fieldWorker";
 
 /** A width × height RGBA mask with a selected axis-aligned square. */
 function square(width: number, height: number, left: number, top: number, size: number) {
@@ -58,5 +59,18 @@ describe("non-destructive mask edges", () => {
     expect(autoSoften(1024, 768)).toBe(26);
     expect(autoSoften(200, 200)).toBe(8);
     expect(autoSoften(8000, 4000)).toBe(64);
+  });
+});
+
+describe("distance field halves", () => {
+  it("match the one-step field, also through the worker client", async () => {
+    const width = 40, height = 30;
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let y = 10; y < 18; y += 1) for (let x = 12; x < 25; x += 1) rgba[(y * width + x) * 4 + 3] = 255;
+    const bounds = { x: 12, y: 10, width: 13, height: 8 };
+    const whole = signedDistanceField(rgba, width, height, bounds, 6);
+    const crop = cropSelection(rgba, width, height, bounds, 6);
+    expect(distanceField(crop.box, crop.selected)).toEqual(whole);
+    expect(await signedDistanceFieldAsync(rgba, width, height, bounds, 6)).toEqual(whole);
   });
 });

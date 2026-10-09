@@ -1,53 +1,29 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import secrets
 import signal
 from contextlib import asynccontextmanager
-from threading import Thread
 from typing import Awaitable, Callable
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
-from pydantic import ValidationError
 from PIL import Image
 
-from . import documents, layers, references, storage
+from . import documents, references, storage
 from .config import settings
 from .jobs import JobCancelled, JobControl, jobs
 from .models.registry import registry
+from .routes import documents as document_routes
+from .routes import generation
+from .routes import jobs as job_routes
+from .routes import references as reference_routes
+from .routes import selection as selection_routes
+from .routes.common import job_response, read_uploaded_image  # noqa: F401  (tests import it from here)
 from .runtime import system_info
-from .schemas import (
-    CopyReferencesRequest,
-    CutoutRequest,
-    EditRequest,
-    FaceFixRequest,
-    GenerationRecord,
-    AlternativeProposalRequest,
-    DocumentRecord,
-    DocumentUpdate,
-    EngineStatus,
-    InpaintForm,
-    LayerAsset,
-    LayersUpdate,
-    OutpaintForm,
-    ReferenceRecord,
-    SelectionRequest,
-    TextSelectionRequest,
-    JobResponse,
-    JobStatus,
-    LoadModelRequest,
-    ModelInfo,
-    RevisionRecord,
-    TextToImageRequest,
-)
-from .documents import RevisionConflict
-from .models.flux2_klein_nvfp4 import KLEIN_MODELS
-from .faces import run_face_fix
-from .services import run_image_edit, run_inpaint, run_outpaint, run_text_to_image
+from .schemas import EngineStatus, JobResponse, LoadModelRequest, ModelInfo
 from .selection import selector
 
 Image.MAX_IMAGE_PIXELS = settings.max_image_pixels
@@ -55,18 +31,6 @@ Image.MAX_IMAGE_PIXELS = settings.max_image_pixels
 storage.ensure_storage()
 documents.ensure_document_storage()
 references.ensure_reference_storage()
-
-
-async def read_uploaded_image(file: UploadFile, max_bytes: int | None = None) -> bytes:
-    limit = max_bytes if max_bytes is not None else settings.max_upload_bytes
-    content = await file.read(limit + 1)
-    if len(content) > limit:
-        max_mb = max(1, limit // (1024 * 1024))
-        raise HTTPException(
-            status_code=413,
-            detail=f"File {file.filename or 'upload'} exceeds maximum size of {max_mb} MB.",
-        )
-    return content
 
 
 warm_up_job_id: str | None = None
@@ -155,421 +119,11 @@ def unload_model(model_name: str) -> dict[str, str]:
 
 @app.post("/api/models/load", response_model=JobResponse)
 def load_model(request: LoadModelRequest) -> JobResponse:
-    job = jobs.submit("load-model", lambda control: _preload_model(request, control))
-    return JobResponse(id=job.id, kind=job.kind, status=job.status)
+    return job_response(jobs.submit("load-model", lambda control: _preload_model(request, control)))
 
 
-@app.post("/api/generate", response_model=JobResponse)
-def generate(request: TextToImageRequest) -> JobResponse:
-    if request.reference_ids:
-        _check_references(request.reference_ids, request.model_name)
-    job = jobs.submit("text-to-image", lambda control: run_text_to_image(request, control))
-    return JobResponse(id=job.id, kind=job.kind, status=job.status)
-
-
-@app.post("/api/edit", response_model=JobResponse)
-async def edit_image(image: UploadFile = File(...), parameters: str = Form(...)) -> JobResponse:
-    try:
-        request = EditRequest.model_validate_json(parameters)
-        if "edit" not in registry.get(request.model_name).info().capabilities:
-            raise ValueError("Editing the whole image needs the Quality model (FLUX.2 Klein).")
-    except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if request.reference_ids:
-        _check_references(request.reference_ids, request.model_name)
-    content = await read_uploaded_image(image)
-    job = jobs.submit("edit", lambda control: run_image_edit(request, content, image.filename, control))
-    return JobResponse(id=job.id, kind=job.kind, status=job.status)
-
-
-@app.post("/api/inpaint", response_model=JobResponse)
-async def inpaint(
-    prompt: str = Form(...),
-    negative_prompt: str | None = Form(None),
-    model_name: str = Form("flux2-klein-9b-nvfp4"),
-    seed: int | None = Form(None),
-    runtime_mode: str = Form("balanced"),
-    steps: int = Form(4),
-    guidance: float = Form(1.0),
-    strength: float = Form(1.0),
-    count: int = Form(1),
-    edit_operation: str = Form("replace"),
-    blend_feather: float = Form(16),
-    context_padding: int = Form(320),
-    scene_context: str = Form(""),
-    reference_ids: list[int] = Form([]),
-    image: UploadFile = File(...),
-    mask: UploadFile = File(...),
-) -> JobResponse:
-    try:
-        request = InpaintForm(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            model_name=model_name,
-            seed=seed,
-            runtime_mode=runtime_mode,
-            steps=steps,
-            guidance=guidance,
-            strength=strength,
-            count=count,
-            edit_operation=edit_operation,
-            blend_feather=blend_feather,
-            context_padding=context_padding,
-            scene_context=scene_context,
-            reference_ids=reference_ids,
-        )
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if request.edit_operation == "sketch" and request.model_name not in KLEIN_MODELS:
-        raise HTTPException(status_code=422, detail="Rendering a sketch needs the Quality model (FLUX.2 Klein).")
-    if request.reference_ids:
-        _check_references(request.reference_ids, request.model_name)
-    image_bytes = await read_uploaded_image(image)
-    mask_bytes = await read_uploaded_image(mask)
-    job = jobs.submit(
-        "inpaint",
-        lambda control: run_inpaint(request, image_bytes, image.filename, mask_bytes, mask.filename, control),
-    )
-    return JobResponse(id=job.id, kind=job.kind, status=job.status)
-
-
-@app.get("/api/jobs/{job_id}", response_model=JobStatus)
-def job_status(job_id: str) -> JobStatus:
-    status = jobs.status(job_id)
-    if status is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return status
-
-
-@app.post("/api/outpaint", response_model=JobResponse)
-async def outpaint(
-    image: UploadFile = File(...),
-    parameters: str = Form(...),
-) -> JobResponse:
-    try:
-        request = OutpaintForm.model_validate_json(parameters)
-        if "outpaint" not in registry.get(request.model_name).info().capabilities:
-            raise ValueError("Choose a mask-conditioned model for expansion: Z-Image Turbo or FLUX Fill.")
-    except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    content = await read_uploaded_image(image)
-    job = jobs.submit("outpaint", lambda control: run_outpaint(request, content, control))
-    return JobResponse(id=job.id, kind=job.kind, status=job.status)
-
-
-@app.post("/api/select", response_model=JobResponse)
-async def select_object(image: UploadFile = File(...), parameters: str = Form(...)) -> JobResponse:
-    try:
-        request = SelectionRequest.model_validate_json(parameters)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    content = await read_uploaded_image(image)
-    job = jobs.submit("select", lambda control: selector.select(content, request, control))
-    return JobResponse(id=job.id, kind=job.kind, status=job.status)
-
-
-@app.post("/api/select-text", response_model=JobResponse)
-async def select_by_text(image: UploadFile = File(...), parameters: str = Form(...)) -> JobResponse:
-    try:
-        request = TextSelectionRequest.model_validate_json(parameters)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    content = await read_uploaded_image(image)
-    job = jobs.submit("select", lambda control: selector.select_text(content, request, control))
-    return JobResponse(id=job.id, kind=job.kind, status=job.status)
-
-
-@app.post("/api/cutout", response_model=JobResponse)
-async def cut_out_subject(image: UploadFile = File(...), parameters: str = Form("{}")) -> JobResponse:
-    try:
-        request = CutoutRequest.model_validate_json(parameters)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    content = await read_uploaded_image(image)
-    job = jobs.submit("select", lambda control: selector.cutout(content, request, control))
-    return JobResponse(id=job.id, kind=job.kind, status=job.status)
-
-
-@app.post("/api/faces", response_model=JobResponse)
-async def fix_faces(image: UploadFile = File(...), parameters: str = Form(...), mask: UploadFile | None = File(None)) -> JobResponse:
-    try:
-        request = FaceFixRequest.model_validate_json(parameters)
-        if "edit" not in registry.get(request.model_name).info().capabilities:
-            raise ValueError("Fix faces needs the Quality model (FLUX.2 Klein).")
-    except (ValidationError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if request.reference_ids:
-        _check_references(request.reference_ids, request.model_name)
-    content = await read_uploaded_image(image)
-    mask_bytes = await read_uploaded_image(mask) if mask is not None else None
-    job = jobs.submit("edit", lambda control: run_face_fix(request, content, image.filename, mask_bytes, control))
-    return JobResponse(id=job.id, kind=job.kind, status=job.status)
-
-
-@app.post("/api/jobs/{job_id}/cancel", response_model=JobStatus)
-def cancel_job(job_id: str) -> JobStatus:
-    status = jobs.cancel(job_id)
-    if status is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if settings.supervised and jobs.claim_hard_cancel(job_id):
-        Thread(target=_enforce_cancel, args=(job_id,), daemon=True).start()
-    return status
-
-
-@app.get("/api/history", response_model=list[GenerationRecord])
-def history(limit: int = 50) -> list[dict]:
-    return storage.list_generations(limit=max(1, min(limit, 100)))
-
-
-@app.get("/api/history/{generation_id}", response_model=GenerationRecord)
-def history_item(generation_id: int) -> dict:
-    record = storage.get_generation(generation_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Generation not found")
-    return record
-
-
-@app.delete("/api/history/{generation_id}")
-def delete_generation(generation_id: int) -> dict[str, str]:
-    try:
-        storage.delete_generation(generation_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"status": "deleted"}
-
-
-@app.get("/api/v2/health")
-def v2_health() -> dict[str, str]:
-    return {"status": "ok", "api": "v2"}
-
-
-@app.get("/api/v2/documents", response_model=list[DocumentRecord])
-def list_documents(limit: int = 50) -> list[dict]:
-    return documents.list_documents(limit=max(1, min(limit, 100)))
-
-
-@app.post("/api/v2/documents", response_model=DocumentRecord)
-async def create_document(
-    image: UploadFile = File(...),
-    name: str = Form("Untitled"),
-) -> dict:
-    content = await read_uploaded_image(image)
-    try:
-        return documents.create_from_upload(name, content, image.filename)
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.delete("/api/v2/documents/{document_id}")
-def delete_document(document_id: int) -> dict[str, str]:
-    try:
-        documents.delete_document(document_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"status": "deleted"}
-
-
-@app.post("/api/v2/documents/import/{generation_id}", response_model=DocumentRecord)
-def import_generation_document(generation_id: int) -> dict:
-    try:
-        return documents.import_generation(generation_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.get("/api/v2/documents/{document_id}", response_model=DocumentRecord)
-def get_document(document_id: int) -> dict:
-    record = documents.get_document(document_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return record
-
-
-@app.patch("/api/v2/documents/{document_id}", response_model=DocumentRecord)
-def update_document(document_id: int, request: DocumentUpdate) -> dict:
-    try:
-        return documents.update_document(document_id, request.name)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@app.post("/api/v2/documents/{document_id}/revisions", response_model=RevisionRecord)
-async def create_document_revision(
-    document_id: int,
-    image: UploadFile = File(...),
-    operation_type: str = Form("manual"),
-) -> dict:
-    if operation_type not in {"manual", "autosave"}:
-        raise HTTPException(status_code=422, detail="Unsupported revision operation")
-    try:
-        return documents.create_revision_from_upload(
-            document_id,
-            await read_uploaded_image(image),
-            image.filename,
-            operation_type,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.post("/api/v2/documents/{document_id}/layer-assets", response_model=LayerAsset)
-async def upload_layer_asset(document_id: int, image: UploadFile = File(...), kind: str = Form("image")) -> dict:
-    if kind not in {"image", "mask"}:
-        raise HTTPException(status_code=422, detail="Unsupported layer asset")
-    if documents.get_document(document_id) is None:
-        raise HTTPException(status_code=404, detail="Document not found")
-    try:
-        return layers.save_asset(await read_uploaded_image(image), kind)  # type: ignore[arg-type]
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.put("/api/v2/documents/{document_id}/layers", response_model=DocumentRecord)
-def save_document_layers(document_id: int, request: LayersUpdate) -> dict:
-    try:
-        return documents.save_layers(
-            document_id, request.base_revision_id, [layer.model_dump() for layer in request.layers], request.label
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RevisionConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.post("/api/v2/documents/{document_id}/alternatives", response_model=RevisionRecord)
-def create_alternative_proposal(document_id: int, request: AlternativeProposalRequest) -> dict:
-    try:
-        return documents.create_alternative_proposal(
-            document_id,
-            request.generation_ids,
-            request.operation_type,
-            request.base_revision_id,
-            (request.layer_offset_x, request.layer_offset_y),
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RevisionConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.post(
-    "/api/v2/documents/{document_id}/revisions/{revision_id}/alternatives/{alternative_id}/accept",
-    response_model=DocumentRecord,
-)
-def accept_document_alternative(document_id: int, revision_id: int, alternative_id: int) -> dict:
-    try:
-        return documents.accept_alternative(document_id, revision_id, alternative_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except RevisionConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.post("/api/v2/documents/{document_id}/undo", response_model=DocumentRecord)
-def undo_document(document_id: int) -> dict:
-    try:
-        return documents.undo(document_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.post("/api/v2/documents/{document_id}/redo", response_model=DocumentRecord)
-def redo_document(document_id: int) -> dict:
-    try:
-        return documents.redo(document_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-def _check_references(reference_ids: list[int], model_name: str) -> None:
-    if any(references.get_reference(reference_id) is None for reference_id in reference_ids):
-        raise HTTPException(status_code=422, detail="A selected reference no longer exists.")
-    if model_name not in KLEIN_MODELS:
-        raise HTTPException(status_code=422, detail="References need the Quality model (FLUX.2 Klein).")
-
-
-@app.get("/api/v2/references", response_model=list[ReferenceRecord])
-def list_loose_references() -> list[dict]:
-    return references.list_references(None)
-
-
-@app.post("/api/v2/references", response_model=ReferenceRecord)
-async def add_loose_reference(image: UploadFile = File(...)) -> dict:
-    try:
-        return references.create_reference(None, await read_uploaded_image(image), image.filename)
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.post("/api/v2/documents/{document_id}/references/copy", response_model=list[ReferenceRecord])
-def copy_references_to_document(document_id: int, request: CopyReferencesRequest) -> list[dict]:
-    try:
-        return references.copy_references(request.reference_ids, document_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.get("/api/v2/documents/{document_id}/references", response_model=list[ReferenceRecord])
-def list_document_references(document_id: int) -> list[dict]:
-    return references.list_references(document_id)
-
-
-@app.post("/api/v2/documents/{document_id}/references", response_model=ReferenceRecord)
-async def add_document_reference(document_id: int, image: UploadFile = File(...)) -> dict:
-    try:
-        return references.create_reference(document_id, await read_uploaded_image(image), image.filename)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.delete("/api/v2/references/{reference_id}")
-def delete_document_reference(reference_id: int) -> dict[str, str]:
-    try:
-        references.delete_reference(reference_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"status": "deleted"}
-
-
-@app.post("/api/v2/references/{reference_id}/subject", response_model=ReferenceRecord)
-def isolate_reference_subject(reference_id: int) -> dict:
-    try:
-        source_path = references.original_image_path(reference_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    with Image.open(source_path) as source:
-        image = source.convert("RGB")
-    # Run subject segmentation on the CPU executor lane to serialize with select jobs
-    mask = jobs.run_cpu(lambda: selector.subject_mask(image))
-    if mask is None:
-        raise HTTPException(status_code=422, detail="No clear subject found. Crop the image around the subject and add it again.")
-    return references.set_subject(reference_id, references.extract_subject(image, mask))
-
-
-@app.delete("/api/v2/references/{reference_id}/subject", response_model=ReferenceRecord)
-def restore_reference_background(reference_id: int) -> dict:
-    try:
-        return references.clear_subject(reference_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+for router in (generation.router, selection_routes.router, job_routes.router, document_routes.router, reference_routes.router):
+    app.include_router(router)
 
 
 def _warm_up_engine(control: JobControl) -> None:
@@ -588,11 +142,3 @@ def _preload_model(request: LoadModelRequest, control: JobControl) -> None:
         registry.unload(request.model_name)
         raise
     return None
-
-
-def _enforce_cancel(job_id: str) -> None:
-    if jobs.wait_for_completion(job_id, settings.cancel_grace_seconds):
-        return
-    # CUDA kernels and native model code cannot be interrupted safely from
-    # Python. The local supervisor immediately replaces this worker.
-    os._exit(75)
