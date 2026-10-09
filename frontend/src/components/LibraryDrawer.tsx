@@ -28,14 +28,14 @@ export function LibraryDrawer({ documents, history, onDocument, onGeneration, on
       <input className="library-search" type="search" placeholder="Search images…" aria-label="Search library" value={query} onChange={event => setQuery(event.target.value)} />
       <div className="library-grid">
         {tab === "documents" ? visibleDocuments.map(item => (
-          <div key={item.id} className="library-item-wrapper" style={{ position: "relative" }}>
-            <button onClick={() => onDocument(item)}>{item.current_image_url && <img crossOrigin="anonymous" src={fileUrl(item.current_image_url)} alt="" loading="lazy" />}<strong>{item.name}</strong><small>{item.canvas_width} × {item.canvas_height}</small></button>
-            {onDeleteDocument && <button className="icon-button library-delete-btn" aria-label={`Delete document ${item.name}`} title="Delete" onClick={e => { e.stopPropagation(); if (window.confirm(`Delete "${item.name}"?`)) onDeleteDocument(item.id); }} style={{ position: "absolute", top: "0.25rem", right: "0.25rem", background: "rgba(0,0,0,0.6)", borderRadius: "50%", padding: "4px", color: "#fff" }}><Icon name="close" /></button>}
+          <div key={item.id} className="library-item-wrapper">
+            <button className="library-item" title={item.name} onClick={() => onDocument(item)}>{item.current_image_url && <img crossOrigin="anonymous" src={fileUrl(item.current_image_url)} alt="" loading="lazy" />}<strong>{item.name}</strong><small>{item.canvas_width} × {item.canvas_height}</small></button>
+            {onDeleteDocument && <button className="library-delete-btn" aria-label={`Delete document ${item.name}`} title="Delete" onClick={e => { e.stopPropagation(); if (window.confirm(`Delete "${item.name}"?`)) onDeleteDocument(item.id); }}><Icon name="close" /></button>}
           </div>
         )) : visibleHistory.map(item => (
-          <div key={item.id} className="library-item-wrapper" style={{ position: "relative" }}>
-            <button onClick={() => onGeneration(item)}><img crossOrigin="anonymous" src={fileUrl(item.output_image_url)} alt="" loading="lazy" /><strong>{item.prompt}</strong><small>{item.width} × {item.height}</small></button>
-            {onDeleteGeneration && <button className="icon-button library-delete-btn" aria-label="Delete generation" title="Delete" onClick={e => { e.stopPropagation(); if (window.confirm("Delete this generation?")) onDeleteGeneration(item.id); }} style={{ position: "absolute", top: "0.25rem", right: "0.25rem", background: "rgba(0,0,0,0.6)", borderRadius: "50%", padding: "4px", color: "#fff" }}><Icon name="close" /></button>}
+          <div key={item.id} className="library-item-wrapper">
+            <button className="library-item" title={item.prompt} onClick={() => onGeneration(item)}><img crossOrigin="anonymous" src={fileUrl(item.output_image_url)} alt="" loading="lazy" /><strong>{item.prompt}</strong><small>{item.width} × {item.height}</small></button>
+            {onDeleteGeneration && <button className="library-delete-btn" aria-label="Delete generation" title="Delete" onClick={e => { e.stopPropagation(); if (window.confirm("Delete this generation?")) onDeleteGeneration(item.id); }}><Icon name="close" /></button>}
           </div>
         ))}
       </div>

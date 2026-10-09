@@ -208,8 +208,13 @@ small { color: var(--muted); }
 .drawer-content .segmented button { padding: 8px 12px; font-size: 12px; }
 .library-search { width: 100%; margin-bottom: 22px; font-size: 12px; padding: 12px; }
 .library-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
-.library-grid button { display: flex; flex-direction: column; align-items: start; padding: 6px 6px 12px; min-width: 0; background: #1d2b3c; border-color: #3b506b; text-align: left; }
-.library-grid img { width: 100%; height: 145px; object-fit: contain; border-radius: 4px; background: #101b28; }
+/* Each card fills its column; long names truncate instead of widening it. */
+.library-item-wrapper { position: relative; min-width: 0; }
+.library-item { display: flex; flex-direction: column; align-items: stretch; width: 100%; height: 100%; padding: 6px 6px 12px; min-width: 0; background: #1d2b3c; border-color: #3b506b; text-align: left; }
+.library-grid img { display: block; width: 100%; height: 145px; object-fit: contain; border-radius: 4px; background: #101b28; }
+.library-delete-btn { position: absolute; top: 10px; right: 10px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: #000a; color: #fff; opacity: .75; }
+.library-delete-btn:hover, .library-delete-btn:focus-visible { opacity: 1; background: #b42318; }
+.library-delete-btn svg { width: 14px; height: 14px; }
 .library-grid strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; width: 100%; font-weight: 500; padding: 3px 5px 0; font-size: 11px; }
 .library-grid small { padding: 0 5px; font-size: 10px; }
 .library-empty { font-size: 13px; color: var(--muted); text-align: center; padding: 40px 20px; }
