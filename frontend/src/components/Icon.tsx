@@ -1,7 +1,7 @@
 export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help" | "person" | "plus" | "trash" | "scissors" | "chevronLeft" | "chevronRight" | "layers" | "transform" | "flipH" | "flipV" | "duplicate" | "rotate" | "reset" | "image";
 
 const paths: Record<IconName, string> = {
-  object: "M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5M8 9l4-2 4 2v6l-4 2-4-2z",
+  object: "M3 21L14 10M12.5 8.5l3 3M18 2v4M16 4h4M21.5 9v3M20 10.5h3M10 2.5v2.5M8.75 3.75h2.5",
   brush: "M14 5l5-2 2 2-2 5-9 9-5-5zM5 14c-4 1-2 5-4 7 5 0 7-1 7-4",
   eraser: "M8 20h12M4.6 14.6l9.2-9.2a2 2 0 012.8 0l2 2a2 2 0 010 2.8L11 18.8H8.8zM9 10l5 5",
   lasso: "M12 4c5 0 9 2.2 9 5s-4 5-9 5-9-2.2-9-5 4-5 9-5zM6.5 13c-1.5 2-.5 4 1.5 4s2.5 2 .5 4",
