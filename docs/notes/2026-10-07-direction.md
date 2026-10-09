@@ -1,8 +1,8 @@
 # MosImage: modelonderzoek en productrichting
 
-Onderzocht op **7 oktober 2026**. Status: **onderzoekssnapshot en voorstel**, met inmiddels deels uitgevoerde aanbevelingen. De beginsituatie hieronder beschrijft de inspectie voor implementatie. De actuele Engelse Focus-UI, dependency-upgrades, SAM 2.1-klikselectie en edge-outpainting staan in [Focus-implementatie en validatie](FOCUS_IMPLEMENTATION_2026-10-07.md) en [V2_REFACTOR_PLAN.md](V2_REFACTOR_PLAN.md).
+Onderzocht op **7 oktober 2026**. Status: **onderzoekssnapshot en voorstel**, met inmiddels deels uitgevoerde aanbevelingen. De beginsituatie hieronder beschrijft de inspectie voor implementatie. De actuele Engelse Focus-UI, dependency-upgrades, SAM 2.1-klikselectie en edge-outpainting staan in [Focus-implementatie en validatie](2026-10-07-focus-implementation.md) en [V2_REFACTOR_PLAN.md](../roadmap.md).
 
-De regionale Klein-route is daarna vervangen door native mask conditioning, met een zichtbare contextrechthoek en instelbare blending. De huidige route behoudt zachte maskerwaarden ook tijdens sampling en gebruikt standaard 320 px context en 16 px inward blend. De oorspronkelijke observatie dat Klein het masker negeerde blijft hieronder bewaard als beginsituatie; [inpainting-implementatie en proeven](INPAINTING_2026-10-07.md) beschrijft de huidige route en negatieve referentie-experimenten.
+De regionale Klein-route is daarna vervangen door native mask conditioning, met een zichtbare contextrechthoek en instelbare blending. De huidige route behoudt zachte maskerwaarden ook tijdens sampling en gebruikt standaard 320 px context en 16 px inward blend. De oorspronkelijke observatie dat Klein het masker negeerde blijft hieronder bewaard als beginsituatie; [inpainting-implementatie en proeven](2026-10-07-inpainting.md) beschrijft de huidige route en negatieve referentie-experimenten.
 
 ## Advies
 

@@ -89,7 +89,7 @@ For separate component-residency sampling, run each precision sequentially with 
 
 ## Anna/park reference insertion experiments
 
-The [7 October Anna/park results](../INPAINTING_2026-10-07.md#controlled-annapark-experiments) use frozen local document assets, separate from the versioned v1 suite. They retain 72 completed outputs across 24 settings/model/prompt/guide/mask variants (three prompt-baseline outputs repeat previous PNGs exactly), plus failures and explicitly skipped seeds. The scripts require the original local source, mask and Anna reference paths recorded in the manifest; copying this checkout alone does not provide those ignored assets.
+The [7 October Anna/park results](../docs/notes/2026-10-07-inpainting.md#controlled-annapark-experiments) use frozen local document assets, separate from the versioned v1 suite. They retain 72 completed outputs across 24 settings/model/prompt/guide/mask variants (three prompt-baseline outputs repeat previous PNGs exactly), plus failures and explicitly skipped seeds. The scripts require the original local source, mask and Anna reference paths recorded in the manifest; copying this checkout alone does not provide those ignored assets.
 
 Run from `backend/`. The original API ablation tool requires explicit `--variants`; do not repeat the known failing long-Scene/BF16 context-320 profiles on this machine. The memory-bounded follow-up refuses a loaded API model, encodes text separately, releases it before loading a renderer, caps PyTorch allocation at 65%, and stops after a slow step or insufficient RAM. This is a diagnostic budget, not a total-system memory guarantee. Preserve every declared result and use a fresh output directory for another run.
 
@@ -109,7 +109,7 @@ The prompt tool uses the same bounded runner but needs only the cached distilled
 
 ## Pose/layout reference follow-up
 
-The [visual guide comparison](../INPAINTING_2026-10-07.md#visual-poselayout-guide-comparison) adds nine local renders on the same frozen scene. A generated transparent dummy/bench is a supporting fixture; final images still use local Klein NVFP4. The new identity and structural references share a 384 × 512 canvas, and auxiliary hashes are checked before loading. Both guided conditions share one role-aware prompt. The benchmark registers no new provider.
+The [visual guide comparison](../docs/notes/2026-10-07-inpainting.md#visual-poselayout-guide-comparison) adds nine local renders on the same frozen scene. A generated transparent dummy/bench is a supporting fixture; final images still use local Klein NVFP4. The new identity and structural references share a 384 × 512 canvas, and auxiliary hashes are checked before loading. Both guided conditions share one role-aware prompt. The benchmark registers no new provider.
 
 Use a new frozen fixture directory/output for another run; the preparation tool refuses to overwrite a completed guides directory. The source directory must already contain `results.json`, unchanged source/mask/reference files and `dummy-generation.json` recording the built-in generator's full prompt. The local cutout path comes from the built-in tool; copy it into the prepared fixture with this command:
 
@@ -125,7 +125,7 @@ Placement centre, bottom and maximum size are explicit constants in the preparat
 
 ## Paired mask-shape follow-up
 
-The [paired mask comparison](../INPAINTING_2026-10-07.md#paired-mask-shape-comparison) adds six renders with exactly the guide cohort's prompts/references/seeds/crop, changing only its alpha mask. The box keeps the original bounding rectangle with a 16-px inward smooth edge. Its opaque interior restores baseline faces in all three seeds. Size, pose/contact and background seams remain imperfect.
+The [paired mask comparison](../docs/notes/2026-10-07-inpainting.md#paired-mask-shape-comparison) adds six renders with exactly the guide cohort's prompts/references/seeds/crop, changing only its alpha mask. The box keeps the original bounding rectangle with a 16-px inward smooth edge. Its opaque interior restores baseline faces in all three seeds. Size, pose/contact and background seams remain imperfect.
 
 ```powershell
 cd backend

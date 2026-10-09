@@ -9,6 +9,7 @@ MosImage uses a split local app architecture:
 - `frontend/` contains the React + Vite UI and optional Tauri shell in `frontend/src-tauri/`.
 - `data/images/{inputs,masks,outputs}/` stores local image files. `data/app.db` stores metadata.
 - `models/` is reserved for local checkpoints or manually downloaded model files.
+- `docs/` holds the guide, architecture overview, roadmap and dated research notes (`docs/notes/`). `benchmarks/` holds versioned fixtures and benchmark reports. Keep the root `README.md` a short overview and put detail in `docs/`.
 - `backend/.env.example` contains the default RTX 5070 Ti 16 GB runtime profile.
 
 ## Build, Test, and Development Commands
