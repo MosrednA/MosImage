@@ -6,7 +6,7 @@ import {
   selectObject, undoDocument, updateDocument,
 } from "./api";
 import { EditorCanvas } from "./canvas/EditorCanvas";
-import { CanvasTool, toolForKey } from "./canvas/tools";
+import { CanvasTool, isSelectionTool, toolForKey } from "./canvas/tools";
 import { ImageSize } from "./canvas/coordinates";
 import { ExpansionCanvas } from "./canvas/ExpansionCanvas";
 import { validExpansion } from "./canvas/expansion";
@@ -82,6 +82,8 @@ export default function App() {
   const [points, setPoints] = useState<SelectionPoint[]>([]);
   const [clearToken, setClearToken] = useState(0);
   const [tool, setTool] = useState<CanvasTool>("object");
+  // Mask layer points the selection tools at the selected layer's mask instead of the picture.
+  const [layerMasking, setLayerMasking] = useState(false);
   const [operation, setOperation] = useState<Operation>("generate");
   const [expansion, setExpansion] = useState(initialExpansion);
   const [alternatives, setAlternatives] = useState<GenerationRecord[]>([]);
@@ -126,13 +128,14 @@ export default function App() {
   // References place people in a selection (Replace), the whole picture (Edit) or a new image (Generate).
   const references = ((operation === "replace" || operation === "edit") && source) || operation === "generate" ? refs.active : [];
   const referenceNeedsQuality = references.length > 0 && !isKleinModel(settings.model_name);
-  const activeLayer = operation === "expand" || isWholeImage(operation) ? null : layers.active;
+  // Selection tools select on the picture, as in Photoshop, unless the layer is being masked.
+  const activeLayer = operation === "expand" || isWholeImage(operation) || (isSelectionTool(tool) && !layerMasking) ? null : layers.active;
   // The layer Edit works on alone; it stays selected without its transform handles.
   const editLayer = operation === "edit" && editScope === "layer" ? layers.active : null;
   const blending = layers.layers.find(layer => layer.id === blendTarget && layer.visible) ?? null;
   const cudaBlocked = !!system && (!system.torch_available || (system.preferred_device === "cuda" && !system.cuda_available && !system.allow_cpu_generation));
 
-  useEffect(() => setLayerPoints([]), [layers.activeId]);
+  useEffect(() => { setLayerPoints([]); setLayerMasking(false); }, [layers.activeId]);
 
   useEffect(() => {
     const url = source ? URL.createObjectURL(source) : null;
@@ -240,7 +243,7 @@ export default function App() {
         if (arrows[event.key]) { event.preventDefault(); layers.nudge(activeLayer.id, arrows[event.key][0] * step, arrows[event.key][1] * step); return; }
         if (event.key === "Backspace" && tool === "object" && layerPoints.length) { event.preventDefault(); void removeLayerPoint(layerPoints.length - 1); return; }
         if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); layers.remove(activeLayer.id); return; }
-        if (event.key === "Escape") { if (layerPoints.length) setLayerPoints([]); else layers.select(null); return; }
+        if (event.key === "Escape") { if (layerPoints.length) setLayerPoints([]); else if (layerMasking) finishMasking(); else layers.select(null); return; }
       }
       if (ctrl && key === "j" && mask && source) { event.preventDefault(); void copySelectionToLayer(); return; }
       if (ctrl && key === "o") { event.preventDefault(); upload.current?.click(); }
@@ -256,7 +259,7 @@ export default function App() {
     };
     window.addEventListener("paste", paste); window.addEventListener("keydown", keys);
     return () => { window.removeEventListener("paste", paste); window.removeEventListener("keydown", keys); };
-  }, [locked, busy, reviewing, alternatives.length, selected, proposal, layerResult, document, source, models, settings.model_name, operation, activeLayer, layerPoints, tool, mask]);
+  }, [locked, busy, reviewing, alternatives.length, selected, proposal, layerResult, document, source, models, settings.model_name, operation, activeLayer, layerPoints, layerMasking, tool, mask]);
 
   useJobPolling({
     job, setJob, cancellation,
@@ -341,7 +344,16 @@ export default function App() {
   function chooseTool(next: CanvasTool) {
     setTool(next);
     if (operation === "expand" || isWholeImage(operation)) { clearSelection(); setOperation("replace"); }
+    if (next === "transform") setLayerMasking(false);
+    else if (isSelectionTool(next) && !layerMasking) layers.select(null);
   }
+  function toggleLayerMask(id: string) {
+    if (layerMasking) { finishMasking(); return; }
+    layers.select(id); setLayerMasking(true);
+    setTool(current => isSelectionTool(current) ? current : "object");
+    if (operation === "expand" || isWholeImage(operation)) { clearSelection(); setOperation("replace"); }
+  }
+  function finishMasking() { setLayerMasking(false); setLayerPoints([]); setTool("transform"); }
   function chooseOperation(next: "generate" | "edit" | "replace" | "remove") {
     if (isWholeImage(next)) {
       // With a layer selected, Edit starts on that layer alone.
@@ -654,7 +666,8 @@ export default function App() {
   const canSubmit = !locked && online && !cudaBlocked && (task === "outpaint"
     ? expansionValid && !!settings.prompt.trim()
     : (operation === "remove" || !!settings.prompt.trim()) && (task === "text-to-image" || (task === "edit" && !!source && (editScope === "visible" || !!editLayer)) || !!mask) && !referenceNeedsQuality);
-  const hint = activeLayer ? `Editing layer “${activeLayer.name}”. Press Esc for AI edits; they see every visible layer.`
+  const hint = activeLayer && layerMasking ? `Masking layer “${activeLayer.name}”: the tools hide or restore parts of it. Press Esc when done.`
+    : activeLayer ? `Editing layer “${activeLayer.name}”. Pick a selection tool or press Esc for AI edits; they see every visible layer.`
     : referenceNeedsQuality ? "References need the Quality model. Choose Quality in generation settings."
     : operation === "edit" && editScope === "layer" ? layerEditHint(editLayer?.name ?? null, references.map(item => item.name))
     : blending && mask ? `Blending “${blending.name}” in: the AI redraws it and its edges to fit the scene. Widen the area with the brush if needed.`
@@ -704,7 +717,8 @@ export default function App() {
         ? <LayersPanel layers={layers.layers} activeId={activeLayer?.id ?? editLayer?.id ?? null} backgroundUrl={sourceUrl} uploading={layers.uploading} disabled={locked}
           canCopySelection={!!mask} onSelect={selectLayer} onAdd={files => void addLayerImages(files)} onCopySelection={() => void copySelectionToLayer()}
           onUpdate={layers.update} onPreview={layers.preview} onRemove={layers.remove} onDuplicate={layers.duplicate} onReorder={layers.reorder}
-          onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)} />
+          onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)}
+          masking={layerMasking} onMask={toggleLayerMask} />
         : <ReferencePanel references={refs.references} newImage={!document} activeIds={refs.active.map(item => item.id)} pending={refs.pending} uploading={refs.uploading}
           disabled={locked || operation === "expand"} note={referenceNote}
           onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null) chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}

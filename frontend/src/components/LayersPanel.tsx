@@ -21,6 +21,8 @@ interface Props {
   onReset: (id: string) => void;
   onInvertMask: (id: string) => void;
   onBlend: (id: string) => void;
+  masking: boolean;
+  onMask: (id: string) => void;
 }
 
 const LAYER_DRAG_TYPE = "application/x-mosimage-layer";
@@ -98,7 +100,7 @@ export function LayersPanel(props: Props) {
   </div>;
 }
 
-function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDuplicate, onReset, onInvertMask, onBlend }: Props & { layer: LayerRecord }) {
+function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDuplicate, onReset, onInvertMask, onBlend, masking, onMask }: Props & { layer: LayerRecord }) {
   const [opacity, setOpacity] = useState(Math.round(layer.opacity * 100));
   useEffect(() => setOpacity(Math.round(layer.opacity * 100)), [layer.opacity]);
   const commitOpacity = () => { if (opacity / 100 !== layer.opacity) onUpdate(layer.id, { opacity: opacity / 100 }, "Change opacity"); };
@@ -119,6 +121,9 @@ function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDup
       <button className="icon-button" disabled={disabled} title="Duplicate layer" aria-label="Duplicate layer" onClick={() => onDuplicate(layer.id)}><Icon name="duplicate" /></button>
       <button className="icon-button" disabled={disabled} title="Delete layer · Delete" aria-label="Delete layer" onClick={() => onRemove(layer.id)}><Icon name="trash" /></button>
     </div>
+    <button className="layer-mask" aria-pressed={masking} disabled={disabled}
+      title={masking ? "Stop masking · Esc" : "Hide or restore parts of this layer with Object, Brush, Eraser, Lasso and Box"}
+      onClick={() => onMask(layer.id)}><Icon name="eraser" />{masking ? "Done masking" : "Mask layer"}</button>
     <button className="layer-blend" disabled={disabled || !layer.visible} title={layer.visible ? "Let the AI match its light, colours, shadows and edges to the picture" : "Show the layer to blend it in"}
       onClick={() => onBlend(layer.id)}><Icon name="spark" />Blend in</button>
     {layer.mask_url && <button className="layer-unmask" disabled={disabled} onClick={() => onUpdate(layer.id, { mask_path: null, mask_url: null }, "Show whole layer")}>Show the whole layer again</button>}

@@ -9,6 +9,11 @@ export function isMaskTool(tool: CanvasTool): tool is MaskTool {
   return (MASK_TOOLS as readonly CanvasTool[]).includes(tool);
 }
 
+/** Tools that make a selection on the picture, or edit a layer's mask while masking it. */
+export function isSelectionTool(tool: CanvasTool): boolean {
+  return tool === "object" || isMaskTool(tool);
+}
+
 interface ToolInfo { label: string; icon: IconName; key: string; status: string }
 
 export const TOOLS: Record<CanvasTool, ToolInfo> = {
@@ -21,7 +26,7 @@ export const TOOLS: Record<CanvasTool, ToolInfo> = {
   move: { label: "Pan", icon: "move", key: "V", status: "Drag to pan · Ctrl + scroll zooms" },
 };
 
-/** What the tools do when a layer is selected: they edit its mask instead of the AI selection. */
+/** What the tools do while masking a layer: they edit its mask instead of the AI selection. */
 export const LAYER_STATUS: Record<CanvasTool, string> = {
   object: "Click the part of the layer to keep · Right-click to exclude",
   brush: "Paint to bring hidden parts of the layer back · [ ] size",
