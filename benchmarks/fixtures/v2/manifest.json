@@ -1,0 +1,26 @@
+{
+  "model": "black-forest-labs/FLUX.2-klein-4b-nvfp4",
+  "model_revision": "1db2b2f776c24b76f1122e5f69ab1949fc620068",
+  "base": "black-forest-labs/FLUX.2-klein-4B",
+  "base_revision": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+  "steps": 4,
+  "guidance": 1.0,
+  "sources": {
+    "man": {
+      "width": 832,
+      "height": 1216,
+      "seed": 23,
+      "prompt": "Full-body studio photograph of a cheerful bald man in his fifties with a short grey beard and black rectangular glasses, wearing a red puffer jacket, blue jeans and brown hiking boots, standing relaxed and facing the camera. Plain light grey seamless background, soft even studio lighting, sharp focus, 50mm lens.",
+      "file": "man.png",
+      "sha256": "07c7975ae89b5fd181d96267e4e44c2fb66a84cee174d7eb2985f70c3619afb6"
+    },
+    "phone": {
+      "width": 832,
+      "height": 1216,
+      "seed": 11,
+      "prompt": "Photograph of a young man with short black hair wearing a dark green hoodie, standing on a sunny city street. He holds a black smartphone upright in his raised right hand at chest height and looks at its screen. His hand and the phone are clearly visible with empty space above them. Shallow depth of field, natural daylight, 35mm lens.",
+      "file": "phone.png",
+      "sha256": "35321358eca33d0e414be412f48e3d9676c9384881db4584f0c3694358bf7c41"
+    }
+  }
+}
