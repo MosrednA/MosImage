@@ -22,7 +22,9 @@ from .models.registry import registry
 from .runtime import system_info
 from .schemas import (
     CopyReferencesRequest,
+    CutoutRequest,
     EditRequest,
+    FaceFixRequest,
     GenerationRecord,
     AlternativeProposalRequest,
     DocumentRecord,
@@ -34,6 +36,7 @@ from .schemas import (
     OutpaintForm,
     ReferenceRecord,
     SelectionRequest,
+    TextSelectionRequest,
     JobResponse,
     JobStatus,
     LoadModelRequest,
@@ -43,6 +46,7 @@ from .schemas import (
 )
 from .documents import RevisionConflict
 from .models.flux2_klein_nvfp4 import KLEIN_MODELS
+from .faces import run_face_fix
 from .services import run_image_edit, run_inpaint, run_outpaint, run_text_to_image
 from .selection import selector
 
@@ -216,6 +220,8 @@ async def inpaint(
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if request.edit_operation == "sketch" and request.model_name not in KLEIN_MODELS:
+        raise HTTPException(status_code=422, detail="Rendering a sketch needs the Quality model (FLUX.2 Klein).")
     if request.reference_ids:
         _check_references(request.reference_ids, request.model_name)
     image_bytes = await read_uploaded_image(image)
@@ -259,6 +265,44 @@ async def select_object(image: UploadFile = File(...), parameters: str = Form(..
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     content = await read_uploaded_image(image)
     job = jobs.submit("select", lambda control: selector.select(content, request, control))
+    return JobResponse(id=job.id, kind=job.kind, status=job.status)
+
+
+@app.post("/api/select-text", response_model=JobResponse)
+async def select_by_text(image: UploadFile = File(...), parameters: str = Form(...)) -> JobResponse:
+    try:
+        request = TextSelectionRequest.model_validate_json(parameters)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    content = await read_uploaded_image(image)
+    job = jobs.submit("select", lambda control: selector.select_text(content, request, control))
+    return JobResponse(id=job.id, kind=job.kind, status=job.status)
+
+
+@app.post("/api/cutout", response_model=JobResponse)
+async def cut_out_subject(image: UploadFile = File(...), parameters: str = Form("{}")) -> JobResponse:
+    try:
+        request = CutoutRequest.model_validate_json(parameters)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    content = await read_uploaded_image(image)
+    job = jobs.submit("select", lambda control: selector.cutout(content, request, control))
+    return JobResponse(id=job.id, kind=job.kind, status=job.status)
+
+
+@app.post("/api/faces", response_model=JobResponse)
+async def fix_faces(image: UploadFile = File(...), parameters: str = Form(...), mask: UploadFile | None = File(None)) -> JobResponse:
+    try:
+        request = FaceFixRequest.model_validate_json(parameters)
+        if "edit" not in registry.get(request.model_name).info().capabilities:
+            raise ValueError("Fix faces needs the Quality model (FLUX.2 Klein).")
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if request.reference_ids:
+        _check_references(request.reference_ids, request.model_name)
+    content = await read_uploaded_image(image)
+    mask_bytes = await read_uploaded_image(mask) if mask is not None else None
+    job = jobs.submit("edit", lambda control: run_face_fix(request, content, image.filename, mask_bytes, control))
     return JobResponse(id=job.id, kind=job.kind, status=job.status)
 
 

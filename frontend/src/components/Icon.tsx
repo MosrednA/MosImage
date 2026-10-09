@@ -1,4 +1,4 @@
-export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help" | "person" | "plus" | "trash" | "scissors" | "chevronLeft" | "chevronRight" | "layers" | "transform" | "flipH" | "flipV" | "duplicate" | "rotate" | "reset" | "image";
+export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help" | "person" | "plus" | "trash" | "scissors" | "chevronLeft" | "chevronRight" | "layers" | "transform" | "flipH" | "flipV" | "duplicate" | "rotate" | "reset" | "image" | "pencil" | "face" | "search";
 
 const paths: Record<IconName, string> = {
   object: "M3 21L14 10M12.5 8.5l3 3M18 2v4M16 4h4M21.5 9v3M20 10.5h3M10 2.5v2.5M8.75 3.75h2.5",
@@ -34,6 +34,9 @@ const paths: Record<IconName, string> = {
   rotate: "M20 12a8 8 0 11-2.3-5.7M20 4v5h-5",
   reset: "M4 12a8 8 0 108-8 8 8 0 00-6 2.7M4 4v5h5",
   image: "M4 5h16v14H4zM4 16l5-5 4 4 2-2 5 5M15 9.5a1.5 1.5 0 100-.01",
+  pencil: "M4 20l1.2-4.8L16 4.4a2 2 0 012.8 0l.8.8a2 2 0 010 2.8L8.8 18.8zM14 6.4l3.6 3.6",
+  face: "M12 21a9 9 0 100-18 9 9 0 000 18zM9 10h.01M15 10h.01M8.5 14.5a5 5 0 007 0",
+  search: "M11 18a7 7 0 100-14 7 7 0 000 14zM20 20l-4-4",
 };
 
 export function Icon({ name }: { name: IconName }) {

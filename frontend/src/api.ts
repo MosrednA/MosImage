@@ -25,7 +25,7 @@ export interface GenerationRecord {
   width: number | null;
   height: number | null;
   strength: number | null;
-  edit_operation: "replace" | "remove" | null;
+  edit_operation: "replace" | "remove" | "sketch" | "faces" | null;
   blend_feather: number | null;
   context_padding: number | null;
   scene_context: string | null;
@@ -239,8 +239,10 @@ export async function loadModel(payload: LoadModelRequest): Promise<JobResponse>
   });
 }
 
-/** Edits the whole picture by instruction; proposals keep the picture's size. */
-export async function editWholeImage(image: File, parameters: Omit<TextToImageRequest, "width" | "height">): Promise<JobResponse> {
+export type EditParameters = Omit<TextToImageRequest, "width" | "height">;
+
+/** Edits the whole picture by instruction, or renders a sketch on it; proposals keep the picture's size. */
+export async function editWholeImage(image: File, parameters: EditParameters & { mode?: "edit" | "sketch" }): Promise<JobResponse> {
   const form = new FormData();
   form.set("image", image);
   form.set("parameters", JSON.stringify(parameters));
@@ -269,6 +271,31 @@ export async function selectObject(image: File, points: SelectionPoint[]): Promi
   form.set("image", image);
   form.set("parameters", JSON.stringify({ points }));
   return request("/api/select", { method: "POST", body: form });
+}
+
+/** Selects everything matching a short description, such as "the hat". */
+export async function selectByText(image: File, text: string): Promise<JobResponse> {
+  const form = new FormData();
+  form.set("image", image);
+  form.set("parameters", JSON.stringify({ text }));
+  return request("/api/select-text", { method: "POST", body: form });
+}
+
+/** Selects the main subject with soft, matted edges; `text` names what to keep instead. */
+export async function cutoutSubject(image: File, text = ""): Promise<JobResponse> {
+  const form = new FormData();
+  form.set("image", image);
+  form.set("parameters", JSON.stringify({ text }));
+  return request("/api/cutout", { method: "POST", body: form });
+}
+
+/** Redraws the faces sharper; a selection limits which faces. */
+export async function fixFaces(image: File, parameters: EditParameters, selection: Blob | null): Promise<JobResponse> {
+  const form = new FormData();
+  form.set("image", image);
+  form.set("parameters", JSON.stringify(parameters));
+  if (selection) form.set("mask", selection, "mask.png");
+  return request("/api/faces", { method: "POST", body: form });
 }
 
 export async function getDocument(id: number): Promise<DocumentRecord> {

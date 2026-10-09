@@ -1,16 +1,18 @@
-import { EditScope, Operation, promptPlaceholder, submitLabel } from "../generation/operation";
+import { EditScope, Operation, SketchScope, promptPlaceholder, submitLabel } from "../generation/operation";
 import { Icon } from "./Icon";
 
 export interface ActiveReference { id: number; name: string; imageUrl: string }
 
 interface Props {
   operation: Operation;
-  onOperation: (operation: "generate" | "edit" | "replace" | "remove") => void;
+  onOperation: (operation: Exclude<Operation, "expand">) => void;
   hasImage: boolean;
   locked: boolean;
   /** Offered for Edit once the document has layers. */
   editScope?: EditScope;
   onEditScope?: (scope: EditScope) => void;
+  sketchScope: SketchScope;
+  onSketchScope: (scope: SketchScope) => void;
   settingsLabel: string;
   prompt: string;
   references: readonly ActiveReference[];
@@ -38,7 +40,13 @@ export function CommandCard(props: Props) {
             <button aria-pressed={operation === "edit"} disabled={locked} title="Change the whole picture with an instruction" onClick={() => props.onOperation("edit")}>Edit</button>
             <button aria-pressed={operation === "replace"} disabled={locked} onClick={() => props.onOperation("replace")}>Replace</button>
             <button aria-pressed={operation === "remove"} disabled={locked} onClick={() => props.onOperation("remove")}>Remove</button>
+            <button aria-pressed={operation === "sketch"} disabled={locked} title="Paint rough shapes and let the AI render them · P" onClick={() => props.onOperation("sketch")}>Sketch</button>
+            <button aria-pressed={operation === "faces"} disabled={locked} title="Redraw blurry or distorted faces sharper" onClick={() => props.onOperation("faces")}>Faces</button>
           </div>
+          {operation === "sketch" && <div className="segmented compact" aria-label="What to render">
+            <button aria-pressed={props.sketchScope === "strokes"} disabled={locked} title="Render only the sketched area; the rest stays exactly as it is" onClick={() => props.onSketchScope("strokes")}>Only the sketch</button>
+            <button aria-pressed={props.sketchScope === "whole"} disabled={locked} title="Redraw the whole picture around the sketch, for matching light and style" onClick={() => props.onSketchScope("whole")}>Whole picture</button>
+          </div>}
           {operation === "edit" && props.onEditScope && <div className="segmented compact" aria-label="What to edit">
             <button aria-pressed={props.editScope === "visible"} disabled={locked} title="Edit the picture with every visible layer" onClick={() => props.onEditScope?.("visible")}>All visible</button>
             <button aria-pressed={props.editScope === "layer"} disabled={locked} title="Edit only the selected layer" onClick={() => props.onEditScope?.("layer")}>Current layer</button>

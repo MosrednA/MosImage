@@ -11,12 +11,29 @@ from PIL import Image
 
 from . import storage
 from .config import settings
+from .detection import Detection, detector, strongest
 from .jobs import JobControl, SelectionResult
-from .schemas import SelectionRequest
+from .matting import matter
+from .schemas import CutoutRequest, SelectionRequest, TextSelectionRequest
 
 if TYPE_CHECKING:
     from torch import Tensor
     from transformers import Sam2Model, Sam2Processor
+
+
+# People and animals are what most cut-outs are about; anything else falls back
+# to the centred-subject guess or a typed name.
+SUBJECT_QUERY = "person. animal."
+SUBJECT_MIN_SCORE = 0.35
+
+
+def main_subjects(detections: list[Detection]) -> list[Detection]:
+    """The biggest confident person or animal, plus others of comparable size (a group photo)."""
+    candidates = strongest([item for item in detections if item.score >= SUBJECT_MIN_SCORE], relative=0)
+    if not candidates:
+        return []
+    main = max(candidates, key=lambda item: item.area * item.score)
+    return [item for item in candidates if item is main or item.area >= main.area * 0.25]
 
 
 class ObjectSelector:
@@ -53,6 +70,60 @@ class ObjectSelector:
         control.set_progress(0.95)
         if not mask_pixels.any():
             raise ValueError("No object found. Try another point or use the brush")
+        return self._save(mask_pixels, control)
+
+    def select_text(self, content: bytes, request: TextSelectionRequest, control: JobControl) -> SelectionResult:
+        """Selects everything that matches a short description, such as "the hat"."""
+        image = self._open(content)
+        control.set_progress(0.05)
+        found = strongest(detector.detect(image, request.text, control, activity=f"Looking for “{request.text.strip()}”"))
+        if not found:
+            raise ValueError(f"Nothing found for “{request.text.strip()}”. Try other English words, or click the object")
+        control.set_progress(0.5)
+        mask_pixels = self._predict_boxes(image, sha256(content).hexdigest(), [item.box for item in found], control)
+        control.set_progress(0.95)
+        if not mask_pixels.any():
+            raise ValueError("No object found. Try other words or click the object")
+        return self._save(mask_pixels, control)
+
+    def cutout(self, content: bytes, request: CutoutRequest, control: JobControl) -> SelectionResult:
+        """The main subject, or what the text names, with soft edges for hair and fur."""
+        image = self._open(content)
+        key = sha256(content).hexdigest()
+        control.set_progress(0.05)
+        text = request.text.strip()
+        if text:
+            found = strongest(detector.detect(image, text, control, activity=f"Looking for “{text}”"))
+        else:
+            found = main_subjects(detector.detect(image, SUBJECT_QUERY, control, activity="Finding the subject"))
+        control.set_progress(0.35)
+        if found:
+            mask_pixels = self._predict_boxes(image, key, [item.box for item in found], control)
+        elif text:
+            raise ValueError(f"Nothing found for “{text}”. Try other English words")
+        else:
+            subject = self.subject_mask(image)
+            if subject is None:
+                raise ValueError("No clear subject found. Type what to keep, such as “the car”")
+            mask_pixels = subject
+        if not mask_pixels.any():
+            raise ValueError("No clear subject found. Type what to keep, such as “the car”")
+        control.set_progress(0.6)
+        control.set_phase("finishing", "Refining edges")
+        mask_pixels = matter.refine(image, mask_pixels, control)
+        control.set_progress(0.95)
+        return self._save(mask_pixels, control)
+
+    @staticmethod
+    def _open(content: bytes) -> Image.Image:
+        with Image.open(BytesIO(content)) as uploaded:
+            image = uploaded.convert("RGB")
+        if image.width * image.height > 16_777_216:
+            raise ValueError("Object selection supports images up to 16 megapixels")
+        return image
+
+    @staticmethod
+    def _save(mask_pixels: np.ndarray, control: JobControl) -> SelectionResult:
         path = settings.mask_dir / f"selection-{uuid4().hex}.png"
         try:
             Image.fromarray(mask_pixels, mode="L").save(path)
@@ -80,6 +151,26 @@ class ObjectSelector:
         coverage = float((mask > 0).mean())
         # Nearly empty or nearly full masks mean SAM found no distinct subject.
         return mask if 0.03 <= coverage <= 0.85 else None
+
+    def _predict_boxes(self, image: Image.Image, key: str, boxes: list[tuple[float, float, float, float]], control: JobControl | None = None) -> np.ndarray:
+        """One mask per box, joined: every matching object ends up selected."""
+        import torch
+
+        with self._lock:
+            if self._model is None and control:
+                control.set_phase("loading", "SAM 2.1 Tiny")
+            self._ensure_model()
+            processor, model = self._processor, self._model
+            if processor is None or model is None:
+                raise RuntimeError("Selection processor was not loaded")
+            inputs = processor(images=image, input_boxes=[[list(box) for box in boxes]], return_tensors="pt")
+            with torch.inference_mode():
+                if key != self._image_key or self._embeddings is None:
+                    self._embeddings = model.get_image_embeddings(inputs["pixel_values"])
+                    self._image_key = key
+                outputs = model(image_embeddings=self._embeddings, input_boxes=inputs["input_boxes"], multimask_output=False)
+                masks = processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"])[0]
+        return (masks[:, 0].any(dim=0).numpy().astype("uint8")) * 255
 
     def _ensure_model(self) -> None:
         if self._model is None:

@@ -20,7 +20,9 @@ export function describeJob(job: JobStatus): JobDescription {
   if (job.kind === "select") {
     return job.phase === "loading"
       ? { title: "Loading the selection model…", detail: `${job.detail ?? "SAM"} · ${seconds(elapsed)} · downloads on first use`, percent }
-      : { title: "Selecting object…", detail: "Finding the edges around your points", percent };
+      : job.phase === "preparing" && job.detail ? { title: job.detail + "…", detail: "Then tracing its edges", percent }
+      : job.phase === "finishing" ? { title: "Refining edges…", detail: "Soft edges for hair and fur", percent }
+      : { title: "Selecting…", detail: "Finding the edges", percent };
   }
   if (job.phase === "loading") {
     return { title: `Loading ${job.detail ?? "the model"}…`, detail: `${seconds(elapsed)} · usually 5–15 s, then it stays loaded for your next edits`, percent };
@@ -36,7 +38,7 @@ export function describeJob(job: JobStatus): JobDescription {
     const step = job.step && job.steps ? `Step ${job.step} of ${job.steps}` : "Preparing your image";
     return { title: subject + "…", detail: step + remaining(job), percent };
   }
-  if (job.phase === "preparing") return { title: subject + "…", detail: "Reading your description" + remaining(job), percent };
+  if (job.phase === "preparing") return { title: subject + "…", detail: (job.detail ?? "Reading your description") + remaining(job), percent };
   return { title: subject + "…", detail: "Preparing your image", percent };
 }
 

@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+from fastapi.testclient import TestClient
+from PIL import Image
+
+from app import storage
+from app.config import settings
+from app.detection import Detection, detection_query, iou, strongest
+from app.faces import face_blend_mask, face_crop_box, faces_to_fix, matched_colours, run_face_fix
+from app.main import app
+from app.matting import UNKNOWN, edge_radius, mask_box, trimap
+from app.models.flux2_klein import FACE_AREA, Flux2KleinProvider, _face_prompt, _inpaint_prompt, _sketch_prompt
+from app.schemas import EditRequest, FaceFixRequest, InpaintForm
+from app.selection import main_subjects
+from tests.test_references import isolated_data, png
+
+
+class DetectionTests(unittest.TestCase):
+    def test_queries_become_lowercase_phrases_with_full_stops(self) -> None:
+        self.assertEqual(detection_query("The Hat"), "the hat.")
+        self.assertEqual(detection_query("dog, red car; tree."), "dog. red car. tree.")
+        with self.assertRaises(ValueError):
+            detection_query(" . , ")
+
+    def test_strongest_drops_weak_matches_and_duplicate_boxes(self) -> None:
+        found = [Detection("hat", 0.8, (0, 0, 10, 10)), Detection("hat", 0.75, (1, 1, 10, 10)),
+                 Detection("hat", 0.6, (50, 50, 60, 60)), Detection("hat", 0.3, (80, 80, 90, 90))]
+        self.assertEqual([item.score for item in strongest(found)], [0.8, 0.6])
+        self.assertEqual(strongest([]), [])
+        self.assertAlmostEqual(iou((0, 0, 10, 10), (5, 0, 15, 10)), 1 / 3)
+
+    def test_main_subjects_keep_a_group_but_not_small_background_people(self) -> None:
+        found = [Detection("person", 0.8, (0, 0, 500, 1000)), Detection("animal", 0.6, (400, 300, 700, 800)),
+                 Detection("person", 0.7, (900, 300, 980, 450)), Detection("person", 0.3, (0, 0, 1000, 1000))]
+        self.assertEqual([item.label for item in main_subjects(found)], ["person", "animal"])
+        self.assertEqual(main_subjects([Detection("person", 0.2, (0, 0, 9, 9))]), [])
+
+
+class MattingTests(unittest.TestCase):
+    def test_trimap_marks_a_band_of_unknown_along_the_edge(self) -> None:
+        mask = np.zeros((40, 40), dtype=np.uint8)
+        mask[10:30, 10:30] = 255
+        result = trimap(mask, 3)
+        self.assertEqual(result[20, 20], 255)
+        self.assertEqual(result[0, 0], 0)
+        self.assertEqual(result[10, 20], UNKNOWN)
+        self.assertEqual(result[8, 20], UNKNOWN)
+        self.assertEqual(result[5, 20], 0)
+
+    def test_edge_band_and_box_follow_the_subject(self) -> None:
+        self.assertEqual(edge_radius(100, 50), 3)
+        self.assertEqual(edge_radius(1000, 400), 15)
+        mask = np.zeros((20, 30), dtype=np.uint8)
+        mask[5:8, 10:12] = 255
+        self.assertEqual(mask_box(mask, 2), (8, 3, 14, 10))
+        self.assertIsNone(mask_box(np.zeros((4, 4), dtype=np.uint8), 2))
+
+
+class FaceGeometryTests(unittest.TestCase):
+    def test_crop_is_a_square_around_the_face_inside_the_picture(self) -> None:
+        crop = face_crop_box((100, 100, 140, 150), 400, 300)
+        self.assertEqual(crop[2] - crop[0], crop[3] - crop[1])
+        self.assertEqual(crop[2] - crop[0], 110)
+        self.assertLessEqual(crop[0], 100)
+        edge = face_crop_box((0, 0, 60, 60), 100, 80)
+        self.assertEqual(edge, (0, 0, 80, 80))
+
+    def test_blend_mask_covers_the_face_and_fades_out(self) -> None:
+        face, crop = (40, 40, 80, 90), (0, 0, 120, 120)
+        mask = face_blend_mask(face, crop)
+        self.assertEqual(mask.size, (120, 120))
+        self.assertEqual(mask.getpixel((60, 65)), 255)
+        self.assertEqual(mask.getpixel((2, 2)), 0)
+
+    def test_colours_are_shifted_back_to_the_original_average(self) -> None:
+        restored = matched_colours(Image.new("RGB", (8, 8), (120, 100, 80)), Image.new("RGB", (8, 8), (100, 100, 100)))
+        self.assertEqual(restored.getpixel((3, 3)), (100, 100, 100))
+
+    def test_selection_and_size_pick_the_faces_to_fix(self) -> None:
+        faces = [Detection("face", 0.6, (10, 10, 40, 40)), Detection("face", 0.5, (60, 10, 100, 50)), Detection("face", 0.5, (0, 60, 8, 68))]
+        self.assertEqual([item.box for item in faces_to_fix(faces, None)], [(60, 10, 100, 50), (10, 10, 40, 40)])
+        selection = np.zeros((100, 120), dtype=np.uint8)
+        selection[:, :50] = 255
+        self.assertEqual([item.box for item in faces_to_fix(faces, selection)], [(10, 10, 40, 40)])
+
+
+class FaceFixServiceTests(unittest.TestCase):
+    def test_each_face_is_restored_and_pasted_back_with_one_shared_mask(self) -> None:
+        with isolated_data():
+            provider = MagicMock()
+
+            def fake_edit(request, input_path, output_path, _control, **kwargs):
+                self.assertEqual(request.mode, "face")
+                with Image.open(input_path) as crop:
+                    Image.new("RGB", crop.size, (250, 250, 250)).save(output_path)
+                return 11, 0
+
+            provider.edit.side_effect = fake_edit
+            picture = Image.new("RGB", (200, 120), (40, 40, 40))
+            faces = [Detection("human face", 0.7, (30, 30, 60, 70)), Detection("human face", 0.6, (130, 30, 160, 70))]
+            with patch("app.faces.registry.activate", return_value=provider), patch("app.faces.detector.detect", return_value=faces):
+                ids = run_face_fix(FaceFixRequest(count=2), png(picture), "photo.png", None, MagicMock())
+                self.assertEqual(provider.edit.call_count, 4)
+                first, second = (storage.get_generation(item) for item in ids)
+                self.assertEqual((first["task"], first["edit_operation"], first["prompt"]), ("edit", "faces", "Fix faces"))
+                self.assertEqual(first["mask_image_path"], second["mask_image_path"])
+                with Image.open(settings.data_dir / first["output_image_path"]) as output:
+                    # Colours are matched, so the flat crop keeps its tone; outside the faces nothing changes.
+                    self.assertEqual(output.getpixel((45, 50)), (40, 40, 40))
+                    self.assertEqual(output.getpixel((100, 110)), (40, 40, 40))
+                selection = Image.new("L", picture.size, 0)
+                selection.paste(255, (0, 0, 100, 120))
+                provider.edit.reset_mock()
+                run_face_fix(FaceFixRequest(), png(picture), "photo.png", png(selection), MagicMock())
+                self.assertEqual(provider.edit.call_count, 1)
+
+    def test_no_faces_is_an_error_that_leaves_no_files(self) -> None:
+        with isolated_data():
+            with patch("app.faces.registry.activate", return_value=MagicMock()), patch("app.faces.detector.detect", return_value=[]):
+                with self.assertRaisesRegex(ValueError, "No faces found"):
+                    run_face_fix(FaceFixRequest(), png(Image.new("RGB", (64, 64))), "photo.png", None, MagicMock())
+            self.assertEqual(list(settings.input_dir.iterdir()), [])
+            self.assertEqual(list(settings.mask_dir.iterdir()), [])
+
+
+class SketchAndFacePromptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.provider = Flux2KleinProvider()
+
+    def test_prompts_describe_the_sketch_and_the_face(self) -> None:
+        self.assertIn("rough coloured sketch in the masked area into a deer.", _inpaint_prompt(InpaintForm(prompt="a deer", edit_operation="sketch")))
+        self.assertIn("finished, detailed image: a cottage.", _sketch_prompt("a cottage"))
+        self.assertNotIn("Also:", _face_prompt(""))
+        self.assertIn("Also: smiling.", _face_prompt("smiling"))
+        self.assertIn("Anna is the person in image 2", _face_prompt("", ["Anna"]))
+        self.assertIn("This person is the person in image 2", _face_prompt("", ["Reference 1"]))
+
+    def test_sketch_inpaint_uses_its_own_crop_as_reference_and_ignores_people(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (64, 64), "purple").save(root / "source.png")
+            Image.new("L", (64, 64), 255).save(root / "mask.png")
+            Image.new("RGB", (40, 40), "orange").save(root / "anna.png")
+            pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (64, 64))]))
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe):
+                from app.models.base import ModelReference
+                self.provider.inpaint(InpaintForm(prompt="a deer", edit_operation="sketch"), root / "source.png", root / "mask.png", root / "out.png", MagicMock(),
+                                      references=[ModelReference("Anna", root / "anna.png")])
+                arguments = pipe.call_args.kwargs
+                self.assertIs(arguments["image_reference"], arguments["image"])
+                self.assertNotIn("Anna", pipe.encode_prompt.call_args.kwargs["prompt"])
+
+    def test_face_mode_renders_at_the_smaller_face_area(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (120, 120), "tan").save(root / "face.png")
+            pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (768, 768))]))
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe):
+                self.provider.edit(EditRequest(prompt="x", mode="face").model_copy(update={"prompt": ""}), root / "face.png", root / "out.png", MagicMock())
+                arguments = pipe.call_args.kwargs
+                self.assertEqual(arguments["width"] * arguments["height"], FACE_AREA)
+                self.assertTrue(pipe.encode_prompt.call_args.kwargs["prompt"].startswith("Restore image 1"))
+                with Image.open(root / "out.png") as output:
+                    self.assertEqual(output.size, (120, 120))
+                self.provider.edit(EditRequest(prompt="a cottage", mode="sketch"), root / "face.png", root / "out.png", MagicMock())
+                self.assertTrue(pipe.encode_prompt.call_args.kwargs["prompt"].startswith("Image 1 contains a rough coloured sketch"))
+
+
+class SmartToolApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = TestClient(app)
+        self.picture = ("picture.png", png(Image.new("RGB", (64, 48))), "image/png")
+
+    def queued(self, kind: str):
+        return patch("app.main.jobs.submit", return_value=SimpleNamespace(id="job", kind=kind, status="queued"))
+
+    def test_text_selection_and_cutout_queue_selection_jobs(self) -> None:
+        with self.queued("select") as submit:
+            response = self.client.post("/api/select-text", files={"image": self.picture}, data={"parameters": json.dumps({"text": "the hat"})})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(submit.call_args.args[0], "select")
+            self.assertEqual(self.client.post("/api/cutout", files={"image": self.picture}).status_code, 200)
+        with patch("app.main.jobs.submit") as submit:
+            self.assertEqual(self.client.post("/api/select-text", files={"image": self.picture}, data={"parameters": json.dumps({"text": ""})}).status_code, 422)
+            submit.assert_not_called()
+
+    def test_fix_faces_needs_klein_and_takes_an_optional_selection(self) -> None:
+        with patch("app.main.jobs.submit") as submit:
+            parameters = json.dumps({"model_name": "z-image-turbo"})
+            self.assertEqual(self.client.post("/api/faces", files={"image": self.picture}, data={"parameters": parameters}).status_code, 422)
+            submit.assert_not_called()
+        with self.queued("edit") as submit:
+            mask = ("mask.png", png(Image.new("L", (64, 48), 255)), "image/png")
+            response = self.client.post("/api/faces", files={"image": self.picture, "mask": mask}, data={"parameters": "{}"})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(submit.call_args.args[0], "edit")
+
+    def test_sketches_need_klein(self) -> None:
+        with patch("app.main.jobs.submit") as submit:
+            mask = ("mask.png", png(Image.new("L", (64, 48), 255)), "image/png")
+            data = {"prompt": "a deer", "edit_operation": "sketch", "model_name": "z-image-turbo"}
+            self.assertEqual(self.client.post("/api/inpaint", files={"image": self.picture, "mask": mask}, data=data).status_code, 422)
+            submit.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

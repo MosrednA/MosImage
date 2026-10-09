@@ -1,7 +1,7 @@
 import { ControlDialog } from "./ControlDialog";
 
 const GROUPS: [string, [string, string][]][] = [
-  ["Tools", [["O", "Object selection"], ["B", "Brush"], ["E", "Eraser"], ["L", "Lasso"], ["M", "Box"], ["T", "Transform layers"], ["V", "Pan"], ["C", "Expand canvas"]]],
+  ["Tools", [["O", "Object selection"], ["B", "Brush"], ["E", "Eraser"], ["L", "Lasso"], ["M", "Box"], ["P", "Sketch"], ["T", "Transform layers"], ["V", "Pan"], ["C", "Expand canvas"]]],
   ["Selection", [
     ["Click / right-click", "Include / exclude an object point"],
     ["Click a marker", "Remove that point"],

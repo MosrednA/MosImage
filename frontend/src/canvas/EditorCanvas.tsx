@@ -6,8 +6,10 @@ import { paddedContextBox } from "./context";
 import { ImageSize, viewportPointToImage } from "./coordinates";
 import { BRUSH_RANGE, CanvasToolbar } from "./CanvasToolbar";
 import { SelectionBar } from "./SelectionBar";
+import { SKETCH_COLOURS, SKETCH_SIZE } from "./sketch";
 import { CanvasTool, LAYER_STATUS, TOOLS, isMaskTool } from "./tools";
 import { useMaskLayer } from "./useMaskLayer";
+import { useSketchLayer } from "./useSketchLayer";
 import { useViewport } from "./useViewport";
 
 export type { CanvasTool } from "./tools";
@@ -47,6 +49,12 @@ interface EditorCanvasProps {
   layerPointCount: number;
   onUndoLayerPoint: () => void;
   renderLayers: (view: LayerView) => ReactNode;
+  /** The sketch shows while Sketch is the operation; Apply clears it. */
+  sketchVisible: boolean;
+  sketchClearToken: number;
+  onSketchChange: (sketch: Blob | null) => void;
+  onFind: (text: string) => void;
+  onSubject: () => void;
 }
 
 export function EditorCanvas(props: EditorCanvasProps) {
@@ -63,6 +71,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const [subtract, setSubtract] = useState(false);
   const [spacePan, setSpacePan] = useState(false);
   const [layerHide, setLayerHide] = useState(true);
+  const [sketchColour, setSketchColour] = useState<string>(SKETCH_COLOURS[2]);
+  const [sketchSize, setSketchSize] = useState<number>(SKETCH_SIZE.initial);
+  const [sketchErase, setSketchErase] = useState(false);
   const { layerActive } = props;
   const soften = softenOverride ?? (imageSize ? autoSoften(imageSize.width, imageSize.height) : 0);
   const panning = tool === "move" || spacePan;
@@ -72,9 +83,13 @@ export function EditorCanvas(props: EditorCanvasProps) {
     imageUrl, imageSize, disabled: disabled || layerActive, brushSize, edges: { expand, soften }, zoom,
     clearToken: props.clearToken, maskImportUrl: props.maskImportUrl, onMaskChange: props.onMaskChange, onError: props.onError,
   });
+  const sketch = useSketchLayer({
+    imageUrl, imageSize, colour: sketchColour, size: sketchSize, erase: sketchErase, clearToken: props.sketchClearToken, onChange: props.onSketchChange,
+  });
   const contextBox = mask.selectionBounds && imageSize ? paddedContextBox(mask.selectionBounds, imageSize, contextPadding) : null;
   const editing = !reviewing && !!imageSize;
   const layerInput = (layerActive || tool === "transform") && !panning;
+  const sketching = tool === "sketch" && !panning;
 
   useEffect(() => {
     const typing = (target: EventTarget | null) => target instanceof HTMLElement && !!target.closest("input, textarea, select, [contenteditable], dialog");
@@ -93,7 +108,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
       if (ctrl || event.altKey) return;
       if (event.key === "[" || event.key === "]") {
         const factor = event.key === "]" ? 1.2 : 1 / 1.2;
-        setBrushSize(size => Math.round(Math.min(Math.max(size * factor, BRUSH_RANGE.min), BRUSH_RANGE.max)));
+        if (tool === "sketch") setSketchSize(size => Math.round(Math.min(Math.max(size * factor, SKETCH_SIZE.min), SKETCH_SIZE.max)));
+        else setBrushSize(size => Math.round(Math.min(Math.max(size * factor, BRUSH_RANGE.min), BRUSH_RANGE.max)));
       } else if (event.key.toLowerCase() === "q") setMaskVisible(visible => !visible);
       else if (layerActive) return;
       else if (event.key === "Escape" && (mask.hasSelection || points.length)) props.onClearSelection();
@@ -140,7 +156,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
     mask.gesture.update(event);
   }
 
-  const brushCursor = editing && !panning && !disabled && (tool === "brush" || tool === "eraser");
+  const brushCursor = editing && !panning && !disabled && (tool === "brush" || tool === "eraser" || tool === "sketch");
+  const cursorSize = tool === "sketch" ? sketchSize : brushSize;
 
   return (
     <section className="editor-canvas" aria-label="Image editor">
@@ -148,6 +165,9 @@ export function EditorCanvas(props: EditorCanvasProps) {
         brushSize={brushSize} onBrushSize={setBrushSize}
         subtract={layerActive ? layerHide : subtract} onSubtract={layerActive ? setLayerHide : setSubtract} modeLabels={layerActive ? ["Restore", "Hide"] : undefined}
         pointCount={layerActive ? props.layerPointCount : points.length} onUndoPoint={layerActive ? props.onUndoLayerPoint : () => props.onRemovePoint(points.length - 1)}
+        sketch={{ colour: sketchColour, onColour: setSketchColour, size: sketchSize, onSize: setSketchSize, erase: sketchErase, onErase: setSketchErase,
+          canUndo: sketch.canUndo, onUndo: sketch.undo, canClear: sketch.hasStrokes, onClear: sketch.clear }}
+        onFind={props.onFind} onSubject={props.onSubject}
         zoom={zoom} fitToStage={viewport.fitToStage} atActualSize={!viewport.fitToStage && viewport.manualZoom === 1} onZoom={value => viewport.setZoom(value)} onFit={viewport.fit} />
       {editing && mask.hasSelection && <SelectionBar disabled={disabled}
         expand={expand} onExpand={setExpand} soften={soften} softenAuto={softenOverride === null} onSoften={setSoftenOverride}
@@ -161,6 +181,11 @@ export function EditorCanvas(props: EditorCanvasProps) {
           <div ref={surfaceRef} className={"editor-surface" + (brushCursor ? " brush-cursor-active" : "")} style={{ width: displaySize.width, height: displaySize.height }}>
             <img src={previewImageUrl || imageUrl} alt={imageName || "Source image"} draggable={false} />
             {props.renderLayers({ zoom, size: imageSize, brushSize, hide: layerHide, interactive: layerInput && editing, trackCursor })}
+            <canvas ref={sketch.canvasRef} className="sketch-draw" width={imageSize.width} height={imageSize.height} data-tool="sketch" aria-label="Sketch canvas"
+              style={{ pointerEvents: sketching && editing && !disabled ? undefined : "none", opacity: props.sketchVisible && !reviewing ? 1 : 0 }}
+              onPointerDown={event => { if (event.button === 0 && !disabled) sketch.gesture.begin(event); }}
+              onPointerMove={event => { trackCursor(event.clientX, event.clientY); sketch.gesture.update(event); }}
+              onPointerUp={sketch.gesture.finish} onPointerCancel={sketch.gesture.cancel} />
             <canvas
               ref={mask.canvasRef}
               className="mask-draw"
@@ -168,7 +193,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
               height={imageSize.height}
               data-tool={tool}
               aria-label="Selection canvas"
-              style={{ pointerEvents: disabled || panning || layerInput ? "none" : undefined, opacity: mask.drawing && !reviewing ? undefined : 0 }}
+              style={{ pointerEvents: disabled || panning || layerInput || sketching ? "none" : undefined, opacity: mask.drawing && !reviewing ? undefined : 0 }}
               onPointerDown={beginGesture}
               onPointerMove={moveCursor}
               onPointerUp={mask.gesture.finish}
@@ -177,7 +202,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
             />
             <canvas ref={mask.overlayRef} className="mask-overlay" width={imageSize.width} height={imageSize.height} aria-hidden="true"
               style={{ opacity: reviewing || mask.drawing || !maskVisible ? 0 : 1 }} />
-            {brushCursor && <div ref={cursorRef} className="brush-cursor" style={{ width: brushSize * zoom, height: brushSize * zoom, margin: -brushSize * zoom / 2 }} />}
+            {brushCursor && <div ref={cursorRef} className="brush-cursor" style={{ width: cursorSize * zoom, height: cursorSize * zoom, margin: -cursorSize * zoom / 2 }} />}
             {!reviewing && showContext && contextBox && <div className="context-boundary" aria-label="Protected context boundary" style={{ left: contextBox.x * zoom, top: contextBox.y * zoom, width: contextBox.width * zoom, height: contextBox.height * zoom }}><span>Context · stays unchanged</span></div>}
             {!reviewing && maskVisible && !layerActive && points.map((point, index) => <button key={`${index}-${point.x}-${point.y}`} type="button"
               className={`selection-point ${point.label ? "positive" : "negative"}`} style={{ left: point.x * zoom, top: point.y * zoom }}

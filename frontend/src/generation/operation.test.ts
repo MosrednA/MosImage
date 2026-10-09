@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { isWholeImage, joinNames, layerEditHint, operationHint, promptPlaceholder, submitLabel, taskFor } from "./operation";
+import { facesHint, isWholeImage, joinNames, layerEditHint, needsQuality, operationHint, promptPlaceholder, sketchHint, submitLabel, taskFor } from "./operation";
+
+describe("sketch and faces", () => {
+  it("run on the Quality model's edit pipeline", () => {
+    expect(taskFor("sketch")).toBe("edit");
+    expect(taskFor("faces")).toBe("edit");
+    expect(needsQuality("sketch") && needsQuality("faces")).toBe(true);
+    expect(needsQuality("replace")).toBe(false);
+    expect(isWholeImage("sketch") || isWholeImage("faces")).toBe(false);
+    expect(submitLabel("sketch")).toBe("Render");
+    expect(submitLabel("faces")).toBe("Fix faces");
+  });
+  it("explain what happens", () => {
+    expect(sketchHint("strokes", false)).toContain("Paint rough shapes");
+    expect(sketchHint("strokes", true)).toContain("the rest of the picture stays");
+    expect(sketchHint("whole", true)).toContain("redraws the whole picture");
+    expect(facesHint(false)).toContain("Every face in the picture is redrawn");
+    expect(facesHint(true, ["Anna"])).toBe("Faces inside your selection are redrawn sharper and pasted back. Anna keeps the look of their reference. Apply adds the faces as a new layer.");
+    expect(promptPlaceholder("faces", true)).toContain("Optional");
+  });
+});
 
 describe("reference guidance", () => {
   it("explains generation layers without asking for a selection", () => {

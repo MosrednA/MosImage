@@ -53,7 +53,19 @@ class TextToImageRequest(PromptRequest):
 
 
 class EditRequest(PromptRequest):
-    """Edits the whole picture by instruction; the result keeps its size."""
+    """Edits the whole picture by instruction; the result keeps its size.
+
+    Sketch mode turns rough coloured strokes into what the prompt names, and
+    face mode restores one face crop for Fix faces.
+    """
+
+    mode: Literal["edit", "sketch", "face"] = "edit"
+
+
+class FaceFixRequest(PromptRequest):
+    """Redraws every face (or those in the selection) sharper; the prompt is optional."""
+
+    prompt: str = Field(default="", max_length=500)
 
 
 class CopyReferencesRequest(BaseModel):
@@ -70,7 +82,7 @@ class InpaintForm(BaseModel):
     guidance: float = Field(default=1.0, ge=0.0, le=30.0)
     strength: float = Field(default=1.0, ge=0.0, le=1.0)
     count: int = Field(default=1, ge=1, le=4)
-    edit_operation: Literal["replace", "remove"] = "replace"
+    edit_operation: Literal["replace", "remove", "sketch"] = "replace"
     blend_feather: float = Field(default=16, ge=0, le=64, allow_inf_nan=False)
     context_padding: int = Field(default=320, ge=32, le=1024)
     scene_context: str = Field(default="", max_length=1500)
@@ -106,6 +118,18 @@ class SelectionPoint(BaseModel):
     x: float = Field(ge=0, allow_inf_nan=False)
     y: float = Field(ge=0, allow_inf_nan=False)
     label: Literal[0, 1]
+
+
+class TextSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=120)
+
+
+class CutoutRequest(BaseModel):
+    """Keeps the main subject, or what the text names, with soft edges."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(default="", max_length=120)
 
 
 class SelectionRequest(BaseModel):
@@ -159,7 +183,7 @@ class GenerationRecord(BaseModel):
     width: int | None = None
     height: int | None = None
     strength: float | None = None
-    edit_operation: Literal["replace", "remove"] | None = None
+    edit_operation: Literal["replace", "remove", "sketch", "faces"] | None = None
     blend_feather: float | None = None
     context_padding: int | None = None
     scene_context: str | None = None

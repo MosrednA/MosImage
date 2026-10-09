@@ -6,9 +6,10 @@ describe("isSelectionTool", () => {
     expect(["object", "brush", "eraser", "lasso", "rectangle"].every(tool => isSelectionTool(tool as never))).toBe(true);
   });
 
-  it("leaves out Transform and Pan, which keep the layer selected", () => {
+  it("leaves out Transform, Pan and Sketch, which do not select", () => {
     expect(isSelectionTool("transform")).toBe(false);
     expect(isSelectionTool("move")).toBe(false);
+    expect(isSelectionTool("sketch")).toBe(false);
   });
 });
 
@@ -16,5 +17,9 @@ describe("toolForKey", () => {
   it("maps O to the Object tool regardless of case", () => {
     expect(toolForKey("o")).toBe("object");
     expect(toolForKey("O")).toBe("object");
+  });
+
+  it("maps P to the Sketch pencil", () => {
+    expect(toolForKey("p")).toBe("sketch");
   });
 });

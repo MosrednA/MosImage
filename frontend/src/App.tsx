@@ -2,16 +2,17 @@ import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import {
   DocumentRecord, Expansion, GenerationRecord, JobResponse, JobStatus, LayerRecord, ModelInfo, RevisionRecord, SelectionPoint, SystemInfo,
   acceptAlternative, cancelJob, createDocument, deleteDocument, deleteGeneration, fileUrl, generateImage, getDocument, getGeneration, getSystemInfo,
-  copyReferences, editWholeImage, importGeneration, inpaintImage, listDocuments, listHistory, listModels, outpaintImage, proposeAlternatives, redoDocument,
-  selectObject, undoDocument, updateDocument,
+  copyReferences, cutoutSubject, editWholeImage, fixFaces, importGeneration, inpaintImage, listDocuments, listHistory, listModels, outpaintImage, proposeAlternatives, redoDocument,
+  selectByText, selectObject, undoDocument, updateDocument,
 } from "./api";
 import { EditorCanvas } from "./canvas/EditorCanvas";
 import { CanvasTool, isSelectionTool, toolForKey } from "./canvas/tools";
 import { ImageSize } from "./canvas/coordinates";
 import { ExpansionCanvas } from "./canvas/ExpansionCanvas";
 import { validExpansion } from "./canvas/expansion";
+import { sketchMask, sketchedPicture } from "./canvas/sketch";
 import { GENERATION_PRESETS, isKleinModel } from "./generation/presets";
-import { EditScope, Operation, isWholeImage, layerEditHint, operationHint, taskFor } from "./generation/operation";
+import { EditScope, Operation, SketchScope, facesHint, isWholeImage, layerEditHint, needsQuality, operationHint, sketchHint, taskFor } from "./generation/operation";
 import { SettingsControls, defaultSettings, settingsSummary } from "./components/EditorSettings";
 import { Icon } from "./components/Icon";
 import { ControlDialog } from "./components/ControlDialog";
@@ -43,16 +44,19 @@ interface JobContext {
   operation: "inpaint" | "outpaint" | null;
   /** An object selection on this layer cuts it out, instead of selecting on the background. */
   layerId: string | null;
+  /** Undo label for that layer mask change. */
+  maskLabel: string;
   /** Expand adds canvas on the left and top; layers move along with the content. */
   layerOffset: { x: number; y: number };
   /** The accepted generation or regional edit becomes a layer. */
   result: LayerResult | null;
 }
-/** A full generation, the selected footprint of a regional AI edit, or an edit of one layer. */
+/** A full generation, the selected footprint of a regional AI edit, an edit of one layer, or the fixed faces. */
 type LayerResult = { kind: "selection"; mask: Blob; name: string; replaces: string | null }
   | { kind: "generation"; name: string }
-  | { kind: "layer"; layerId: string; name: string };
-interface JobExtras { layerId?: string; layerOffset?: { x: number; y: number }; result?: LayerResult }
+  | { kind: "layer"; layerId: string; name: string }
+  | { kind: "faces"; name: string };
+interface JobExtras { layerId?: string; maskLabel?: string; layerOffset?: { x: number; y: number }; result?: LayerResult }
 const initialExpansion: Expansion = { left: 128, top: 0, right: 128, bottom: 0 };
 const PANEL_COLLAPSED_KEY = "mosimage.sidePanelCollapsed";
 const BLEND_PROMPT = "Blend it naturally into the scene: match the lighting, colours, shadows, reflections, perspective and grain, so it looks photographed here. Keep its shape and details.";
@@ -100,6 +104,9 @@ export default function App() {
   const [blendTarget, setBlendTarget] = useState<string | null>(null);
   const [layerResult, setLayerResult] = useState<LayerResult | null>(null);
   const [editScope, setEditScope] = useState<EditScope>("visible");
+  const [sketch, setSketch] = useState<Blob | null>(null);
+  const [sketchClear, setSketchClear] = useState(0);
+  const [sketchScope, setSketchScope] = useState<SketchScope>("strokes");
   const [generationPreviewUrl, setGenerationPreviewUrl] = useState<string | null>(null);
   const composite = useRef<{ key: string; file: File } | null>(null);
   /** Start-screen references behind the proposals under review. */
@@ -122,14 +129,15 @@ export default function App() {
   const locked = busy || reviewing;
   const chosen = alternatives[selected];
   const proposalUrls = alternatives.map((item, index) => fileUrl(proposal?.alternatives[index]?.output_image_url ?? item.output_image_url));
-  const previewUrl = chosen && !compare ? layerResult && layerResult.kind !== "selection" && document
+  // Full generations and layer edits preview as Apply places them; regional results already show the whole picture.
+  const previewUrl = chosen && !compare ? layerResult && (layerResult.kind === "generation" || layerResult.kind === "layer") && document
     ? generationPreviewUrl : proposalUrls[selected] : null;
   const task = taskFor(operation);
   // References place people in a selection (Replace), the whole picture (Edit) or a new image (Generate).
-  const references = ((operation === "replace" || operation === "edit") && source) || operation === "generate" ? refs.active : [];
+  const references = ((operation === "replace" || operation === "edit" || operation === "faces") && source) || operation === "generate" ? refs.active : [];
   const referenceNeedsQuality = references.length > 0 && !isKleinModel(settings.model_name);
   // Selection tools select on the picture, as in Photoshop, unless the layer is being masked.
-  const activeLayer = operation === "expand" || isWholeImage(operation) || (isSelectionTool(tool) && !layerMasking) ? null : layers.active;
+  const activeLayer = operation === "expand" || operation === "sketch" || isWholeImage(operation) || (isSelectionTool(tool) && !layerMasking) ? null : layers.active;
   // The layer Edit works on alone; it stays selected without its transform handles.
   const editLayer = operation === "edit" && editScope === "layer" ? layers.active : null;
   const blending = layers.layers.find(layer => layer.id === blendTarget && layer.visible) ?? null;
@@ -146,7 +154,7 @@ export default function App() {
   // Preview a full generation or layer edit exactly as Apply will place it.
   useEffect(() => {
     setGenerationPreviewUrl(null);
-    if (!layerResult || layerResult.kind === "selection" || !chosen || !source || !size) return;
+    if (!layerResult || (layerResult.kind !== "generation" && layerResult.kind !== "layer") || !chosen || !source || !size) return;
     let disposed = false;
     let url: string | null = null;
     void (async () => {
@@ -247,7 +255,7 @@ export default function App() {
       }
       if (ctrl && key === "j" && mask && source) { event.preventDefault(); void copySelectionToLayer(); return; }
       if (ctrl && key === "o") { event.preventDefault(); upload.current?.click(); }
-      if (ctrl && key === "z" && document) {
+      if (ctrl && key === "z" && document && tool !== "sketch") {
         event.preventDefault();
         if (event.shiftKey ? document.can_redo : document.can_undo) void perform(() => travel(event.shiftKey ? "redo" : "undo"));
       }
@@ -268,7 +276,7 @@ export default function App() {
     onCompleted: async (next, isDisposed) => {
       const submitted = context.current?.jobId === next.id ? context.current : null;
       if (next.mask_image_url) {
-        if (submitted?.layerId) await cutOutLayer(submitted.layerId, fileUrl(next.mask_image_url));
+        if (submitted?.layerId) await cutOutLayer(submitted.layerId, fileUrl(next.mask_image_url), submitted.maskLabel);
         else setMaskUrl(fileUrl(next.mask_image_url));
       }
       if (next.generation_ids.length) {
@@ -342,7 +350,9 @@ export default function App() {
     setSideTab("layers"); collapsePanel(false);
   }
   function chooseTool(next: CanvasTool) {
+    if (next === "sketch") { chooseOperation("sketch"); return; }
     setTool(next);
+    if (operation === "sketch" && next !== "move") setOperation("replace");
     if (operation === "expand" || isWholeImage(operation)) { clearSelection(); setOperation("replace"); }
     if (next === "transform") setLayerMasking(false);
     else if (isSelectionTool(next) && !layerMasking) layers.select(null);
@@ -351,10 +361,21 @@ export default function App() {
     if (layerMasking) { finishMasking(); return; }
     layers.select(id); setLayerMasking(true);
     setTool(current => isSelectionTool(current) ? current : "object");
-    if (operation === "expand" || isWholeImage(operation)) { clearSelection(); setOperation("replace"); }
+    if (operation === "expand" || operation === "sketch" || isWholeImage(operation)) { clearSelection(); setOperation("replace"); }
   }
   function finishMasking() { setLayerMasking(false); setLayerPoints([]); setTool("transform"); }
-  function chooseOperation(next: "generate" | "edit" | "replace" | "remove") {
+  /** Sketch, Fix faces and references need FLUX.2 Klein. */
+  function switchToQuality() {
+    setSettings(current => isKleinModel(current.model_name) ? current
+      : { ...current, preset: "quality", model_name: GENERATION_PRESETS.quality.modelName, steps: GENERATION_PRESETS.quality.steps, guidance: GENERATION_PRESETS.quality.guidance });
+  }
+  function chooseOperation(next: Exclude<Operation, "expand">) {
+    if (needsQuality(next)) switchToQuality();
+    // The pencil belongs to Sketch; other operations go back to selecting.
+    if (next === "sketch") { layers.select(null); setLayerMasking(false); setTool("sketch"); }
+    else if (tool === "sketch" || (next === "faces" && tool === "transform")) setTool("object");
+    // Faces work on the picture as you see it; a selection may narrow them down.
+    if (next === "faces") { layers.select(null); setLayerMasking(false); }
     if (isWholeImage(next)) {
       // With a layer selected, Edit starts on that layer alone.
       if (next === "edit") setEditScope(layers.active ? "layer" : "visible");
@@ -369,14 +390,14 @@ export default function App() {
   function selectLayer(id: string | null) {
     layers.select(id);
     if (operation === "edit") { setEditScope(id ? "layer" : "visible"); return; }
-    if (id) { setTool("transform"); if (operation === "expand" || isWholeImage(operation)) setOperation("replace"); }
+    if (id) { setTool("transform"); if (operation === "expand" || operation === "sketch" || isWholeImage(operation)) setOperation("replace"); }
   }
   async function addLayerImages(files: File[]) {
     setSideTab("layers"); collapsePanel(false);
     await layers.settled();
     await layers.addImages(files);
     setTool("transform");
-    if (operation === "expand" || isWholeImage(operation)) setOperation("replace");
+    if (operation === "expand" || operation === "sketch" || isWholeImage(operation)) setOperation("replace");
   }
   async function copySelectionToLayer() {
     if (!source || !mask || !size || locked) return;
@@ -402,10 +423,46 @@ export default function App() {
       await layers.setMask(id, invertMask(current), "Invert layer mask");
     } catch (err) { setError(message(err)); }
   }
-  async function cutOutLayer(layerId: string, maskUrl: string) {
+  async function cutOutLayer(layerId: string, maskUrl: string, label = "Cut out object") {
     const response = await fetch(maskUrl, { cache: "no-store" });
     if (!response.ok) throw new Error("Could not load the selection. Click the object again.");
-    await layers.setMask(layerId, await response.blob(), "Cut out object");
+    await layers.setMask(layerId, await response.blob(), label);
+  }
+  /** Selects what matches a description; while masking a layer, keeps only that on the layer. */
+  async function findByText(text: string) {
+    if (!source || locked) return;
+    const layer = activeLayer;
+    await perform(async () => {
+      if (layer) {
+        await layers.settled();
+        queued(await selectByText(await layerFile(layer), text), null, { layerId: layer.id, maskLabel: `Keep “${text}”` }); setLayerPoints([]);
+        return;
+      }
+      queued(await selectByText(await editImage(), text), null); setPoints([]);
+    });
+  }
+  /** Selects the main subject; while masking a layer, keeps only the subject on the layer. */
+  async function selectSubject() {
+    if (!source || locked) return;
+    if (activeLayer) { await removeLayerBackground(activeLayer.id); return; }
+    await perform(async () => { queued(await cutoutSubject(await editImage()), null); setPoints([]); });
+  }
+  async function removeLayerBackground(id: string) {
+    const layer = layers.layers.find(item => item.id === id);
+    if (!layer || locked) return;
+    await perform(async () => {
+      await layers.settled();
+      queued(await cutoutSubject(await layerFile(layer)), null, { layerId: layer.id, maskLabel: "Remove background" }); setLayerPoints([]);
+    });
+  }
+  /** A white canvas at the chosen size, ready to sketch on. */
+  async function openBlank() {
+    const canvas = window.document.createElement("canvas");
+    canvas.width = settings.width; canvas.height = settings.height;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height);
+    await openFile(new File([await canvasBlob(canvas)], "Sketch.png", { type: "image/png" }));
+    setSketchScope("whole"); chooseOperation("sketch");
   }
   async function layerFile(layer: LayerRecord): Promise<File> {
     let file = layerFiles.current.get(layer.image_path);
@@ -465,7 +522,7 @@ export default function App() {
     const current = documentRef.current;
     context.current = {
       jobId: created.id, documentId: current?.id ?? null, revisionId: current?.current_revision_id ?? null, operation: operationType,
-      layerId: extras.layerId ?? null, layerOffset: extras.layerOffset ?? { x: 0, y: 0 }, result: extras.result ?? null,
+      layerId: extras.layerId ?? null, maskLabel: extras.maskLabel ?? "Cut out object", layerOffset: extras.layerOffset ?? { x: 0, y: 0 }, result: extras.result ?? null,
     };
     setJob({ ...created, progress: 0, error: null, generation_id: null, generation_ids: [] });
   }
@@ -498,6 +555,33 @@ export default function App() {
       }
       const parameters = { prompt, negative_prompt: settings.negative_prompt || undefined, model_name: settings.model_name, runtime_mode: settings.runtime_mode, seed: settings.seed ? Number(settings.seed) : undefined, steps: settings.steps, guidance: settings.guidance, count: settings.count };
       if (document && task !== "outpaint" && layers.layers.length >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one before generating.`);
+      if (operation === "sketch") {
+        if (!source || !document || !size) throw new Error("Open an image first.");
+        const footprint = sketch && await sketchMask(sketch, size);
+        if (!sketch || !footprint) throw new Error("Sketch something first: paint rough shapes with the Sketch tool.");
+        const picture = await sketchedPicture(await editImage(), sketch, size);
+        const name = resultName(null, operation, prompt);
+        if (sketchScope === "whole") {
+          queued(await editWholeImage(picture, { ...parameters, mode: "sketch" }), null, { result: { kind: "generation", name } });
+          return;
+        }
+        // Only the sketch and a margin around it are redrawn; the rest of the picture stays exact.
+        const form = new FormData();
+        for (const [key, value] of Object.entries(parameters)) if (value !== undefined) form.set(key, String(value));
+        form.set("strength", "1");
+        form.set("image", picture); form.set("mask", footprint, "mask.png");
+        form.set("edit_operation", "sketch");
+        form.set("blend_feather", "0");
+        form.set("context_padding", String(settings.context_padding));
+        queued(await inpaintImage(form), null, { result: { kind: "selection", mask: footprint, name, replaces: null } });
+        return;
+      }
+      if (operation === "faces") {
+        if (!source || !document) throw new Error("Open an image first.");
+        // A selection limits which faces are fixed.
+        queued(await fixFaces(await editImage(), { ...parameters, reference_ids: references.map(item => item.id) }, mask), null, { result: { kind: "faces", name: "Fixed faces" } });
+        return;
+      }
       if (task === "text-to-image") {
         const referenceIds = references.map(item => item.id);
         generationReferences.current = document ? [] : referenceIds;
@@ -567,14 +651,22 @@ export default function App() {
       const layerMask = layer.mask_url ? await fileFromUrl(fileUrl(layer.mask_url), "mask.png") : null;
       if (!await layers.addResult(image, layerMask, result.name, layer, layer.id, "Edit layer")) return;
     } else {
-      const patch = await selectionPatch(await loadImage(url), size, result.mask);
+      // Fixed faces keep their own mask: only the faces become the layer.
+      const footprint = result.kind === "faces" ? await facesMask() : result.mask;
+      const patch = await selectionPatch(await loadImage(url), size, footprint);
       if (!patch) throw new Error("The selection was empty, so there is nothing to add.");
       const center = { x: patch.box.x + patch.box.width / 2, y: patch.box.y + patch.box.height / 2 };
-      if (!await layers.addResult(patch.image, patch.mask, result.name, center, result.replaces)) return;
+      if (!await layers.addResult(patch.image, patch.mask, result.name, center, result.kind === "selection" ? result.replaces : null)) return;
     }
     await layers.settled();
-    discard(); clearSelection(); setOperation("replace"); setTool("transform"); setSideTab("layers"); collapsePanel(false);
+    discard(); clearSelection(); setSketchClear(value => value + 1); setOperation("replace"); setTool("transform"); setSideTab("layers"); collapsePanel(false);
     await refresh();
+  }
+  async function facesMask(): Promise<Blob> {
+    if (!chosen?.mask_image_path) throw new Error("The faces mask is missing. Fix the faces again.");
+    const response = await fetch(fileUrl("/files/" + chosen.mask_image_path), { cache: "no-store" });
+    if (!response.ok) throw new Error("Could not load the faces mask. Fix the faces again.");
+    return response.blob();
   }
   /** An edited layer image with the original layer's transparency. */
   async function editedLayer(edited: HTMLImageElement, layer: LayerRecord): Promise<HTMLCanvasElement> {
@@ -663,13 +755,19 @@ export default function App() {
   }
 
   const expansionValid = !!size && validExpansion(size, expansion);
-  const canSubmit = !locked && online && !cudaBlocked && (task === "outpaint"
+  const quality = isKleinModel(settings.model_name);
+  const canSubmit = !locked && online && !cudaBlocked && (operation === "sketch" ? !!source && !!sketch && !!settings.prompt.trim() && quality
+    : operation === "faces" ? !!source && quality
+    : task === "outpaint"
     ? expansionValid && !!settings.prompt.trim()
     : (operation === "remove" || !!settings.prompt.trim()) && (task === "text-to-image" || (task === "edit" && !!source && (editScope === "visible" || !!editLayer)) || !!mask) && !referenceNeedsQuality);
   const hint = activeLayer && layerMasking ? `Masking layer “${activeLayer.name}”: the tools hide or restore parts of it. Press Esc when done.`
     : activeLayer ? `Editing layer “${activeLayer.name}”. Pick a selection tool or press Esc for AI edits; they see every visible layer.`
     : referenceNeedsQuality ? "References need the Quality model. Choose Quality in generation settings."
     : operation === "edit" && editScope === "layer" ? layerEditHint(editLayer?.name ?? null, references.map(item => item.name))
+    : needsQuality(operation) && !quality ? `${operation === "sketch" ? "Sketches need" : "Fix faces needs"} the Quality model. Choose Quality in generation settings.`
+    : operation === "sketch" ? sketchHint(sketchScope, !!sketch)
+    : operation === "faces" ? facesHint(!!mask, references.map(item => item.name))
     : blending && mask ? `Blending “${blending.name}” in: the AI redraws it and its edges to fit the scene. Widen the area with the brush if needed.`
     : operationHint(operation, !!source, !!mask, tool, references.map(item => item.name)) + (source && operation !== "expand" && !isWholeImage(operation) ? " Apply adds the result as a new layer." : "");
   const referenceNote = operation === "expand" ? "References are used for Replace edits. Leave Expand to place one."
@@ -689,19 +787,21 @@ export default function App() {
             points={points} onObjectPoint={point => void objectPoint(point)} onRemovePoint={index => void removePoint(index)} onClearSelection={clearSelection}
             onImageSize={setSize} onError={setError} contextPadding={settings.context_padding} onContextPadding={context_padding => setSettings(current => ({ ...current, context_padding }))} onHelp={() => setPanel("shortcuts")}
             layerActive={!!activeLayer} layerPointCount={layerPoints.length} onUndoLayerPoint={() => void removeLayerPoint(layerPoints.length - 1)}
+            sketchVisible={operation === "sketch"} sketchClearToken={sketchClear} onSketchChange={setSketch}
+            onFind={text => void findByText(text)} onSubject={() => void selectSubject()}
             renderLayers={view => previewUrl ? null : <LayerStage layers={layers.layers} active={activeLayer} zoom={view.zoom} size={view.size} tool={tool} brushSize={view.brushSize} hide={view.hide}
               interactive={view.interactive} disabled={locked} points={layerPoints} onSelect={layers.select}
               onPreview={layers.preview} onCancelPreview={layers.cancelPreview} onCommit={layers.update} onMask={(id, layerMask, label) => void layers.setMask(id, layerMask, label)}
               onObjectPoint={point => void layerObjectPoint(point)} onRemovePoint={index => void removeLayerPoint(index)} onCursor={view.trackCursor} />} />
           : previewUrl ? <div className="generated-preview"><img crossOrigin="anonymous" src={previewUrl} alt={chosen.prompt} /><span>{chosen.width} × {chosen.height}</span></div>
-          : <WelcomeCanvas disabled={locked} onOpen={() => upload.current?.click()} />}
+          : <WelcomeCanvas disabled={locked || !online} onOpen={() => upload.current?.click()} onBlank={() => void perform(openBlank)} />}
         {busy && <JobOverlay job={job} />}
         {dropActive && <div className="drop-overlay">Drop to open your image</div>}
       </div>
       {reviewing
         ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} />
         : <CommandCard operation={operation} onOperation={chooseOperation} hasImage={!!source} locked={locked}
-          editScope={editScope} onEditScope={document && layers.layers.length ? chooseEditScope : undefined}
+          editScope={editScope} onEditScope={document && layers.layers.length ? chooseEditScope : undefined} sketchScope={sketchScope} onSketchScope={setSketchScope}
           settingsLabel={settingsSummary(settings, task)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
           references={references.map(item => ({ id: item.id, name: item.name, imageUrl: fileUrl(item.subject_url ?? item.image_url) }))} onRemoveReference={id => refs.toggle(id)}
           hint={hint} cancelled={job?.status === "cancelled"} jobActive={jobActive} cancelling={cancelling} canSubmit={canSubmit}
@@ -717,7 +817,7 @@ export default function App() {
         ? <LayersPanel layers={layers.layers} activeId={activeLayer?.id ?? editLayer?.id ?? null} backgroundUrl={sourceUrl} uploading={layers.uploading} disabled={locked}
           canCopySelection={!!mask} onSelect={selectLayer} onAdd={files => void addLayerImages(files)} onCopySelection={() => void copySelectionToLayer()}
           onUpdate={layers.update} onPreview={layers.preview} onRemove={layers.remove} onDuplicate={layers.duplicate} onReorder={layers.reorder}
-          onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)}
+          onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)} onRemoveBackground={id => void removeLayerBackground(id)}
           masking={layerMasking} onMask={toggleLayerMask} />
         : <ReferencePanel references={refs.references} newImage={!document} activeIds={refs.active.map(item => item.id)} pending={refs.pending} uploading={refs.uploading}
           disabled={locked || operation === "expand"} note={referenceNote}

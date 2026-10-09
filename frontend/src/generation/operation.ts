@@ -1,11 +1,20 @@
 import { ImageTask } from "../api";
 import { CanvasTool } from "../canvas/tools";
 
-export type Operation = "generate" | "edit" | "replace" | "remove" | "expand";
+export type Operation = "generate" | "edit" | "replace" | "remove" | "expand" | "sketch" | "faces";
 
+/** Sketch and Fix faces run on FLUX.2 Klein's edit pipeline, so they count as edits. */
 export function taskFor(operation: Operation): ImageTask {
-  return operation === "generate" ? "text-to-image" : operation === "edit" ? "edit" : operation === "expand" ? "outpaint" : "inpaint";
+  return operation === "generate" ? "text-to-image" : operation === "edit" || operation === "sketch" || operation === "faces" ? "edit" : operation === "expand" ? "outpaint" : "inpaint";
 }
+
+/** Operations that only the Quality model (FLUX.2 Klein) can do. */
+export function needsQuality(operation: Operation): boolean {
+  return operation === "sketch" || operation === "faces";
+}
+
+/** Render a sketch on its own patch of the picture, or redraw the whole picture around it. */
+export type SketchScope = "strokes" | "whole";
 
 /** Operations that work on the whole picture, without a selection or an active layer. */
 export function isWholeImage(operation: Operation): boolean {
@@ -22,7 +31,21 @@ export function layerEditHint(layerName: string | null, referenceNames: readonly
 }
 
 export function submitLabel(operation: Operation): string {
-  return operation === "remove" ? "Remove" : operation === "expand" ? "Expand" : operation === "edit" ? "Edit" : "Generate";
+  return operation === "remove" ? "Remove" : operation === "expand" ? "Expand" : operation === "edit" ? "Edit"
+    : operation === "sketch" ? "Render" : operation === "faces" ? "Fix faces" : "Generate";
+}
+
+export function sketchHint(scope: SketchScope, hasSketch: boolean): string {
+  if (!hasSketch) return "Paint rough shapes in colour with the Sketch tool, then say what they are. Crude is fine: the AI follows shape, size and colour.";
+  return scope === "strokes"
+    ? "Render turns the strokes into the real thing; the rest of the picture stays as it is. Apply adds it as a new layer."
+    : "Render redraws the whole picture around your sketch, so lighting and style match. Apply adds it as a new layer.";
+}
+
+export function facesHint(hasSelection: boolean, referenceNames: readonly string[] = []): string {
+  const which = hasSelection ? "Faces inside your selection" : "Every face in the picture";
+  const likeness = referenceNames.length ? ` ${joinNames(referenceNames)} ${referenceNames.length > 1 ? "keep" : "keeps"} the look of their reference.` : " Identity and expression stay the same.";
+  return `${which} ${hasSelection ? "are" : "is"} redrawn sharper and pasted back.${likeness} Apply adds the faces as a new layer.`;
 }
 
 /** "Anna", "Anna and Tom", "Anna, Tom and Mia". */
@@ -40,6 +63,8 @@ export function promptPlaceholder(operation: Operation, hasImage: boolean, refer
     return "How should the picture change? e.g. make it a snowy night";
   }
   if (operation === "remove") return "Optional: describe the background to restore…";
+  if (operation === "sketch") return "What did you draw? e.g. a deer drinking at the water";
+  if (operation === "faces") return "Optional: anything extra, e.g. eyes open, gentle smile";
   if (operation === "expand") return "Describe the scene or what to add beyond the edges…";
   if (referenceNames.length > 1) return `What are ${joinNames(referenceNames)} doing here? e.g. sitting together on the bench`;
   if (referenceNames.length) return `What is ${referenceNames[0]} doing here? e.g. sitting on the bench, reading`;

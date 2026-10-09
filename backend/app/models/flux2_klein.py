@@ -29,10 +29,19 @@ PROMPT_CACHE_SIZE = 8
 GENERIC_REFERENCE_NAME = re.compile(r"^Reference \d+$")
 # Klein's native resolution; whole-image edits render here and are scaled back.
 EDIT_AREA = 1024 * 1024
+# A face crop needs less: Fix faces scales the result back to the crop anyway.
+FACE_AREA = 768 * 768
+MATCH_SURROUNDINGS = " Match the surrounding lighting, color palette, perspective, texture and depth of field."
 
 
 def _inpaint_prompt(request: InpaintForm, references: Sequence[str] = ()) -> str:
-    if request.edit_operation == "remove":
+    if request.edit_operation == "sketch":
+        # In the local trial this followed a crude deer and top hat closely,
+        # with the sketched crop also given as the reference image.
+        instruction = (f"Turn the rough coloured sketch in the masked area into {request.prompt.strip().rstrip('.')}."
+                       " Follow the sketch's shape, position, size, pose and colours, but render it as a realistic,"
+                       " detailed part of the picture.")
+    elif request.edit_operation == "remove":
         instruction = "Remove the selected subject completely and reconstruct the background naturally inside the masked region. " + request.prompt.strip()
     else:
         instruction = request.prompt.strip().rstrip(".") + "."
@@ -45,7 +54,7 @@ def _inpaint_prompt(request: InpaintForm, references: Sequence[str] = ()) -> str
             instruction += (": " + ", ".join(named) + ".") if named else "."
             instruction += (" Keep each one's face, hair, clothing, colours and proportions identical to their reference,"
                             " and show them all complete within the selection.")
-    instruction += " Match the surrounding lighting, color palette, perspective, texture and depth of field."
+    instruction += MATCH_SURROUNDINGS
     if request.scene_context.strip():
         instruction += " Scene context: " + request.scene_context.strip()
     return instruction
@@ -82,6 +91,36 @@ def _edit_prompt(prompt: str, references: Sequence[str] = ()) -> str:
         instruction += (": " + ", ".join(named) + ".") if named else "."
         instruction += " Keep each one's face, hair, accessories, clothing and proportions identical to their own image."
     return instruction + " Keep everything the instruction does not change as it is in image 1, including each person's face and identity."
+
+
+def _sketch_prompt(prompt: str) -> str:
+    """Image 1 is the picture with rough strokes on it, or a sketch on a blank canvas."""
+    return ("Image 1 contains a rough coloured sketch. Turn it into a finished, detailed image: "
+            + prompt.strip().rstrip(".") + ". Follow the sketch's layout, shapes, sizes, poses and colours closely."
+            " Keep every part of image 1 that is not sketched as it is.")
+
+
+def _face_prompt(prompt: str, references: Sequence[str] = ()) -> str:
+    """Image 1 is a close crop around one face; references follow as images 2 and up."""
+    instruction = ("Restore image 1, a close-up of a face, as a sharp and detailed photograph: clear eyes, natural skin texture,"
+                   " crisp hair, eyebrows and teeth. Keep the same identity, age, expression, head pose, gaze, lighting,"
+                   " colours, framing and background exactly.")
+    if prompt.strip():
+        instruction += " Also: " + prompt.strip().rstrip(".") + "."
+    if len(references) == 1:
+        name = "This person" if GENERIC_REFERENCE_NAME.match(references[0]) else references[0]
+        instruction += f" {name} is the person in image 2: make the face match image 2."
+    elif references:
+        instruction += f" The person is one of the people in images 2 to {len(references) + 1}: make the face match their image."
+    return instruction
+
+
+def _mode_prompt(request: EditRequest, references: Sequence[str]) -> str:
+    if request.mode == "sketch":
+        return _sketch_prompt(request.prompt)
+    if request.mode == "face":
+        return _face_prompt(request.prompt, references)
+    return _edit_prompt(request.prompt, references)
 
 
 def _fit_area(image: Image.Image, area: int = EDIT_AREA) -> Image.Image:
@@ -204,12 +243,14 @@ class Flux2KleinProvider:
             pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
             with Image.open(input_path) as picture:
                 source = _opaque(picture)
-            fitted = _fit_area(source)
+            fitted = _fit_area(source, FACE_AREA if request.mode == "face" else EDIT_AREA)
+            if request.mode == "sketch":
+                references = ()
             reference_images = _reference_images([reference.path for reference in references])
             control.set_progress(0.15)
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
             generator = torch.Generator(selected_device(torch)).manual_seed(seed)
-            prompt_embeds = self._encode_prompt(pipe, _edit_prompt(request.prompt, [reference.name for reference in references]), control)
+            prompt_embeds = self._encode_prompt(pipe, _mode_prompt(request, [reference.name for reference in references]), control)
             control.set_phase("generating")
             image = pipe(
                 # The picture leads, so the output follows its layout; references follow it.
@@ -245,7 +286,7 @@ class Flux2KleinProvider:
             require_generation_device()
             torch = self._load_torch()
             pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control)
-            if request.edit_operation == "remove":
+            if request.edit_operation in ("remove", "sketch"):
                 references = ()
             reference_images = _reference_images([reference.path for reference in references])
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
@@ -257,11 +298,14 @@ class Flux2KleinProvider:
             control.set_progress(0.15)
             prompt_embeds = self._encode_prompt(pipe, _inpaint_prompt(request, [reference.name for reference in references]), control)
             control.set_phase("generating")
+            # The sketched crop doubles as the reference, so no stroke survives the edit.
+            reference: Any = init_image if request.edit_operation == "sketch" else (
+                reference_images if len(reference_images) > 1 else reference_images[0] if reference_images else None)
             image = pipe(
                 image=init_image,
                 mask_image=mask_image,
                 # A list of equally sized images becomes one reference token block each.
-                **({"image_reference": reference_images if len(reference_images) > 1 else reference_images[0]} if reference_images else {}),
+                **({"image_reference": reference} if reference is not None else {}),
                 prompt_embeds=prompt_embeds,
                 height=init_image.height,
                 width=init_image.width,
