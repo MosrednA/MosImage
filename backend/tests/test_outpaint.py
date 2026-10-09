@@ -19,7 +19,7 @@ class OutpaintTests(unittest.TestCase):
     def test_expansion_uses_a_mask_conditioned_default_and_rejects_klein(self) -> None:
         request = OutpaintForm(prompt="scene", left=32)
         self.assertEqual((request.model_name, request.steps, request.guidance), ("z-image-turbo", 8, 0))
-        for model in ("flux2-klein-4b", "flux2-klein-4b-nvfp4"):
+        for model in ("flux2-klein-4b", "flux2-klein-4b-nvfp4", "flux2-klein-9b-nvfp4"):
             with self.subTest(model=model):
                 response = TestClient(app).post(
                     "/api/outpaint",

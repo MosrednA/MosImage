@@ -12,18 +12,45 @@ from PIL import Image
 from app.config import settings
 from app.jobs import JobCancelled
 from app.models.flux2_klein_nvfp4 import (
-    BASE_REPO, BASE_REVISION, QUANT_REPO, QUANT_REVISION, QUANT_FILENAME,
-    Flux2KleinNvfp4Provider,
+    BASE_REPO, BASE_REVISION, BASE_REPO_9B, BASE_REVISION_9B, QUANT_REPO, QUANT_REPO_9B, QUANT_REVISION, QUANT_FILENAME,
+    QUANT_FILENAME_9B, Flux2Klein9bNvfp4Provider, Flux2KleinNvfp4Provider,
 )
 from app.schemas import InpaintForm, LoadModelRequest, TextToImageRequest
 from app.services import run_inpaint
 
 
 class Nvfp4ProviderTests(unittest.TestCase):
-    def test_generation_edit_and_preload_default_to_nvfp4(self) -> None:
+    def test_generation_edit_and_preload_default_to_9b_nvfp4(self) -> None:
         requests = (TextToImageRequest(prompt="scene"), InpaintForm(prompt="scene"), LoadModelRequest())
-        self.assertTrue(all(request.model_name == "flux2-klein-4b-nvfp4" for request in requests))
+        self.assertTrue(all(request.model_name == "flux2-klein-9b-nvfp4" for request in requests))
+        self.assertEqual(settings.warm_up_model, "flux2-klein-9b-nvfp4")
         self.assertEqual(Flux2KleinNvfp4Provider().info().model_id, QUANT_REPO)
+        self.assertEqual(Flux2Klein9bNvfp4Provider().info().model_id, QUANT_REPO_9B)
+
+    def test_9b_streams_its_encoder_and_stays_resident(self) -> None:
+        provider = Flux2Klein9bNvfp4Provider()
+        generation, inpaint, transformer, encoder = (MagicMock() for _ in range(4))
+        inpaint.from_pretrained.return_value.config = {"is_distilled": True}
+        vendor = SimpleNamespace(Flux2KleinPipeline=generation, Flux2KleinInpaintPipeline=inpaint)
+        runtime = SimpleNamespace(kernel_api=MagicMock(), load_transformer=MagicMock(return_value=transformer))
+        hub = SimpleNamespace(hf_hub_download=MagicMock(side_effect=["config.json", "checkpoint.safetensors"]),
+                              snapshot_download=MagicMock(return_value="snapshot"))
+        loader = SimpleNamespace(load_text_encoder=MagicMock(return_value=encoder))
+        control = MagicMock()
+        modules = {"diffusers": vendor, "huggingface_hub": hub, "app.models.nvfp4_runtime": runtime, "app.models.klein_text_encoder": loader}
+        with patch.dict("sys.modules", modules), patch.object(provider, "_validate_runtime"), patch.object(provider, "_load_torch", return_value=SimpleNamespace(bfloat16="bf16")):
+            provider._create_pipeline("inpaint", control)
+        self.assertEqual(hub.hf_hub_download.call_args_list[0].args, (BASE_REPO_9B, "transformer/config.json"))
+        self.assertEqual(hub.hf_hub_download.call_args_list[1].args, (QUANT_REPO_9B, QUANT_FILENAME_9B))
+        loaded = inpaint.from_pretrained.call_args
+        self.assertEqual((loaded.args, loaded.kwargs["revision"]), ((BASE_REPO_9B,), BASE_REVISION_9B))
+        self.assertIsNone(loaded.kwargs["text_encoder"])
+        loader.load_text_encoder.assert_called_once_with(Path("snapshot"), control.raise_if_cancelled)
+        built = inpaint.call_args.kwargs
+        self.assertIs(built["text_encoder"], encoder)
+        self.assertIs(built["transformer"], inpaint.from_pretrained.return_value.transformer)
+        self.assertTrue(built["is_distilled"])
+        self.assertEqual({provider._placement_for(mode) for mode in ("balanced", "safe", "performance")}, {"cuda"})
 
     def test_native_loader_receives_pinned_files_and_pipeline_uses_bf16_components(self) -> None:
         provider = Flux2KleinNvfp4Provider()
@@ -79,7 +106,7 @@ class KleinSoftMaskRoutingTests(unittest.TestCase):
         image_buffer, mask_buffer = BytesIO(), BytesIO()
         source.save(image_buffer, "PNG")
         selection.save(mask_buffer, "PNG")
-        for model in ("flux2-klein-4b", "flux2-klein-4b-nvfp4"):
+        for model in ("flux2-klein-4b", "flux2-klein-4b-nvfp4", "flux2-klein-9b-nvfp4"):
             with self.subTest(model=model), TemporaryDirectory() as directory:
                 root = Path(directory)
                 for kind in ("inputs", "masks", "outputs"):

@@ -198,11 +198,11 @@ class Flux2KleinPlacementTests(unittest.TestCase):
 class ModelRegistryTests(unittest.TestCase):
     def test_registry_lists_quality_fast_and_specialist_models(self) -> None:
         names = [model.name for model in ModelRegistry().list()]
-        self.assertEqual(names, ["flux2-klein-4b-nvfp4", "flux2-klein-4b", "z-image-turbo", "flux1-fill-dev"])
+        self.assertEqual(names, ["flux2-klein-9b-nvfp4", "flux2-klein-4b-nvfp4", "flux2-klein-4b", "z-image-turbo", "flux1-fill-dev"])
 
     def test_switching_precision_releases_the_other_klein_pipeline(self) -> None:
         registry = ModelRegistry()
-        for source, target in (("flux2-klein-4b", "flux2-klein-4b-nvfp4"), ("flux2-klein-4b-nvfp4", "flux2-klein-4b")):
+        for source, target in (("flux2-klein-4b", "flux2-klein-4b-nvfp4"), ("flux2-klein-4b-nvfp4", "flux2-klein-9b-nvfp4"), ("flux2-klein-9b-nvfp4", "flux2-klein-4b")):
             with self.subTest(source=source):
                 provider = registry.get(source)
                 provider._pipes = {"inpaint": object()}

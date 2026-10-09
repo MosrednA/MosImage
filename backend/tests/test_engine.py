@@ -24,7 +24,7 @@ class EngineWarmUpTests(unittest.TestCase):
         with patch.object(main, "warm_up_job_id", job.id):
             body = TestClient(main.app).get("/api/engine").json()
         self.assertEqual(body["warm_up"]["id"], job.id)
-        self.assertIn("flux2-klein-4b-nvfp4", [model["name"] for model in body["models"]])
+        self.assertIn("flux2-klein-9b-nvfp4", [model["name"] for model in body["models"]])
         with patch.object(main, "warm_up_job_id", None):
             self.assertIsNone(TestClient(main.app).get("/api/engine").json()["warm_up"])
 

@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     job_retention_seconds: float = 600.0
     # Load and warm the Quality model and SAM while the UI opens.
     warm_up_on_start: bool = True
-    warm_up_model: str = "flux2-klein-4b-nvfp4"
+    warm_up_model: str = "flux2-klein-9b-nvfp4"
     # Set by the desktop app that started this engine, so only it can stop it.
     shutdown_token: str | None = Field(default=None, repr=False)
     huggingface_token: str | None = Field(

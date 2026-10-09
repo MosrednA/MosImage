@@ -5,7 +5,7 @@ import { GENERATION_PRESETS, isKleinModel, presetForModel } from "./presets";
 describe("generation presets", () => {
   it("uses the distilled FLUX settings for quality", () => {
     expect(GENERATION_PRESETS.quality).toMatchObject({
-      modelName: "flux2-klein-4b-nvfp4",
+      modelName: "flux2-klein-9b-nvfp4",
       steps: 4,
       guidance: 1,
     });
@@ -17,6 +17,7 @@ describe("generation presets", () => {
     expect(presetForModel("flux2-klein-4b-nvfp4")).toBe("quality");
     expect(isKleinModel("flux2-klein-4b")).toBe(true);
     expect(isKleinModel("flux2-klein-4b-nvfp4")).toBe(true);
+    expect(isKleinModel("flux2-klein-9b-nvfp4")).toBe(true);
     expect(isKleinModel("z-image-turbo")).toBe(false);
   });
 });

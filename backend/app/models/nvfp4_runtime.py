@@ -117,8 +117,12 @@ def load_transformer(config_path: Path, checkpoint: Path, kernel: KernelApi,
         if metadata is None or "_quantization_metadata" not in metadata:
             raise ValueError("Official quantization metadata is missing.")
         quant = QuantMetadata.model_validate_json(metadata["_quantization_metadata"])
-        if len(quant.layers) != 80:
-            raise ValueError("The official Klein checkpoint must have 80 quantized source modules.")
+        # At most eight linears per double block and two per single block (80 for
+        # 4B). Official 9B keeps the first block's QKV in BF16 (110 of 112); the
+        # strict state-dict load below still proves every weight is present.
+        limit = 8 * config["num_layers"] + 2 * config["num_single_layers"]
+        if not 0 < len(quant.layers) <= limit:
+            raise ValueError(f"The official Klein checkpoint must have at most {limit} quantized source modules.")
         consumed: set[str] = set()
         for name in quant.layers:
             check_cancelled()

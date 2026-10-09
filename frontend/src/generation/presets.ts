@@ -12,7 +12,7 @@ export const GENERATION_PRESETS: Record<GenerationPreset, GenerationPresetConfig
   quality: {
     label: "Quality",
     description: "Best prompts and edits",
-    modelName: "flux2-klein-4b-nvfp4",
+    modelName: "flux2-klein-9b-nvfp4",
     steps: 4,
     guidance: 1,
   },
@@ -30,5 +30,5 @@ export function presetForModel(modelName: string): GenerationPreset {
 }
 
 export function isKleinModel(modelName: string): boolean {
-  return modelName === "flux2-klein-4b" || modelName === "flux2-klein-4b-nvfp4";
+  return modelName === "flux2-klein-9b-nvfp4" || modelName === "flux2-klein-4b" || modelName === "flux2-klein-4b-nvfp4";
 }
