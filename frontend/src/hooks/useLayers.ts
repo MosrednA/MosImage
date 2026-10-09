@@ -115,10 +115,10 @@ export function useLayers(
   }
 
   /**
-   * Adds the selected part of an AI result as a masked layer at its place.
+   * Adds a full generation or selected AI patch at its place and scale.
    * With `replaces`, it goes just above that layer, which is hidden.
    */
-  async function addResult(image: Blob, mask: Blob, name: string, center: { x: number; y: number }, replaces: string | null): Promise<LayerRecord | null> {
+  async function addResult(image: Blob, mask: Blob | null, name: string, placement: { x: number; y: number; scale_x?: number; scale_y?: number }, replaces: string | null): Promise<LayerRecord | null> {
     const start = documentRef.current;
     if (!start) return null;
     if (currentLayers().length >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one to apply this result.`);
@@ -126,15 +126,18 @@ export function useLayers(
     try {
       const [asset, maskAsset] = await Promise.all([
         uploadLayerAsset(start.id, image, "image", "result.png"),
-        uploadLayerAsset(start.id, mask, "mask", "mask.png"),
+        mask ? uploadLayerAsset(start.id, mask, "mask", "mask.png") : Promise.resolve(null),
       ]);
       if (documentRef.current?.id !== start.id) return null;
       const layer: LayerRecord = {
         id: newLayerId(), name: name.slice(0, 80), image_path: asset.path, image_url: asset.url,
-        mask_path: maskAsset.path, mask_url: maskAsset.url, width: asset.width, height: asset.height,
-        x: center.x, y: center.y, scale_x: 1, scale_y: 1, rotation: 0, opacity: 1, visible: true,
+        mask_path: maskAsset?.path ?? null, mask_url: maskAsset?.url ?? null, width: asset.width, height: asset.height,
+        x: placement.x, y: placement.y, scale_x: placement.scale_x ?? 1, scale_y: placement.scale_y ?? 1, rotation: 0, opacity: 1, visible: true,
       };
       commit(insertResult(currentLayers(), layer, replaces), replaces ? "Blend layer in" : "Add AI result");
+      await settled();
+      // Keep the proposal available when saving failed and restored the stack.
+      if (!currentLayers().some(item => item.id === layer.id)) return null;
       setActiveId(layer.id);
       return layer;
     } finally {

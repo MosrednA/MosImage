@@ -132,7 +132,8 @@ export interface Patch { image: Blob; mask: Blob; box: ImageBox }
 
 /**
  * The selected part of an AI result as a layer: the result cropped to the
- * selection, with the soft selection as its mask so it can be shown again.
+ * selection. The API result already contains the feathered blend, so the
+ * layer mask keeps its footprint without applying that blend a second time.
  */
 export async function selectionPatch(result: CanvasImageSource, size: ImageSize, selection: Blob): Promise<Patch | null> {
   const mask = await createImageBitmap(selection);
@@ -140,7 +141,12 @@ export async function selectionPatch(result: CanvasImageSource, size: ImageSize,
   const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true })!;
   maskContext.drawImage(mask, 0, 0, size.width, size.height);
   mask.close();
-  const box = maskBounds(maskContext.getImageData(0, 0, size.width, size.height));
+  const coverage = maskContext.getImageData(0, 0, size.width, size.height);
+  // AI selections are opaque greyscale PNGs, not alpha masks.
+  luminanceToAlpha(coverage.data);
+  thresholdAlpha(coverage.data, 0);
+  maskContext.putImageData(coverage, 0, 0);
+  const box = maskBounds(coverage);
   if (!box) return null;
   const image = blankCanvas(box.width, box.height);
   image.getContext("2d")!.drawImage(result, box.x, box.y, box.width, box.height, 0, 0, box.width, box.height);

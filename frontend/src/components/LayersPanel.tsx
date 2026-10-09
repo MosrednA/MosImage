@@ -21,8 +21,6 @@ interface Props {
   onReset: (id: string) => void;
   onInvertMask: (id: string) => void;
   onBlend: (id: string) => void;
-  /** Visible layers make AI results arrive as layers instead of changing the background. */
-  aiOnLayers: boolean;
 }
 
 const LAYER_DRAG_TYPE = "application/x-mosimage-layer";
@@ -92,7 +90,7 @@ export function LayersPanel(props: Props) {
       <div role="option" aria-selected={activeId === null} tabIndex={0} className={"layer-row background" + (activeId === null ? " active" : "")}
         onClick={() => props.onSelect(null)} onKeyDown={event => { if (event.key === "Enter") props.onSelect(null); }}>
         <span className="layer-thumb">{props.backgroundUrl && <img src={props.backgroundUrl} alt="" draggable={false} />}</span>
-        <span className="layer-name">Background<small>{props.aiOnLayers ? "AI results arrive as layers" : "AI edits change this"}</small></span>
+        <span className="layer-name">Background<small>AI results arrive as layers</small></span>
       </div>
     </div>
     {active && <LayerProperties key={active.id} {...props} layer={active} />}

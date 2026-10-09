@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Placement, canvasToLayer, containsPoint, handlePoint, initialPlacement, layerToCanvas, moved, normalizeAngle, resized, rotated } from "./geometry";
+import { Placement, canvasToLayer, containsPoint, generationPlacement, handlePoint, initialPlacement, layerToCanvas, moved, normalizeAngle, resized, rotated } from "./geometry";
 
 const layer: Placement = { x: 100, y: 50, width: 40, height: 20, scale_x: 1, scale_y: 1, rotation: 0 };
 
@@ -9,6 +9,11 @@ function close(actual: { x: number; y: number }, expected: { x: number; y: numbe
 }
 
 describe("layer geometry", () => {
+  it("fits full generations to the canvas without distorting their aspect ratio", () => {
+    expect(generationPlacement({ width: 1024, height: 1024 }, { width: 1024, height: 1024 })).toMatchObject({ x: 512, y: 512, scale_x: 1, scale_y: 1 });
+    expect(generationPlacement({ width: 512, height: 256 }, { width: 1024, height: 1024 })).toMatchObject({ x: 512, y: 512, scale_x: 2, scale_y: 2 });
+    expect(generationPlacement({ width: 2048, height: 1024 }, { width: 800, height: 600 })).toMatchObject({ x: 400, y: 300, scale_x: 800 / 2048, scale_y: 800 / 2048 });
+  });
   it("maps layer pixels to the canvas and back through scale, flip and rotation", () => {
     const turned = { ...layer, scale_x: -2, scale_y: 0.5, rotation: 30 };
     const point = { x: 7, y: 3 };

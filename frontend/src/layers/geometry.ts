@@ -95,6 +95,12 @@ export function initialPlacement(size: { width: number; height: number }, canvas
   return { x: canvas.width / 2, y: canvas.height / 2, scale_x: scale, scale_y: scale, rotation: 0 };
 }
 
+/** A full generation fills as much of the canvas as its aspect ratio allows. */
+export function generationPlacement(size: { width: number; height: number }, canvas: { width: number; height: number }) {
+  const scale = Math.min(canvas.width / size.width, canvas.height / size.height);
+  return { x: canvas.width / 2, y: canvas.height / 2, scale_x: scale, scale_y: scale, rotation: 0 };
+}
+
 /** CSS transform for an element of the layer's natural size at the top-left of a surface shown at `zoom`. */
 export function cssTransform(layer: Placement, zoom: number): string {
   return `translate(${layer.x * zoom}px, ${layer.y * zoom}px) rotate(${layer.rotation}deg) scale(${layer.scale_x * zoom}, ${layer.scale_y * zoom}) translate(${-layer.width / 2}px, ${-layer.height / 2}px)`;

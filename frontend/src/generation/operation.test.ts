@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { joinNames, operationHint, promptPlaceholder } from "./operation";
 
 describe("reference guidance", () => {
+  it("explains generation layers without asking for a selection", () => {
+    expect(promptPlaceholder("generate", true, ["Anna"])).toBe("Describe a new image to add as a layer…");
+    expect(operationHint("generate", true, false, "object")).toContain("new layer");
+    expect(operationHint("generate", false, false, "object")).toContain("Describe a new image");
+  });
   it("asks where the reference goes before a selection exists", () => {
     expect(operationHint("replace", true, false, "rectangle", ["Anna"])).toBe("Select where Anna should appear. Leave room for the whole body and its shadow.");
   });

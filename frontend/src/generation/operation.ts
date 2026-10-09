@@ -17,6 +17,7 @@ export function joinNames(names: readonly string[]): string {
 }
 
 export function promptPlaceholder(operation: Operation, hasImage: boolean, referenceNames: readonly string[] = []): string {
+  if (operation === "generate") return hasImage ? "Describe a new image to add as a layer…" : "Describe the image you want to create…";
   if (operation === "remove") return "Optional: describe the background to restore…";
   if (operation === "expand") return "Describe the scene or what to add beyond the edges…";
   if (referenceNames.length > 1) return `What are ${joinNames(referenceNames)} doing here? e.g. sitting together on the bench`;
@@ -25,6 +26,7 @@ export function promptPlaceholder(operation: Operation, hasImage: boolean, refer
 }
 
 export function operationHint(operation: Operation, hasImage: boolean, hasMask: boolean, tool: CanvasTool, referenceNames: readonly string[] = []): string {
+  if (operation === "generate") return hasImage ? "Generate a full image. Apply adds it as a new layer, centred and fitted to your canvas." : "Describe a new image, or open one to edit.";
   if (operation === "expand") return "Describe the scene or new content. Your original image stays intact.";
   if (!hasImage) return "Describe a new image, or open one to edit.";
   if (referenceNames.length && operation === "replace") {
