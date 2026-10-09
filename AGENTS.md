@@ -5,7 +5,7 @@
 MosImage uses a split local app architecture:
 
 - `backend/` contains the FastAPI API, SQLite metadata layer, job queue, and model provider registry.
-- `backend/app/models/` contains runtime adapters. `z_image.py` is the first provider for `Tongyi-MAI/Z-Image-Turbo`.
+- `backend/app/models/` contains runtime adapters. The Quality default is FLUX.2 Klein 9B NVFP4 (`flux2_klein_nvfp4.py`, with its RAM-streamed FP8 text encoder in `klein_text_encoder.py`); Klein 4B NVFP4/BF16 (`flux2_klein.py`), Z-Image Turbo (`z_image.py`, Fast) and FLUX Fill stay registered in `registry.py`.
 - `frontend/` contains the React + Vite UI and optional Tauri shell in `frontend/src-tauri/`.
 - `data/images/{inputs,masks,outputs}/` stores local image files. `data/app.db` stores metadata.
 - `models/` is reserved for local checkpoints or manually downloaded model files.

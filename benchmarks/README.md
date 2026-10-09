@@ -1,5 +1,7 @@
 # Inpainting benchmark fixtures
 
+The [9 October model comparison](MODEL_COMPARISON_2026-10-09.md) adds the [v2 creative fixtures](fixtures/v2/manifest.json) (a man and a man holding a phone, generated locally) and compares Klein 4B/9B NVFP4, Qwen-Image 2.1 turbo and encoder variants across twelve cases.
+
 The [8 October mask/reference investigation](INPAINT_QUALITY_2026-10-08.md) extends these fixtures with paired context/resolution tests, local identity and object references, and a separate measurement of the real app provider. Its recipes and all outcomes are retained under `data/inpaint-quality-2026-10-08/`.
 
 The [v1 overview](fixtures/v1/overview.jpg) contains four original AI-generated scenes at 1254 × 1254. All four sources, masks and edit prompts were fixed before inspecting benchmark outputs.

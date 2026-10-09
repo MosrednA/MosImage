@@ -11,6 +11,9 @@
 
 Latest quality evidence: [8 October mask/reference investigation](benchmarks/INPAINT_QUALITY_2026-10-08.md). These are reproducible experiments; general inpainting-quality acceptance remains open.
 
+**Layer workflow, 9 October 2026:** Generate in an open document adds a full image layer fitted to the existing canvas. Replace and Remove always add a selected-region layer, including empty or hidden-only stacks. Apply preserves the background, opens Layers and selects Transform; preview placement, mask footprints, undo/redo and persistence are verified. New starts a separate document; Expand retains its background/dimension workflow. See [implementation and validation](FOCUS_IMPLEMENTATION_2026-10-07.md#ai-results-as-layers-9-october-2026).
+**Quality model, 9 October 2026:** FLUX.2 Klein 9B NVFP4 replaces 4B NVFP4 as the Quality default. Its Qwen3-8B encoder is trimmed to 28 layers, stored as FP8 in pinned RAM and streamed to the GPU per prompt, so transformer and VAE stay resident within 16 GB. 4B NVFP4 and BF16 remain selectable. See the [model comparison](benchmarks/MODEL_COMPARISON_2026-10-09.md).
+
 | Phase | Status | Delivered |
 |---|---|---|
 | 2 — Real canvas | Complete | Native-resolution masks; open, paste, drag/drop, save/export; move/pan, zoom, fit, actual size; brush, erase, rectangle, lasso, grow, shrink, feather, invert, clear; mask undo/redo. |
