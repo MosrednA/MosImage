@@ -28,7 +28,7 @@ export function SettingsControls({ settings, onChange, models, task, disabled }:
   }
   return <fieldset className="settings-controls" disabled={disabled}>
     <div className="prompt-options">
-      <div className="segmented" aria-label="Quality">{task !== "outpaint" && <button aria-pressed={isKleinModel(settings.model_name)} onClick={() => preset("quality")}>Quality</button>}<button aria-pressed={settings.model_name === GENERATION_PRESETS.fast.modelName} onClick={() => preset("fast")}>{task === "outpaint" ? "Standard" : "Fast"}</button></div>
+      <div className="segmented" aria-label="Quality">{task !== "outpaint" && <button aria-pressed={isKleinModel(settings.model_name)} onClick={() => preset("quality")}>Quality</button>}{task !== "edit" && <button aria-pressed={settings.model_name === GENERATION_PRESETS.fast.modelName} onClick={() => preset("fast")}>{task === "outpaint" ? "Standard" : "Fast"}</button>}</div>
       {task === "text-to-image" && <select aria-label="Image format" value={aspectPresetFor(settings.width, settings.height) ?? "custom"} onChange={event => { const config = ASPECT_PRESETS[event.target.value as AspectPreset]; if (config) onChange({ ...settings, width: config.width, height: config.height }); }}><option value="square">Square · 1:1</option><option value="landscape">Landscape · 4:3</option><option value="portrait">Portrait · 3:4</option><option value="wide">Wide · 16:9</option><option value="custom" disabled>Custom</option></select>}
       <select aria-label="Number of proposals" value={settings.count} onChange={event => onChange({ ...settings, count: Number(event.target.value) })}>{[1, 2, 3, 4].map(count => <option key={count} value={count}>{count} {count === 1 ? "proposal" : "proposals"}</option>)}</select>
     </div>

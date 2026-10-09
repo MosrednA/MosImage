@@ -2,7 +2,7 @@ import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import {
   DocumentRecord, Expansion, GenerationRecord, JobResponse, JobStatus, LayerRecord, ModelInfo, RevisionRecord, SelectionPoint, SystemInfo,
   acceptAlternative, cancelJob, createDocument, deleteDocument, deleteGeneration, fileUrl, generateImage, getDocument, getGeneration, getSystemInfo,
-  importGeneration, inpaintImage, listDocuments, listHistory, listModels, outpaintImage, proposeAlternatives, redoDocument,
+  copyReferences, editWholeImage, importGeneration, inpaintImage, listDocuments, listHistory, listModels, outpaintImage, proposeAlternatives, redoDocument,
   selectObject, undoDocument, updateDocument,
 } from "./api";
 import { EditorCanvas } from "./canvas/EditorCanvas";
@@ -11,7 +11,7 @@ import { ImageSize } from "./canvas/coordinates";
 import { ExpansionCanvas } from "./canvas/ExpansionCanvas";
 import { validExpansion } from "./canvas/expansion";
 import { GENERATION_PRESETS, isKleinModel } from "./generation/presets";
-import { Operation, operationHint, taskFor } from "./generation/operation";
+import { Operation, isWholeImage, operationHint, taskFor } from "./generation/operation";
 import { SettingsControls, defaultSettings, settingsSummary } from "./components/EditorSettings";
 import { Icon } from "./components/Icon";
 import { ControlDialog } from "./components/ControlDialog";
@@ -98,6 +98,8 @@ export default function App() {
   const [layerResult, setLayerResult] = useState<LayerResult | null>(null);
   const [generationPreviewUrl, setGenerationPreviewUrl] = useState<string | null>(null);
   const composite = useRef<{ key: string; file: File } | null>(null);
+  /** Start-screen references behind the proposals under review. */
+  const generationReferences = useRef<number[]>([]);
   const refs = useReferences(document?.id ?? null, setError);
   // Layer saves move the revision on before React re-renders; requests read it here.
   const documentRef = useRef<DocumentRecord | null>(document);
@@ -119,10 +121,10 @@ export default function App() {
   const previewUrl = chosen && !compare ? layerResult?.kind === "generation" && document
     ? generationPreviewUrl : proposalUrls[selected] : null;
   const task = taskFor(operation);
-  // References apply to Replace edits only; Remove and Expand ignore them.
-  const references = operation === "replace" && source ? refs.active : [];
+  // References place people in a selection (Replace), the whole picture (Edit) or a new image (Generate).
+  const references = ((operation === "replace" || operation === "edit") && source) || operation === "generate" ? refs.active : [];
   const referenceNeedsQuality = references.length > 0 && !isKleinModel(settings.model_name);
-  const activeLayer = operation === "expand" || operation === "generate" ? null : layers.active;
+  const activeLayer = operation === "expand" || isWholeImage(operation) ? null : layers.active;
   const blending = layers.layers.find(layer => layer.id === blendTarget && layer.visible) ?? null;
   const cudaBlocked = !!system && (!system.torch_available || (system.preferred_device === "cuda" && !system.cuda_available && !system.allow_cpu_generation));
 
@@ -286,9 +288,11 @@ export default function App() {
     if (!current.current_image_url) throw new Error("This document has no image.");
     stage(await fileFromUrl(fileUrl(current.current_image_url), current.name), current);
   }
-  async function openGeneration(generation: GenerationRecord) {
+  /** Opens a result as a document; start-screen references it used are copied along. */
+  async function openGeneration(generation: GenerationRecord, referenceIds: number[] = []) {
     const record = await importGeneration(generation.id);
     if (!record.current_image_url) throw new Error("This document has no image.");
+    if (referenceIds.length) await copyReferences(record.id, referenceIds);
     stage(await fileFromUrl(fileUrl(record.current_image_url), record.name), record);
     setSideTab("layers"); collapsePanel(false);
   }
@@ -313,12 +317,12 @@ export default function App() {
   }
   function chooseTool(next: CanvasTool) {
     setTool(next);
-    if (operation === "expand" || operation === "generate") { clearSelection(); setOperation("replace"); }
+    if (operation === "expand" || isWholeImage(operation)) { clearSelection(); setOperation("replace"); }
   }
-  function chooseOperation(next: "generate" | "replace" | "remove") {
-    if (next === "generate") {
+  function chooseOperation(next: "generate" | "edit" | "replace" | "remove") {
+    if (isWholeImage(next)) {
       layers.select(null); clearSelection();
-      if (!models.find(model => model.name === settings.model_name)?.capabilities.includes("text-to-image")) {
+      if (!models.find(model => model.name === settings.model_name)?.capabilities.includes(taskFor(next))) {
         setSettings(current => ({ ...current, preset: "quality", model_name: defaultSettings.model_name, steps: defaultSettings.steps, guidance: defaultSettings.guidance }));
       }
     }
@@ -326,14 +330,14 @@ export default function App() {
   }
   function selectLayer(id: string | null) {
     layers.select(id);
-    if (id) { setTool("transform"); if (operation === "expand" || operation === "generate") setOperation("replace"); }
+    if (id) { setTool("transform"); if (operation === "expand" || isWholeImage(operation)) setOperation("replace"); }
   }
   async function addLayerImages(files: File[]) {
     setSideTab("layers"); collapsePanel(false);
     await layers.settled();
     await layers.addImages(files);
     setTool("transform");
-    if (operation === "expand" || operation === "generate") setOperation("replace");
+    if (operation === "expand" || isWholeImage(operation)) setOperation("replace");
   }
   async function copySelectionToLayer() {
     if (!source || !mask || !size || locked) return;
@@ -403,7 +407,9 @@ export default function App() {
     const wasActive = refs.active.some(item => item.id === id);
     if (!refs.toggle(id)) { setError(`Use up to ${MAX_ACTIVE_REFERENCES} references per edit. Take one out first.`); return; }
     if (wasActive) return;
-    if (operation !== "replace") setOperation("replace");
+    // Without a picture, references compose a new image.
+    if (!source) setOperation("generate");
+    else if (operation !== "replace" && !isWholeImage(operation)) setOperation("replace");
     // References need FLUX.2 Klein; two proposals make a good likeness easy to pick.
     setSettings(current => {
       const quality = isKleinModel(current.model_name) ? {} : { preset: "quality" as const, model_name: GENERATION_PRESETS.quality.modelName, steps: GENERATION_PRESETS.quality.steps, guidance: GENERATION_PRESETS.quality.guidance };
@@ -453,8 +459,17 @@ export default function App() {
       }
       const parameters = { prompt, negative_prompt: settings.negative_prompt || undefined, model_name: settings.model_name, runtime_mode: settings.runtime_mode, seed: settings.seed ? Number(settings.seed) : undefined, steps: settings.steps, guidance: settings.guidance, count: settings.count };
       if (document && task !== "outpaint" && layers.layers.length >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one before generating.`);
-      if (task === "text-to-image") queued(await generateImage({ ...parameters, width: settings.width, height: settings.height }), null,
-        document ? { result: { kind: "generation", name: resultName(null, operation, prompt) } } : {});
+      if (task === "text-to-image") {
+        const referenceIds = references.map(item => item.id);
+        generationReferences.current = document ? [] : referenceIds;
+        queued(await generateImage({ ...parameters, width: settings.width, height: settings.height, reference_ids: referenceIds }), null,
+          document ? { result: { kind: "generation", name: resultName(null, operation, prompt) } } : {});
+      }
+      else if (task === "edit" && source && document) {
+        // The AI sees every visible layer; the result covers the canvas as a new layer.
+        queued(await editWholeImage(await editImage(), { ...parameters, reference_ids: references.map(item => item.id) }), null,
+          { result: { kind: "generation", name: resultName(null, operation, prompt) } });
+      }
       else if (task === "outpaint" && source && size && validExpansion(size, expansion)) queued(await outpaintImage(source, { ...parameters, ...expansion }), "outpaint", { layerOffset: { x: expansion.left, y: expansion.top } });
       else if (source && mask && document) {
         // Every regional edit becomes a layer over the picture the AI saw.
@@ -481,7 +496,11 @@ export default function App() {
       else if (document && proposal) {
         const result = await acceptAlternative(document.id, proposal.id, proposal.alternatives[selected].id);
         await openSaved(result); await refresh();
-      } else if (chosen) { await openGeneration(chosen); await refresh(); }
+      } else if (chosen) {
+        // Only references still on the start screen can come along.
+        const used = generationReferences.current.filter(id => refs.references.some(item => item.id === id));
+        await openGeneration(chosen, used); await refresh();
+      }
     });
   }
   function discard() { setAlternatives([]); setProposal(null); setLayerResult(null); setCompare(false); }
@@ -588,15 +607,15 @@ export default function App() {
   const expansionValid = !!size && validExpansion(size, expansion);
   const canSubmit = !locked && online && !cudaBlocked && (task === "outpaint"
     ? expansionValid && !!settings.prompt.trim()
-    : (operation === "remove" || !!settings.prompt.trim()) && (task === "text-to-image" || !!mask) && !referenceNeedsQuality);
+    : (operation === "remove" || !!settings.prompt.trim()) && (task === "text-to-image" || (task === "edit" && !!source) || !!mask) && !referenceNeedsQuality);
   const hint = activeLayer ? `Editing layer “${activeLayer.name}”. Press Esc for AI edits; they see every visible layer.`
     : referenceNeedsQuality ? "References need the Quality model. Choose Quality in generation settings."
     : blending && mask ? `Blending “${blending.name}” in: the AI redraws it and its edges to fit the scene. Widen the area with the brush if needed.`
-    : operationHint(operation, !!source, !!mask, tool, references.map(item => item.name)) + (source && operation !== "expand" && operation !== "generate" ? " Apply adds the result as a new layer." : "");
+    : operationHint(operation, !!source, !!mask, tool, references.map(item => item.name)) + (source && operation !== "expand" && !isWholeImage(operation) ? " Apply adds the result as a new layer." : "");
   const referenceNote = operation === "expand" ? "References are used for Replace edits. Leave Expand to place one."
     : operation === "remove" && refs.active.length ? "Switch to Replace to place the selected references." : null;
 
-  return <main className={"focus-app" + (document ? " with-references" : "")}>
+  return <main className="focus-app with-references">
     <TopBar document={document} onRename={name => document && setDocument({ ...document, name })} online={online} connecting={connecting} system={system} warmUp={warmUp} locked={locked} canExport={!!source}
       onUndo={() => void perform(() => travel("undo"))} onRedo={() => void perform(() => travel("redo"))}
       onOpen={() => upload.current?.click()} onLibrary={() => setLibraryOpen(true)} onExport={() => void exportImage().catch(err => setError(message(err)))} />
@@ -632,16 +651,16 @@ export default function App() {
         {error && <button className="icon-button" aria-label="Dismiss message" onClick={() => setError(null)}><Icon name="close" /></button>}
       </div>}
     </section>
-    {document && <SidePanel tab={sideTab} onTab={setSideTab} collapsed={panelCollapsed} onCollapsed={collapsePanel} layerCount={layers.layers.length} referenceCount={refs.references.length}>
-      {sideTab === "layers"
+    <SidePanel tab={document ? sideTab : "references"} onTab={setSideTab} collapsed={panelCollapsed} onCollapsed={collapsePanel} layerCount={layers.layers.length} referenceCount={refs.references.length} showLayers={!!document}>
+      {document && sideTab === "layers"
         ? <LayersPanel layers={layers.layers} activeId={activeLayer?.id ?? null} backgroundUrl={sourceUrl} uploading={layers.uploading} disabled={locked}
           canCopySelection={!!mask} onSelect={selectLayer} onAdd={files => void addLayerImages(files)} onCopySelection={() => void copySelectionToLayer()}
           onUpdate={layers.update} onPreview={layers.preview} onRemove={layers.remove} onDuplicate={layers.duplicate} onReorder={layers.reorder}
           onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)} />
-        : <ReferencePanel references={refs.references} activeIds={refs.active.map(item => item.id)} pending={refs.pending} uploading={refs.uploading}
+        : <ReferencePanel references={refs.references} newImage={!document} activeIds={refs.active.map(item => item.id)} pending={refs.pending} uploading={refs.uploading}
           disabled={locked || operation === "expand"} note={referenceNote}
           onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null) chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}
-    </SidePanel>}
+    </SidePanel>
     {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} task={task} disabled={locked} /></ControlDialog>}
     {panel === "expansion" && size && <ExpansionDialog size={size} expansion={expansion} onChange={setExpansion} disabled={locked} onClose={() => setPanel(null)} />}
     {panel === "shortcuts" && <ShortcutsDialog onClose={() => setPanel(null)} />}

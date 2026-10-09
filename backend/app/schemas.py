@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-TaskKind = Literal["text-to-image", "inpaint", "outpaint", "select", "load-model"]
+TaskKind = Literal["text-to-image", "edit", "inpaint", "outpaint", "select", "load-model"]
 JobState = Literal["queued", "running", "cancelling", "cancelled", "completed", "failed"]
 JobPhase = Literal["loading", "warming", "preparing", "generating", "finishing"]
 RuntimeMode = Literal["safe", "balanced", "performance"]
@@ -29,7 +29,7 @@ class LoadModelRequest(BaseModel):
     warm_up: bool = False
 
 
-class TextToImageRequest(BaseModel):
+class PromptRequest(BaseModel):
     prompt: str = Field(min_length=1)
     negative_prompt: str | None = None
     model_name: str = "flux2-klein-9b-nvfp4"
@@ -37,9 +37,27 @@ class TextToImageRequest(BaseModel):
     runtime_mode: RuntimeMode = "balanced"
     steps: int = Field(default=4, ge=1, le=100)
     guidance: float = Field(default=1.0, ge=0.0, le=30.0)
+    count: int = Field(default=1, ge=1, le=4)
+    # People or objects to bring into the image, named in this order.
+    reference_ids: list[Annotated[int, Field(ge=1)]] = Field(default_factory=list, max_length=MAX_REFERENCES_PER_EDIT)
+
+    @field_validator("reference_ids")
+    @classmethod
+    def _unique_references(cls, value: list[int]) -> list[int]:
+        return list(dict.fromkeys(value))
+
+
+class TextToImageRequest(PromptRequest):
     width: int = Field(default=1024, ge=256, le=2048)
     height: int = Field(default=1024, ge=256, le=2048)
-    count: int = Field(default=1, ge=1, le=4)
+
+
+class EditRequest(PromptRequest):
+    """Edits the whole picture by instruction; the result keeps its size."""
+
+
+class CopyReferencesRequest(BaseModel):
+    reference_ids: list[Annotated[int, Field(ge=1)]] = Field(min_length=1, max_length=MAX_REFERENCES_PER_EDIT)
 
 
 class InpaintForm(BaseModel):
@@ -155,7 +173,8 @@ class GenerationRecord(BaseModel):
 
 class ReferenceRecord(BaseModel):
     id: int
-    document_id: int
+    # None for loose references on the start screen.
+    document_id: int | None
     name: str
     width: int
     height: int

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 from contextlib import ExitStack, contextmanager
 from io import BytesIO
 from pathlib import Path
@@ -17,8 +20,8 @@ from app import documents, references, storage
 from app.config import settings
 from app.main import app
 from app.models.flux2_klein import _inpaint_prompt
-from app.schemas import InpaintForm, OutpaintForm
-from app.services import run_inpaint
+from app.schemas import EditRequest, InpaintForm, OutpaintForm, TextToImageRequest
+from app.services import run_image_edit, run_inpaint, run_text_to_image
 
 
 def png(image: Image.Image) -> bytes:
@@ -66,6 +69,41 @@ class ReferenceStorageTests(unittest.TestCase):
             with self.assertRaises(LookupError):
                 references.create_reference(document_id + 99, png(Image.new("RGB", (8, 8))), "x.png")
 
+    def test_loose_references_wait_on_the_start_screen_and_copy_into_a_document(self) -> None:
+        with isolated_data():
+            loose = references.create_reference(None, png(Image.new("RGB", (20, 40), "orange")), "Anna.png")
+            self.assertIsNone(loose["document_id"])
+            references.set_subject(loose["id"], Image.new("RGB", (10, 10), "red"))
+            document_id = new_document()
+            self.assertEqual([item["id"] for item in references.list_references(None)], [loose["id"]])
+            self.assertEqual(references.list_references(document_id), [])
+            [copy] = references.copy_references([loose["id"]], document_id)
+            self.assertEqual((copy["document_id"], copy["name"]), (document_id, "Anna"))
+            self.assertNotEqual(references.model_image_path(copy["id"]), references.model_image_path(loose["id"]))
+            # Deleting the copy keeps the loose original and its files.
+            references.delete_reference(copy["id"])
+            self.assertTrue(references.model_image_path(loose["id"]).is_file())
+            self.assertTrue(references.original_image_path(loose["id"]).is_file())
+            with self.assertRaises(ValueError):
+                references.copy_references([references.create_reference(document_id, png(Image.new("RGB", (8, 8))), "t.png")["id"]], document_id)
+            with self.assertRaises(LookupError):
+                references.copy_references([loose["id"]], document_id + 99)
+
+    def test_older_databases_are_migrated_to_allow_loose_references(self) -> None:
+        with isolated_data():
+            reference_id = references.create_reference(new_document(), png(Image.new("RGB", (8, 8))), "p.png")["id"]
+            with storage.connect() as db:
+                db.executescript(
+                    "CREATE TABLE old AS SELECT * FROM document_references; DROP TABLE document_references;"
+                    + references.REFERENCE_SCHEMA
+                    + "INSERT INTO document_references SELECT * FROM old; DROP TABLE old;"
+                    " DELETE FROM schema_migrations WHERE name = 'references.0002_loose';"
+                )
+                self.assertEqual({row["name"]: row["notnull"] for row in db.execute("PRAGMA table_info(document_references)")}["document_id"], 1)
+            references.ensure_reference_storage()
+            self.assertIsNotNone(references.get_reference(reference_id))
+            self.assertIsNone(references.create_reference(None, png(Image.new("RGB", (8, 8))), "q.png")["document_id"])
+
     def test_model_uses_the_isolated_subject_until_the_background_is_restored(self) -> None:
         with isolated_data():
             reference_id = references.create_reference(new_document(), png(Image.new("RGB", (32, 32), "blue")), "p.png")["id"]
@@ -104,6 +142,21 @@ class ReferenceApiTests(unittest.TestCase):
             self.assertEqual(client.delete(f"/api/v2/references/{reference_id}").status_code, 200)
             self.assertEqual(client.delete(f"/api/v2/references/{reference_id}").status_code, 404)
 
+    def test_loose_references_and_copying_through_the_api(self) -> None:
+        with isolated_data():
+            client = TestClient(app)
+            response = client.post("/api/v2/references", files={"image": ("Anna.png", png(Image.new("RGB", (30, 60))), "image/png")})
+            self.assertEqual(response.status_code, 200)
+            loose_id = response.json()["id"]
+            self.assertEqual([item["id"] for item in client.get("/api/v2/references").json()], [loose_id])
+            document_id = new_document()
+            copied = client.post(f"/api/v2/documents/{document_id}/references/copy", json={"reference_ids": [loose_id]})
+            self.assertEqual(copied.status_code, 200)
+            self.assertEqual(copied.json()[0]["document_id"], document_id)
+            self.assertEqual(len(client.get(f"/api/v2/documents/{document_id}/references").json()), 1)
+            self.assertEqual(client.post("/api/v2/documents/999/references/copy", json={"reference_ids": [loose_id]}).status_code, 404)
+            self.assertEqual(client.post(f"/api/v2/documents/{document_id}/references/copy", json={"reference_ids": [copied.json()[0]["id"]]}).status_code, 422)
+
     def test_isolation_reports_when_no_subject_is_found(self) -> None:
         with isolated_data():
             reference_id = references.create_reference(new_document(), png(Image.new("RGB", (32, 32))), "p.png")["id"]
@@ -131,7 +184,78 @@ class ReferenceApiTests(unittest.TestCase):
                     submit.assert_not_called()
 
 
+    def test_generation_rejects_missing_references_and_non_klein_models_before_queueing(self) -> None:
+        with isolated_data():
+            reference_id = references.create_reference(None, png(Image.new("RGB", (8, 8))), "p.png")["id"]
+            for fields in ({"reference_ids": [reference_id, reference_id + 5]}, {"reference_ids": [reference_id], "model_name": "z-image-turbo"}):
+                with self.subTest(fields=fields), patch("app.main.jobs.submit") as submit:
+                    response = TestClient(app).post("/api/generate", json={"prompt": "on a roller coaster", **fields})
+                    self.assertEqual(response.status_code, 422)
+                    submit.assert_not_called()
+
+
+    def test_whole_image_edits_need_klein_and_existing_references_before_queueing(self) -> None:
+        with isolated_data():
+            reference_id = references.create_reference(None, png(Image.new("RGB", (8, 8))), "p.png")["id"]
+            client = TestClient(app)
+            picture = ("picture.png", png(Image.new("RGB", (64, 48))), "image/png")
+            for fields in ({"model_name": "z-image-turbo"}, {"reference_ids": [reference_id + 5]}, {"prompt": ""}):
+                with self.subTest(fields=fields), patch("app.main.jobs.submit") as submit:
+                    parameters = json.dumps({"prompt": "make it night", **fields})
+                    self.assertEqual(client.post("/api/edit", files={"image": picture}, data={"parameters": parameters}).status_code, 422)
+                    submit.assert_not_called()
+            with patch("app.main.jobs.submit", return_value=SimpleNamespace(id="job", kind="edit", status="queued")) as submit:
+                parameters = json.dumps({"prompt": "make it night", "reference_ids": [reference_id]})
+                response = client.post("/api/edit", files={"image": picture}, data={"parameters": parameters})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(submit.call_args.args[0], "edit")
+
+
 class ReferenceGenerationTests(unittest.TestCase):
+    def test_whole_image_edits_keep_the_picture_and_record_their_inputs(self) -> None:
+        with isolated_data():
+            anna = references.create_reference(None, png(Image.new("RGB", (20, 40), "orange")), "Anna.png")["id"]
+            provider = MagicMock()
+
+            def fake_edit(_request, input_path, output_path, _control, **kwargs):
+                with Image.open(input_path) as picture:
+                    Image.new("RGB", picture.size).save(output_path)
+                return 7, picture.width
+
+            provider.edit.side_effect = fake_edit
+            with patch("app.services.registry.activate", return_value=provider):
+                ids = run_image_edit(EditRequest(prompt="make it night", reference_ids=[anna], count=2), png(Image.new("RGB", (90, 60))), "photo.png", MagicMock())
+                self.assertEqual([item.name for item in provider.edit.call_args.kwargs["references"]], ["Anna"])
+                record = storage.get_generation(ids[1])
+                self.assertEqual((record["task"], record["width"], record["height"]), ("edit", 90, 60))
+                self.assertTrue(record["input_image_path"])
+                self.assertEqual(len(record["reference_image_paths"]), 1)
+                provider.edit.side_effect = RuntimeError("out of memory")
+                outputs = len(list(settings.output_dir.iterdir()))
+                with self.assertRaises(RuntimeError):
+                    run_image_edit(EditRequest(prompt="add snow"), png(Image.new("RGB", (90, 60))), "photo.png", MagicMock())
+                self.assertEqual(len(list(settings.output_dir.iterdir())), outputs)
+
+    def test_generation_references_reach_the_provider_in_order_and_are_recorded(self) -> None:
+        with isolated_data():
+            anna = references.create_reference(None, png(Image.new("RGB", (20, 40), "orange")), "Anna.png")["id"]
+            tom = references.create_reference(None, png(Image.new("RGB", (30, 30), "blue")), "Tom.png")["id"]
+            provider = MagicMock()
+
+            def fake_generate(_request, output_path, _control, **kwargs):
+                Image.new("RGB", (32, 32)).save(output_path)
+                return 1, 32
+
+            provider.generate.side_effect = fake_generate
+            with patch("app.services.registry.activate", return_value=provider):
+                ids = run_text_to_image(TextToImageRequest(prompt="on a roller coaster", reference_ids=[anna, tom], count=2), MagicMock())
+                passed = provider.generate.call_args.kwargs["references"]
+                self.assertEqual([item.name for item in passed], ["Anna", "Tom"])
+                self.assertEqual(len(storage.get_generation(ids[1])["reference_image_paths"]), 2)
+                provider.generate.reset_mock()
+                run_text_to_image(TextToImageRequest(prompt="a garden"), MagicMock())
+                self.assertNotIn("references", provider.generate.call_args.kwargs)
+
     def test_references_reach_the_provider_in_order_and_are_recorded(self) -> None:
         with isolated_data():
             document_id = new_document()

@@ -1,8 +1,14 @@
-"""Concept images attached to a document, used as appearance references."""
+"""Concept images used as appearance references.
+
+Most belong to a document. Loose ones, without a document, wait on the start
+screen for a new image; using them copies them into the document it becomes.
+"""
 from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+from shutil import copyfile
+import sqlite3
 from sqlite3 import Row
 from typing import Any
 from uuid import uuid4
@@ -36,8 +42,33 @@ MAX_PIXELS = 16_777_216
 SUBJECT_BACKGROUND = (232, 232, 232)
 
 
+def _allow_loose_references(db: sqlite3.Connection) -> None:
+    """SQLite cannot drop NOT NULL in place, so the table is rebuilt once."""
+    columns = {row["name"]: row for row in db.execute("PRAGMA table_info(document_references)")}
+    if not columns["document_id"]["notnull"]:
+        return
+    db.executescript("""
+        CREATE TABLE document_references_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER,
+            name TEXT NOT NULL,
+            image_path TEXT NOT NULL,
+            subject_path TEXT,
+            width INTEGER NOT NULL,
+            height INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY(document_id) REFERENCES documents(id)
+        );
+        INSERT INTO document_references_new SELECT id, document_id, name, image_path, subject_path, width, height, created_at FROM document_references;
+        DROP TABLE document_references;
+        ALTER TABLE document_references_new RENAME TO document_references;
+        CREATE INDEX IF NOT EXISTS document_references_document_idx ON document_references(document_id, id);
+    """)
+
+
 REFERENCE_MIGRATIONS: list[storage.Migration] = [
     ("references.0001_create", lambda db: db.executescript(REFERENCE_SCHEMA)),
+    ("references.0002_loose", _allow_loose_references),
 ]
 
 
@@ -47,10 +78,11 @@ def ensure_reference_storage() -> None:
         storage.apply_migrations(db, REFERENCE_MIGRATIONS)
 
 
-def list_references(document_id: int) -> list[dict[str, Any]]:
+def list_references(document_id: int | None) -> list[dict[str, Any]]:
+    """A document's references, or the loose ones for ``None``."""
     with storage.connect() as db:
         rows = db.execute(
-            "SELECT * FROM document_references WHERE document_id = ? ORDER BY id",
+            "SELECT * FROM document_references WHERE document_id IS ? ORDER BY id",
             (document_id,),
         ).fetchall()
     return [_record(row) for row in rows]
@@ -62,13 +94,12 @@ def get_reference(reference_id: int) -> dict[str, Any] | None:
     return _record(row) if row else None
 
 
-def create_reference(document_id: int, content: bytes, filename: str | None) -> dict[str, Any]:
+def create_reference(document_id: int | None, content: bytes, filename: str | None) -> dict[str, Any]:
     with storage.connect() as db:
-        if db.execute("SELECT 1 FROM documents WHERE id = ?", (document_id,)).fetchone() is None:
-            raise LookupError("Document not found")
-        count = db.execute("SELECT COUNT(*) FROM document_references WHERE document_id = ?", (document_id,)).fetchone()[0]
+        count = _count(db, document_id)
     if count >= MAX_REFERENCES:
-        raise ValueError(f"A document can hold up to {MAX_REFERENCES} references")
+        holder = "A document" if document_id is not None else "The start screen"
+        raise ValueError(f"{holder} can hold up to {MAX_REFERENCES} references")
     path = settings.reference_dir / f"reference-{uuid4().hex}.png"
     try:
         # Normalize to PNG: browsers and the model see the same pixels, and
@@ -89,6 +120,49 @@ def create_reference(document_id: int, content: bytes, filename: str | None) -> 
         path.unlink(missing_ok=True)
         raise
     return get_reference(reference_id) or {}
+
+
+def copy_references(reference_ids: list[int], document_id: int) -> list[dict[str, Any]]:
+    """Copies loose references into a document, with their own files.
+
+    The loose originals stay available for the next new image; separate files
+    keep deleting either copy from removing the other's image.
+    """
+    sources = [get_reference(reference_id) for reference_id in dict.fromkeys(reference_ids)]
+    if any(source is None for source in sources):
+        raise LookupError("Reference not found")
+    if any(source["document_id"] is not None for source in sources):
+        raise ValueError("Only references from the start screen can be copied")
+    with storage.connect() as db:
+        count = _count(db, document_id)
+    if count + len(sources) > MAX_REFERENCES:
+        raise ValueError(f"A document can hold up to {MAX_REFERENCES} references")
+    copied: list[int] = []
+    created: list[Path] = []
+    try:
+        for source in sources:
+            paths: dict[str, str] = {}
+            for column, prefix in (("image_path", "reference"), ("subject_path", "subject")):
+                if source[column]:
+                    target = settings.reference_dir / f"{prefix}-{uuid4().hex}.png"
+                    copyfile(_absolute(source[column]), target)
+                    created.append(target)
+                    paths[column] = storage.to_relative(target)
+            with storage.connect() as db:
+                cursor = db.execute(
+                    "INSERT INTO document_references (document_id, name, image_path, subject_path, width, height) VALUES (?, ?, ?, ?, ?, ?)",
+                    (document_id, source["name"], paths["image_path"], paths.get("subject_path"), source["width"], source["height"]),
+                )
+                db.commit()
+                copied.append(int(cursor.lastrowid))
+    except BaseException:
+        with storage.connect() as db:
+            db.executemany("DELETE FROM document_references WHERE id = ?", [(reference_id,) for reference_id in copied])
+            db.commit()
+        for path in created:
+            path.unlink(missing_ok=True)
+        raise
+    return [record for record in (get_reference(reference_id) for reference_id in copied) if record]
 
 
 def set_subject(reference_id: int, subject: Image.Image) -> dict[str, Any]:
@@ -162,6 +236,12 @@ def model_image_path(reference_id: int) -> Path:
     if reference is None:
         raise LookupError("Reference not found")
     return _absolute(reference["subject_path"] or reference["image_path"])
+
+
+def _count(db: sqlite3.Connection, document_id: int | None) -> int:
+    if document_id is not None and db.execute("SELECT 1 FROM documents WHERE id = ?", (document_id,)).fetchone() is None:
+        raise LookupError("Document not found")
+    return db.execute("SELECT COUNT(*) FROM document_references WHERE document_id IS ?", (document_id,)).fetchone()[0]
 
 
 def _record(row: Row) -> dict[str, Any]:

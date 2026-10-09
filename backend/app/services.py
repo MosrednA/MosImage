@@ -17,13 +17,16 @@ from .jobs import JobControl
 from .models.base import ModelReference
 from .models.registry import registry
 from .models.flux2_klein_nvfp4 import KLEIN_MODELS
-from .schemas import InpaintForm, OutpaintForm, TextToImageRequest
+from .schemas import EditRequest, InpaintForm, OutpaintForm, TextToImageRequest
 
 
 def run_text_to_image(request: TextToImageRequest, control: JobControl) -> list[int]:
     provider = registry.activate(request.model_name)
     output_paths: list[Path] = []
     generation_values: list[dict[str, object]] = []
+    model_references = _model_references(request.reference_ids)
+    # Only reference-aware providers receive the extra argument.
+    extra = {"references": model_references} if model_references else {}
     try:
         for index in range(request.count):
             output_path = _new_image_path(settings.output_dir, "output")
@@ -31,7 +34,7 @@ def run_text_to_image(request: TextToImageRequest, control: JobControl) -> list[
             iteration = request.model_copy(
                 update={"seed": _alternative_seed(request.seed, index), "count": 1}
             )
-            seed, _ = provider.generate(iteration, output_path, control.slice(index, request.count))
+            seed, _ = provider.generate(iteration, output_path, control.slice(index, request.count), **extra)
             control.raise_if_cancelled()
             generation_values.append(
                 {
@@ -49,6 +52,7 @@ def run_text_to_image(request: TextToImageRequest, control: JobControl) -> list[
                     "input_image_path": None,
                     "mask_image_path": None,
                     "output_image_path": storage.to_relative(output_path),
+                    "reference_image_paths": json.dumps([storage.to_relative(reference.path) for reference in model_references]) if model_references else None,
                 }
             )
         control.raise_if_cancelled()
@@ -58,6 +62,59 @@ def run_text_to_image(request: TextToImageRequest, control: JobControl) -> list[
         for output_path in output_paths:
             output_path.unlink(missing_ok=True)
         raise
+
+
+def run_image_edit(request: EditRequest, image_bytes: bytes, image_name: str | None, control: JobControl) -> list[int]:
+    """Edits the whole picture by instruction; every proposal keeps the picture's size."""
+    provider = registry.activate(request.model_name)
+    input_path = _save_bytes(image_bytes, settings.input_dir, "input", image_name)
+    output_paths: list[Path] = []
+    generation_values: list[dict[str, object]] = []
+    model_references = _model_references(request.reference_ids)
+    extra = {"references": model_references} if model_references else {}
+    try:
+        with Image.open(input_path) as picture:
+            width, height = picture.size
+        for index in range(request.count):
+            output_path = _new_image_path(settings.output_dir, "output")
+            output_paths.append(output_path)
+            iteration = request.model_copy(update={"seed": _alternative_seed(request.seed, index), "count": 1})
+            seed, _ = provider.edit(iteration, input_path, output_path, control.slice(index, request.count), **extra)
+            control.raise_if_cancelled()
+            generation_values.append(
+                {
+                    "task": "edit",
+                    "prompt": request.prompt,
+                    "negative_prompt": request.negative_prompt,
+                    "model_name": request.model_name,
+                    "runtime_mode": request.runtime_mode,
+                    "seed": seed,
+                    "steps": request.steps,
+                    "guidance": request.guidance,
+                    "width": width,
+                    "height": height,
+                    "strength": None,
+                    "input_image_path": storage.to_relative(input_path),
+                    "mask_image_path": None,
+                    "output_image_path": storage.to_relative(output_path),
+                    "reference_image_paths": json.dumps([storage.to_relative(reference.path) for reference in model_references]) if model_references else None,
+                }
+            )
+        control.raise_if_cancelled()
+        return storage.create_generations(generation_values)
+    except BaseException:
+        provider.unload()
+        for path in (input_path, *output_paths):
+            path.unlink(missing_ok=True)
+        raise
+
+
+def _model_references(reference_ids: list[int]) -> list[ModelReference]:
+    return [
+        ModelReference(name=record["name"], path=references.model_image_path(record["id"]))
+        for record in (references.get_reference(reference_id) for reference_id in reference_ids)
+        if record is not None
+    ]
 
 
 def run_inpaint(
@@ -106,11 +163,7 @@ def _run_masked_edit(
     mask_path = _save_bytes(mask_bytes, settings.mask_dir, "mask", mask_name)
     output_paths: list[Path] = []
     generation_values: list[dict[str, object]] = []
-    model_references = [
-        ModelReference(name=record["name"], path=references.model_image_path(record["id"]))
-        for record in (references.get_reference(reference_id) for reference_id in request.reference_ids)
-        if record is not None
-    ] if task == "inpaint" else []
+    model_references = _model_references(request.reference_ids) if task == "inpaint" else []
 
     try:
         with TemporaryDirectory(prefix="inpaint-", dir=settings.data_dir) as temporary_dir:

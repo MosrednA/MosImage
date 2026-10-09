@@ -11,10 +11,10 @@ from PIL import Image
 from app.config import settings
 from app.jobs import JobCancelled
 from app.models.base import ModelReference
-from app.models.flux2_klein import MULTI_REFERENCE_AREA, REFERENCE_BACKGROUND, Flux2KleinProvider, _inpaint_prompt
+from app.models.flux2_klein import MULTI_REFERENCE_AREA, REFERENCE_BACKGROUND, Flux2KleinProvider, _edit_prompt, _inpaint_prompt
 from app.models.registry import ModelRegistry
 from app.models.z_image import ZImageTurboProvider
-from app.schemas import InpaintForm, LoadModelRequest
+from app.schemas import EditRequest, InpaintForm, LoadModelRequest, TextToImageRequest
 
 
 class Flux2KleinPlacementTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class Flux2KleinPlacementTests(unittest.TestCase):
     def test_model_reports_native_editing_capabilities(self) -> None:
         info = self.provider.info()
         self.assertEqual(info.name, "flux2-klein-4b")
-        self.assertEqual(info.capabilities, ["text-to-image", "inpaint"])
+        self.assertEqual(info.capabilities, ["text-to-image", "edit", "inpaint"])
 
     def test_switching_to_inpaint_shares_the_loaded_weights_without_reloading(self) -> None:
         generation = MagicMock()
@@ -128,6 +128,58 @@ class Flux2KleinPlacementTests(unittest.TestCase):
                 self.assertIn("from the reference image", pipe.encode_prompt.call_args.kwargs["prompt"])
                 self.provider.inpaint(InpaintForm(prompt="grass", edit_operation="remove"), root / "source.png", root / "mask.png", root / "output.png", MagicMock(), references=reference)
                 self.assertNotIn("image_reference", pipe.call_args.kwargs)
+
+    def test_whole_image_edit_leads_with_the_picture_and_keeps_its_size(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (1600, 1200), "green").save(root / "picture.png")
+            Image.new("RGB", (600, 1200), "orange").save(root / "anna.png")
+            pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (1184, 880))]))
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe) as load:
+                self.provider.edit(EditRequest(prompt="Make it night."), root / "picture.png", root / "output.png", MagicMock(),
+                                   references=[ModelReference("Anna", root / "anna.png")])
+                self.assertEqual(load.call_args.args[1], "text-to-image")
+                arguments = pipe.call_args.kwargs
+                picture, reference = arguments["image"]
+                # About one megapixel, sides in multiples of 16, the picture's aspect ratio.
+                self.assertEqual(picture.size, (arguments["width"], arguments["height"]))
+                self.assertEqual((picture.width % 16, picture.height % 16), (0, 0))
+                self.assertAlmostEqual(picture.width / picture.height, 4 / 3, delta=0.02)
+                self.assertLessEqual(abs(picture.width * picture.height - 1024 * 1024), 1024 * 32)
+                self.assertEqual(reference.size, (512, 1024))
+                prompt = pipe.encode_prompt.call_args.kwargs["prompt"]
+                self.assertTrue(prompt.startswith("Edit image 1: Make it night."))
+                self.assertIn("Anna is the person or object from image 2", prompt)
+                with Image.open(root / "output.png") as output:
+                    self.assertEqual(output.size, (1600, 1200))
+                self.provider.edit(EditRequest(prompt="add snow"), root / "picture.png", root / "output.png", MagicMock())
+                self.assertEqual(len(pipe.call_args.kwargs["image"]), 1)
+                self.assertNotIn("image 2", pipe.encode_prompt.call_args.kwargs["prompt"])
+
+    def test_edit_prompt_numbers_several_references_after_the_picture(self) -> None:
+        prompt = _edit_prompt("Put them on the beach", ["Anna", "Reference 2", "Tom"])
+        self.assertIn("Images 2 to 4 show the people or objects to bring in: Anna is image 2, Tom is image 4.", prompt)
+        self.assertTrue(prompt.endswith("including each person's face and identity."))
+
+    def test_generation_composes_references_into_a_new_image(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (600, 1200), "orange").save(root / "anna.png")
+            Image.new("RGB", (900, 900), "blue").save(root / "tom.png")
+            references = [ModelReference("Anna", root / "anna.png"), ModelReference("Tom", root / "tom.png")]
+            pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (64, 48))]))
+            request = TextToImageRequest(prompt="Anna and Tom riding a roller coaster", width=1216, height=832)
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe):
+                self.provider.generate(request, root / "output.png", MagicMock(), references=references)
+                arguments = pipe.call_args.kwargs
+                self.assertEqual(len(arguments["image"]), 2)
+                self.assertEqual(arguments["image"][0].size, arguments["image"][1].size)
+                self.assertEqual((arguments["width"], arguments["height"]), (1216, 832))
+                prompt = pipe.encode_prompt.call_args.kwargs["prompt"]
+                self.assertIn("Anna is reference image 1, Tom is reference image 2", prompt)
+                self.provider.generate(TextToImageRequest(prompt="a quiet garden"), root / "output.png", MagicMock())
+                self.assertNotIn("image", pipe.call_args.kwargs)
+                self.assertEqual(pipe.encode_prompt.call_args.kwargs["prompt"], "a quiet garden")
 
     def test_several_references_share_one_padded_size_and_are_named_in_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

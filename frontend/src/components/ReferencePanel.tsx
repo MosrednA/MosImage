@@ -5,6 +5,8 @@ import { Icon } from "./Icon";
 
 interface Props {
   references: ReferenceRecord[];
+  /** On the start screen references compose a new image instead of filling a selection. */
+  newImage?: boolean;
   /** References used in the next edit, in prompt order. */
   activeIds: readonly number[];
   pending: ReadonlySet<number>;
@@ -48,7 +50,7 @@ export function ReferencePanel(props: Props) {
       {!references.length && !uploading && <button className="reference-empty" disabled={disabled} onClick={() => picker.current?.click()}>
         <Icon name="person" />
         <strong>Bring someone in</strong>
-        <span>Add a photo of a person, pet or object. Pick it, select where it goes, then describe what it does.</span>
+        <span>{props.newImage ? "Add photos of people, pets or objects. Pick up to three, then describe the scene they are in." : "Add a photo of a person, pet or object. Pick it, select where it goes, then describe what it does."}</span>
         <small>Drop images here or click to browse</small>
       </button>}
       {references.map(item => {

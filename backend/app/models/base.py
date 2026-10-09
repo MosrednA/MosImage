@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Protocol, Sequence
 
 from app.jobs import JobControl
-from app.schemas import InpaintForm, LoadModelRequest, ModelInfo, TextToImageRequest
+from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, TextToImageRequest
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,17 @@ class ImageModelProvider(Protocol):
         request: InpaintForm,
         input_path: Path,
         mask_path: Path,
+        output_path: Path,
+        control: JobControl,
+        references: Sequence[ModelReference] = (),
+    ) -> tuple[int, int]:
+        ...
+
+    # Only providers with the "edit" capability implement whole-image edits.
+    def edit(
+        self,
+        request: EditRequest,
+        input_path: Path,
         output_path: Path,
         control: JobControl,
         references: Sequence[ModelReference] = (),

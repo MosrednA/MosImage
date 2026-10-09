@@ -1,11 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { joinNames, operationHint, promptPlaceholder } from "./operation";
+import { isWholeImage, joinNames, operationHint, promptPlaceholder, submitLabel, taskFor } from "./operation";
 
 describe("reference guidance", () => {
   it("explains generation layers without asking for a selection", () => {
-    expect(promptPlaceholder("generate", true, ["Anna"])).toBe("Describe a new image to add as a layer…");
+    expect(promptPlaceholder("generate", true)).toBe("Describe a new image to add as a layer…");
+    expect(promptPlaceholder("generate", true, ["Anna"])).toBe("Where is Anna? e.g. riding a roller coaster together");
     expect(operationHint("generate", true, false, "object")).toContain("new layer");
     expect(operationHint("generate", false, false, "object")).toContain("Describe a new image");
+  });
+  it("edits the whole picture, with or without references", () => {
+    expect(taskFor("edit")).toBe("edit");
+    expect(submitLabel("edit")).toBe("Edit");
+    expect(isWholeImage("edit")).toBe(true);
+    expect(isWholeImage("replace")).toBe(false);
+    expect(promptPlaceholder("edit", true)).toBe("How should the picture change? e.g. make it a snowy night");
+    expect(promptPlaceholder("edit", true, ["Anna"])).toContain("put Anna next to the fountain");
+    expect(operationHint("edit", true, false, "object")).toContain("Faces and everything you don't mention stay as they are.");
+    expect(operationHint("edit", true, true, "object", ["Anna", "Tom"])).toContain("Anna and Tom keep the look of their reference.");
+  });
+  it("composes references into a new image", () => {
+    expect(promptPlaceholder("generate", false, ["Anna", "Tom"])).toBe("Where are Anna and Tom? e.g. riding a roller coaster together");
+    expect(operationHint("generate", false, false, "object", ["Anna", "Tom"])).toBe("Describe a new scene with Anna and Tom; each keeps the look of their reference.");
+    expect(operationHint("generate", true, false, "object", ["Anna"])).toContain("new layer");
   });
   it("asks where the reference goes before a selection exists", () => {
     expect(operationHint("replace", true, false, "rectangle", ["Anna"])).toBe("Select where Anna should appear. Leave room for the whole body and its shadow.");

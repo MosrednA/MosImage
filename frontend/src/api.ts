@@ -1,4 +1,4 @@
-export type ImageTask = "text-to-image" | "inpaint" | "outpaint";
+export type ImageTask = "text-to-image" | "edit" | "inpaint" | "outpaint";
 export type TaskKind = ImageTask | "select" | "load-model";
 export type JobState = "queued" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
 export type RuntimeMode = "safe" | "balanced" | "performance";
@@ -105,6 +105,8 @@ export interface TextToImageRequest {
   width: number;
   height: number;
   count: number;
+  /** People or objects to compose into the new image, in prompt order. */
+  reference_ids?: number[];
 }
 
 export interface DocumentRecord {
@@ -149,7 +151,8 @@ export interface LayerAsset { path: string; url: string; width: number; height: 
 
 export interface ReferenceRecord {
   id: number;
-  document_id: number;
+  /** Null for loose references on the start screen. */
+  document_id: number | null;
   name: string;
   width: number;
   height: number;
@@ -236,6 +239,14 @@ export async function loadModel(payload: LoadModelRequest): Promise<JobResponse>
   });
 }
 
+/** Edits the whole picture by instruction; proposals keep the picture's size. */
+export async function editWholeImage(image: File, parameters: Omit<TextToImageRequest, "width" | "height">): Promise<JobResponse> {
+  const form = new FormData();
+  form.set("image", image);
+  form.set("parameters", JSON.stringify(parameters));
+  return request("/api/edit", { method: "POST", body: form });
+}
+
 export async function inpaintImage(form: FormData): Promise<JobResponse> {
   return request("/api/inpaint", {
     method: "POST",
@@ -320,8 +331,18 @@ export async function acceptAlternative(
   );
 }
 
-export async function listReferences(documentId: number): Promise<ReferenceRecord[]> {
-  return request(`/api/v2/documents/${documentId}/references`);
+/** A document's references, or the start screen's loose ones for `null`. */
+export async function listReferences(documentId: number | null): Promise<ReferenceRecord[]> {
+  return request(documentId === null ? "/api/v2/references" : `/api/v2/documents/${documentId}/references`);
+}
+
+/** Copies start-screen references into the document a new image became. */
+export async function copyReferences(documentId: number, referenceIds: number[]): Promise<ReferenceRecord[]> {
+  return request(`/api/v2/documents/${documentId}/references/copy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reference_ids: referenceIds }),
+  });
 }
 
 export async function uploadLayerAsset(documentId: number, image: Blob, kind: "image" | "mask", filename = "layer.png"): Promise<LayerAsset> {
@@ -342,10 +363,10 @@ export async function saveLayers(documentId: number, baseRevisionId: number, lay
   });
 }
 
-export async function addReference(documentId: number, image: File): Promise<ReferenceRecord> {
+export async function addReference(documentId: number | null, image: File): Promise<ReferenceRecord> {
   const form = new FormData();
   form.set("image", image);
-  return request(`/api/v2/documents/${documentId}/references`, { method: "POST", body: form });
+  return request(documentId === null ? "/api/v2/references" : `/api/v2/documents/${documentId}/references`, { method: "POST", body: form });
 }
 
 export async function deleteReference(referenceId: number): Promise<void> {

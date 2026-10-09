@@ -5,7 +5,10 @@ const ACCEPTED = new Set(["image/png", "image/jpeg", "image/webp"]);
 /** Matches the backend limit; more references dilute each likeness. */
 export const MAX_ACTIVE_REFERENCES = 3;
 
-/** Concept images of the open document, plus the ones used for the next edit, in order. */
+/**
+ * Concept images of the open document, or the start screen's loose ones
+ * without a document, plus the ones used for the next edit, in order.
+ */
 export function useReferences(documentId: number | null, onError: (message: string) => void) {
   const [references, setReferences] = useState<ReferenceRecord[]>([]);
   const [activeIds, setActiveIds] = useState<number[]>([]);
@@ -16,7 +19,6 @@ export function useReferences(documentId: number | null, onError: (message: stri
 
   useEffect(() => {
     setReferences([]); setActiveIds([]); setPending(new Set()); setUploading(0);
-    if (documentId === null) return;
     let disposed = false;
     listReferences(documentId)
       .then(items => { if (!disposed) setReferences(items); })
@@ -27,7 +29,6 @@ export function useReferences(documentId: number | null, onError: (message: stri
   /** Uploads the images and returns the one to use right away, if any. */
   async function add(files: File[]): Promise<number | null> {
     const documentAtStart = documentId;
-    if (documentAtStart === null) return null;
     const images = files.filter(file => ACCEPTED.has(file.type));
     if (images.length < files.length) onError("References can be PNG, JPG or WebP images.");
     if (!images.length) return null;

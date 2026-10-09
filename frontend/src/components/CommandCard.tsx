@@ -5,7 +5,7 @@ export interface ActiveReference { id: number; name: string; imageUrl: string }
 
 interface Props {
   operation: Operation;
-  onOperation: (operation: "generate" | "replace" | "remove") => void;
+  onOperation: (operation: "generate" | "edit" | "replace" | "remove") => void;
   hasImage: boolean;
   locked: boolean;
   settingsLabel: string;
@@ -32,6 +32,7 @@ export function CommandCard(props: Props) {
         {hasImage && operation !== "expand" ? <>
           <div className="segmented">
             <button aria-pressed={operation === "generate"} disabled={locked} onClick={() => props.onOperation("generate")}>Generate</button>
+            <button aria-pressed={operation === "edit"} disabled={locked} title="Change the whole picture with an instruction" onClick={() => props.onOperation("edit")}>Edit</button>
             <button aria-pressed={operation === "replace"} disabled={locked} onClick={() => props.onOperation("replace")}>Replace</button>
             <button aria-pressed={operation === "remove"} disabled={locked} onClick={() => props.onOperation("remove")}>Remove</button>
           </div>

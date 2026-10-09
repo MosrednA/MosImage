@@ -21,6 +21,8 @@ from .jobs import JobCancelled, JobControl, jobs
 from .models.registry import registry
 from .runtime import system_info
 from .schemas import (
+    CopyReferencesRequest,
+    EditRequest,
     GenerationRecord,
     AlternativeProposalRequest,
     DocumentRecord,
@@ -41,7 +43,7 @@ from .schemas import (
 )
 from .documents import RevisionConflict
 from .models.flux2_klein_nvfp4 import KLEIN_MODELS
-from .services import run_inpaint, run_outpaint, run_text_to_image
+from .services import run_image_edit, run_inpaint, run_outpaint, run_text_to_image
 from .selection import selector
 
 Image.MAX_IMAGE_PIXELS = settings.max_image_pixels
@@ -155,7 +157,24 @@ def load_model(request: LoadModelRequest) -> JobResponse:
 
 @app.post("/api/generate", response_model=JobResponse)
 def generate(request: TextToImageRequest) -> JobResponse:
+    if request.reference_ids:
+        _check_references(request.reference_ids, request.model_name)
     job = jobs.submit("text-to-image", lambda control: run_text_to_image(request, control))
+    return JobResponse(id=job.id, kind=job.kind, status=job.status)
+
+
+@app.post("/api/edit", response_model=JobResponse)
+async def edit_image(image: UploadFile = File(...), parameters: str = Form(...)) -> JobResponse:
+    try:
+        request = EditRequest.model_validate_json(parameters)
+        if "edit" not in registry.get(request.model_name).info().capabilities:
+            raise ValueError("Editing the whole image needs the Quality model (FLUX.2 Klein).")
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if request.reference_ids:
+        _check_references(request.reference_ids, request.model_name)
+    content = await read_uploaded_image(image)
+    job = jobs.submit("edit", lambda control: run_image_edit(request, content, image.filename, control))
     return JobResponse(id=job.id, kind=job.kind, status=job.status)
 
 
@@ -198,10 +217,7 @@ async def inpaint(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if request.reference_ids:
-        if any(references.get_reference(reference_id) is None for reference_id in request.reference_ids):
-            raise HTTPException(status_code=422, detail="A selected reference no longer exists.")
-        if request.model_name not in KLEIN_MODELS:
-            raise HTTPException(status_code=422, detail="References need the Quality model (FLUX.2 Klein).")
+        _check_references(request.reference_ids, request.model_name)
     image_bytes = await read_uploaded_image(image)
     mask_bytes = await read_uploaded_image(mask)
     job = jobs.submit(
@@ -433,6 +449,36 @@ def redo_document(document_id: int) -> dict:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _check_references(reference_ids: list[int], model_name: str) -> None:
+    if any(references.get_reference(reference_id) is None for reference_id in reference_ids):
+        raise HTTPException(status_code=422, detail="A selected reference no longer exists.")
+    if model_name not in KLEIN_MODELS:
+        raise HTTPException(status_code=422, detail="References need the Quality model (FLUX.2 Klein).")
+
+
+@app.get("/api/v2/references", response_model=list[ReferenceRecord])
+def list_loose_references() -> list[dict]:
+    return references.list_references(None)
+
+
+@app.post("/api/v2/references", response_model=ReferenceRecord)
+async def add_loose_reference(image: UploadFile = File(...)) -> dict:
+    try:
+        return references.create_reference(None, await read_uploaded_image(image), image.filename)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v2/documents/{document_id}/references/copy", response_model=list[ReferenceRecord])
+def copy_references_to_document(document_id: int, request: CopyReferencesRequest) -> list[dict]:
+    try:
+        return references.copy_references(request.reference_ids, document_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/v2/documents/{document_id}/references", response_model=list[ReferenceRecord])
