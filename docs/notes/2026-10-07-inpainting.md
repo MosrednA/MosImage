@@ -167,6 +167,12 @@ Users could still see where the mask had been. Two causes were addressed.
 
 Object selection also uses SAM's three-mask output only for the first click. Refinement clicks ask for one mask, following the SAM authors' guidance for unambiguous prompts.
 
+### Canvas-edge coverage, 9 October 2026
+
+The centred model crop mirrors missing picture context beyond the canvas. Previously the mask used a normal crop, which filled that same padding with zero coverage. A fully selected canvas edge therefore became a model-facing mask boundary; resampling and latent masking could mix the original back into the replacement there. In the reported leather-jacket edit (generation 168), the submitted alpha was 255 along the selected left edge, but the resized model mask dropped to 107 near that edge.
+
+The model mask now repeats the canvas-edge coverage into the padding. This preserves full and soft alpha without mirroring interior selections into additional editable islands. The final compositor still uses the original canvas-sized mask, so this changes model conditioning without expanding the editable footprint on the actual picture. Internal selection transitions continue to use the existing Soften settings. See [regression evidence](2026-10-07-focus-implementation.md#canvas-edge-inpaint-masks-9-october-2026).
+
 ## Reference images
 
 References put a specific person or object from a concept image into a selection. Diffusers 0.41's `Flux2KleinInpaintPipeline` accepts one `image_reference` or a list, and caps each near 1 MP. MosImage sends a single reference at most 1024 px on the long edge. Replace edits only append a short identity instruction to the prompt. Removal and Expand never receive a reference.

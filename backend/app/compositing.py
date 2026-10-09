@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import ceil
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from PIL import Image, ImageChops, ImageFilter
@@ -80,10 +81,14 @@ def prepare_inpaint_workspace(
     # subject drifted away from it; mirroring the missing context keeps the
     # selection in the middle.
     model_box = _context_box(selection_box, None, context_ratio, minimum_context) if center_selection else crop_box
-    source_crop = _mirrored_crop(source, model_box)
+    source_crop = _padded_crop(source, model_box, "symmetric")
     # Pipelines supporting soft latent masks retain the user's alpha as well
     # as the inward transition. Other providers receive a binary footprint.
-    generation_mask = mask.crop(model_box)
+    # Continue the mask's edge coverage into the source's mirrored context. Padding
+    # it with black would invent a protected boundary at the canvas edge,
+    # letting the model retain the original there even for a full selection.
+    # Replicate the edge instead of mirroring interior selections into new islands.
+    generation_mask = _padded_crop(mask, model_box, "edge")
     if generation_feather is None:
         generation_mask = generation_mask.point(lambda value: 255 if value else 0)
     model_mask_crop = _grow_mask(generation_mask, mask_growth)
@@ -234,8 +239,8 @@ def _context_box(
     )
 
 
-def _mirrored_crop(image: Image.Image, box: CropBox) -> Image.Image:
-    """Crops `box`, mirroring the picture's edges where the box reaches past them."""
+def _padded_crop(image: Image.Image, box: CropBox, padding_mode: Literal["symmetric", "edge"]) -> Image.Image:
+    """Crops `box` with explicit padding for picture context or mask coverage."""
     left, top, right, bottom = box
     width, height = image.size
     if left >= 0 and top >= 0 and right <= width and bottom <= height:
@@ -243,7 +248,7 @@ def _mirrored_crop(image: Image.Image, box: CropBox) -> Image.Image:
     pixels = np.asarray(image)
     before_x, before_y = max(0, -left), max(0, -top)
     padding = [(before_y, max(0, bottom - height)), (before_x, max(0, right - width))] + [(0, 0)] * (pixels.ndim - 2)
-    padded = np.pad(pixels, padding, mode="symmetric")
+    padded = np.pad(pixels, padding, mode=padding_mode)
     x, y = left + before_x, top + before_y
     return Image.fromarray(padded[y:y + bottom - top, x:x + right - left], mode=image.mode)
 

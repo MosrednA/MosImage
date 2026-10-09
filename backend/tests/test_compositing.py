@@ -151,6 +151,79 @@ class InpaintCompositingTests(unittest.TestCase):
             with Image.open(workspace.model_mask_path) as generated_mask:
                 self.assertEqual(generated_mask.getpixel((32, 32)), 128)
 
+    def test_centered_model_mask_continues_selected_canvas_edges_and_corners(self) -> None:
+        cases = (
+            ((0, 32, 64, 96), (-8, 64), (0, 64)),
+            ((64, 32, 128, 96), (135, 64), (127, 64)),
+            ((32, 0, 96, 64), (64, -8), (64, 0)),
+            ((32, 64, 96, 128), (64, 135), (64, 127)),
+            ((0, 0, 64, 64), (-8, -8), (0, 0)),
+            ((64, 0, 128, 64), (135, -8), (127, 0)),
+            ((0, 64, 64, 128), (-8, 135), (0, 127)),
+            ((64, 64, 128, 128), (135, 135), (127, 127)),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = Image.new("RGB", (128, 128), (10, 20, 30))
+            source.save(root / "source.png")
+            for box, outside, edge in cases:
+                for feather in (0, 8):
+                    with self.subTest(box=box, feather=feather):
+                        mask = Image.new("L", source.size, 0)
+                        mask.paste(255, box)
+                        mask.save(root / "mask.png")
+                        workspace = prepare_inpaint_workspace(
+                            root / "source.png", root / "mask.png", root, 1024, 0, 32,
+                            composite_feather=feather, generation_feather=feather, center_selection=True,
+                        )
+                        assert workspace.model_box is not None
+                        model_left, model_top, _, _ = workspace.model_box
+                        with Image.open(workspace.model_mask_path) as generated_mask:
+                            self.assertEqual(generated_mask.getpixel((outside[0] - model_left, outside[1] - model_top)), 255)
+                            # Extending edge coverage must leave the actual surroundings protected.
+                            unselected_x = box[2] + 8 if box[2] < 128 else box[0] - 8
+                            unselected_y = (box[1] + box[3]) // 2
+                            self.assertEqual(generated_mask.getpixel((unselected_x - model_left, unselected_y - model_top)), 0)
+                            Image.new("RGB", generated_mask.size, (200, 100, 50)).save(workspace.model_output_path)
+                        workspace = replace(workspace, color_correction=False)
+                        workspace.composite_to(root / "result.png")
+                        with Image.open(root / "result.png") as result:
+                            self.assertEqual(result.getpixel(edge), (200, 100, 50))
+                            protected = np.asarray(mask) == 0
+                            np.testing.assert_array_equal(np.asarray(result)[protected], np.asarray(source)[protected])
+
+    def test_resizing_a_centered_mask_keeps_full_coverage_at_the_canvas_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (256, 256), (10, 20, 30)).save(root / "source.png")
+            mask = Image.new("L", (256, 256), 0)
+            mask.paste(255, (0, 64, 128, 192))
+            mask.save(root / "mask.png")
+            workspace = prepare_inpaint_workspace(
+                root / "source.png", root / "mask.png", root, 128, 0, 64,
+                composite_feather=0, generation_feather=0, center_selection=True,
+            )
+            with Image.open(workspace.model_mask_path) as generated_mask:
+                self.assertEqual(generated_mask.size, (128, 128))
+                # x=32 is the original canvas edge in the downscaled, mirrored crop.
+                self.assertEqual([generated_mask.getpixel((x, 64)) for x in range(29, 36)], [255] * 7)
+
+    def test_mask_context_preserves_soft_edge_coverage_and_unselected_padding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (128, 128), (10, 20, 30)).save(root / "source.png")
+            mask = Image.new("L", (128, 128), 0)
+            mask.paste(128, (0, 32, 64, 96))
+            mask.save(root / "mask.png")
+            workspace = prepare_inpaint_workspace(
+                root / "source.png", root / "mask.png", root, 1024, 0, 32,
+                composite_feather=0, generation_feather=0, center_selection=True,
+            )
+            with Image.open(workspace.model_mask_path) as generated_mask:
+                self.assertEqual(generated_mask.getpixel((24, 64)), 128)  # Past the canvas edge.
+                self.assertEqual(generated_mask.getpixel((32, 64)), 128)  # On the canvas edge.
+                self.assertEqual(generated_mask.getpixel((24, 8)), 0)  # Unselected edge stays protected.
+
 
     def test_a_selection_near_the_edge_stays_centred_for_the_model(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
