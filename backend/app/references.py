@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import re
 from shutil import copyfile
 import sqlite3
 from sqlite3 import Row
@@ -66,9 +67,42 @@ def _allow_loose_references(db: sqlite3.Connection) -> None:
     """)
 
 
+# Names cameras, phones, chat apps and generators give files; nobody types these.
+MACHINE_PREFIXES = {
+    "img", "image", "dsc", "dscn", "dscf", "pxl", "mvimg", "vid", "photo", "picture", "screenshot",
+    "schermafbeelding", "scherm", "whatsapp", "signal", "telegram", "chatgpt", "gemini", "dalle", "download", "unnamed",
+}
+NAME_TOKEN = re.compile(r"[\s_.,()\[\]-]+")
+
+
+def _is_machine_name(stem: str) -> bool:
+    """True for file names such as IMG_1234, PXL_20261009_142211 or T5S8DAP28-7b1f1113fc48."""
+    tokens = [token for token in NAME_TOKEN.split(stem.lower()) if token]
+    if not tokens:
+        return True
+    if tokens[0] in MACHINE_PREFIXES and any(character.isdigit() for character in stem):
+        return True
+    # Hashes and IDs mix letters and digits; timestamps are long digit runs.
+    return any(
+        (len(token) >= 6 and any(c.isdigit() for c in token) and any(c.isalpha() for c in token)) or re.search(r"\d{5}", token)
+        for token in tokens
+    )
+
+
+def _number_machine_names(db: sqlite3.Connection) -> None:
+    """Gives references named after code-like files a numbered name, per document."""
+    rows = db.execute("SELECT id, document_id, name FROM document_references ORDER BY document_id, id").fetchall()
+    positions: dict[int | None, int] = {}
+    for row in rows:
+        position = positions[row["document_id"]] = positions.get(row["document_id"], 0) + 1
+        if _is_machine_name(row["name"]):
+            db.execute("UPDATE document_references SET name = ? WHERE id = ?", (f"Reference {position}", row["id"]))
+
+
 REFERENCE_MIGRATIONS: list[storage.Migration] = [
     ("references.0001_create", lambda db: db.executescript(REFERENCE_SCHEMA)),
     ("references.0002_loose", _allow_loose_references),
+    ("references.0003_machine_names", _number_machine_names),
 ]
 
 
@@ -259,6 +293,6 @@ def _absolute(relative: str) -> Path:
 
 def _clean_name(filename: str | None, position: int) -> str:
     stem = Path(filename or "").stem.strip()
-    if not stem or stem.lower() in {"image", "blob", "pasted image"}:
+    if not stem or stem.lower() in {"image", "blob", "pasted image"} or _is_machine_name(stem):
         return f"Reference {position}"
     return stem[:80]

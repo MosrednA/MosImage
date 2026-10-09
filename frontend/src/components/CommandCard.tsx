@@ -1,4 +1,4 @@
-import { Operation, promptPlaceholder, submitLabel } from "../generation/operation";
+import { EditScope, Operation, promptPlaceholder, submitLabel } from "../generation/operation";
 import { Icon } from "./Icon";
 
 export interface ActiveReference { id: number; name: string; imageUrl: string }
@@ -8,6 +8,9 @@ interface Props {
   onOperation: (operation: "generate" | "edit" | "replace" | "remove") => void;
   hasImage: boolean;
   locked: boolean;
+  /** Offered for Edit once the document has layers. */
+  editScope?: EditScope;
+  onEditScope?: (scope: EditScope) => void;
   settingsLabel: string;
   prompt: string;
   references: readonly ActiveReference[];
@@ -36,6 +39,10 @@ export function CommandCard(props: Props) {
             <button aria-pressed={operation === "replace"} disabled={locked} onClick={() => props.onOperation("replace")}>Replace</button>
             <button aria-pressed={operation === "remove"} disabled={locked} onClick={() => props.onOperation("remove")}>Remove</button>
           </div>
+          {operation === "edit" && props.onEditScope && <div className="segmented compact" aria-label="What to edit">
+            <button aria-pressed={props.editScope === "visible"} disabled={locked} title="Edit the picture with every visible layer" onClick={() => props.onEditScope?.("visible")}>All visible</button>
+            <button aria-pressed={props.editScope === "layer"} disabled={locked} title="Edit only the selected layer" onClick={() => props.onEditScope?.("layer")}>Current layer</button>
+          </div>}
         </> : operation === "expand" ? <>
           <span>Expand image</span>
           <button className="quiet-button" disabled={locked} onClick={props.onCanvasSize}><Icon name="expand" />Canvas size</button>

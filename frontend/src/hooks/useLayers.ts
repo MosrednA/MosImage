@@ -118,7 +118,7 @@ export function useLayers(
    * Adds a full generation or selected AI patch at its place and scale.
    * With `replaces`, it goes just above that layer, which is hidden.
    */
-  async function addResult(image: Blob, mask: Blob | null, name: string, placement: { x: number; y: number; scale_x?: number; scale_y?: number }, replaces: string | null): Promise<LayerRecord | null> {
+  async function addResult(image: Blob, mask: Blob | null, name: string, placement: { x: number; y: number; scale_x?: number; scale_y?: number; rotation?: number; opacity?: number }, replaces: string | null, label?: string): Promise<LayerRecord | null> {
     const start = documentRef.current;
     if (!start) return null;
     if (currentLayers().length >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one to apply this result.`);
@@ -132,9 +132,9 @@ export function useLayers(
       const layer: LayerRecord = {
         id: newLayerId(), name: name.slice(0, 80), image_path: asset.path, image_url: asset.url,
         mask_path: maskAsset?.path ?? null, mask_url: maskAsset?.url ?? null, width: asset.width, height: asset.height,
-        x: placement.x, y: placement.y, scale_x: placement.scale_x ?? 1, scale_y: placement.scale_y ?? 1, rotation: 0, opacity: 1, visible: true,
+        x: placement.x, y: placement.y, scale_x: placement.scale_x ?? 1, scale_y: placement.scale_y ?? 1, rotation: placement.rotation ?? 0, opacity: placement.opacity ?? 1, visible: true,
       };
-      commit(insertResult(currentLayers(), layer, replaces), replaces ? "Blend layer in" : "Add AI result");
+      commit(insertResult(currentLayers(), layer, replaces), label ?? (replaces ? "Blend layer in" : "Add AI result"));
       await settled();
       // Keep the proposal available when saving failed and restored the stack.
       if (!currentLayers().some(item => item.id === layer.id)) return null;

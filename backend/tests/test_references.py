@@ -69,6 +69,33 @@ class ReferenceStorageTests(unittest.TestCase):
             with self.assertRaises(LookupError):
                 references.create_reference(document_id + 99, png(Image.new("RGB", (8, 8))), "x.png")
 
+    def test_code_like_file_names_become_numbered_references(self) -> None:
+        machine = ["T5S8DAP28-U5SUC4UTC-7b1f1113fc48-512", "IMG_1234", "PXL_20261009_142211", "Screenshot 2026-10-09 at 14.22.11",
+                   "WhatsApp Image 2026-10-09 at 14.22.11", "20261009_142211", "3f2b9c1e-8a4d-4f6e-9b0a-1c2d3e4f5a6b", "Gemini_Generated_Image_k2j4h5"]
+        human = ["Anna", "Kees en Mark", "anna-2", "Tom (2)", "Oma 2024", "Mr Bean"]
+        for name in machine:
+            with self.subTest(name=name):
+                self.assertTrue(references._is_machine_name(name))
+        for name in human:
+            with self.subTest(name=name):
+                self.assertFalse(references._is_machine_name(name))
+        with isolated_data():
+            document_id = new_document()
+            self.assertEqual(references.create_reference(document_id, png(Image.new("RGB", (8, 8))), "Anna.jpg")["name"], "Anna")
+            self.assertEqual(references.create_reference(document_id, png(Image.new("RGB", (8, 8))), "IMG_1234.jpg")["name"], "Reference 2")
+
+    def test_existing_code_like_names_are_numbered_once_per_holder(self) -> None:
+        with isolated_data():
+            document_id = new_document()
+            ids = [references.create_reference(holder, png(Image.new("RGB", (8, 8))), name)["id"]
+                   for holder, name in ((document_id, "Anna.png"), (document_id, "x.png"), (None, "y.png"))]
+            with storage.connect() as db:
+                db.executemany("UPDATE document_references SET name = ? WHERE id = ?", [("T5S8DAP28-7b1f1113fc48", ids[1]), ("PXL_20261009_142211", ids[2])])
+                db.execute("DELETE FROM schema_migrations WHERE name = 'references.0003_machine_names'")
+                db.commit()
+            references.ensure_reference_storage()
+            self.assertEqual([references.get_reference(item)["name"] for item in ids], ["Anna", "Reference 2", "Reference 1"])
+
     def test_loose_references_wait_on_the_start_screen_and_copy_into_a_document(self) -> None:
         with isolated_data():
             loose = references.create_reference(None, png(Image.new("RGB", (20, 40), "orange")), "Anna.png")

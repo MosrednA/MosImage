@@ -117,7 +117,7 @@ small { color: var(--muted); }
 .expansion-handle.handle-top { top: -5px; } .expansion-handle.handle-bottom { bottom: -5px; }
 .command-card { width: min(900px,calc(100% - 32px)); flex-shrink: 0; margin: 3px auto 14px; padding: 8px 14px 9px; background: #1b2633; border: 1px solid #3b4c63; border-radius: 12px; box-shadow: 0 10px 40px #0003; }
 .command-context { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; margin-bottom: 5px; }
-.operation-controls { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #aebcd0; }
+.operation-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; font-size: 11px; color: #aebcd0; }
 .operation-controls .quiet-button { font-size: 10px; padding: 4px 7px; }
 .operation-controls svg { width: 14px; height: 14px; }
 .segmented { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid #37475c; border-radius: 7px; background: #141e2b; }

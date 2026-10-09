@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isWholeImage, joinNames, operationHint, promptPlaceholder, submitLabel, taskFor } from "./operation";
+import { isWholeImage, joinNames, layerEditHint, operationHint, promptPlaceholder, submitLabel, taskFor } from "./operation";
 
 describe("reference guidance", () => {
   it("explains generation layers without asking for a selection", () => {
@@ -17,6 +17,11 @@ describe("reference guidance", () => {
     expect(promptPlaceholder("edit", true, ["Anna"])).toContain("put Anna next to the fountain");
     expect(operationHint("edit", true, false, "object")).toContain("Faces and everything you don't mention stay as they are.");
     expect(operationHint("edit", true, true, "object", ["Anna", "Tom"])).toContain("Anna and Tom keep the look of their reference.");
+  });
+  it("explains editing one layer alone", () => {
+    expect(layerEditHint(null)).toBe("Pick the layer to edit in the Layers panel.");
+    expect(layerEditHint("Anna")).toContain("edits only “Anna”");
+    expect(layerEditHint("Anna", ["Tom"])).toContain("Tom keeps the look of their reference.");
   });
   it("composes references into a new image", () => {
     expect(promptPlaceholder("generate", false, ["Anna", "Tom"])).toBe("Where are Anna and Tom? e.g. riding a roller coaster together");

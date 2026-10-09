@@ -91,6 +91,16 @@ def _fit_area(image: Image.Image, area: int = EDIT_AREA) -> Image.Image:
     return image.resize((width, height), Image.Resampling.LANCZOS)
 
 
+def _opaque(picture: Image.Image) -> Image.Image:
+    """Flattens transparency onto neutral grey; a cut-out layer would otherwise sit on black."""
+    if picture.mode not in ("RGBA", "LA", "PA") and "transparency" not in picture.info:
+        return picture.convert("RGB")
+    rgba = picture.convert("RGBA")
+    opaque = Image.new("RGB", rgba.size, REFERENCE_BACKGROUND)
+    opaque.paste(rgba, mask=rgba.getchannel("A"))
+    return opaque
+
+
 def _reference_image(path: Path) -> Image.Image:
     with Image.open(path) as reference:
         image = reference.convert("RGB")
@@ -193,7 +203,7 @@ class Flux2KleinProvider:
             torch = self._load_torch()
             pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
             with Image.open(input_path) as picture:
-                source = picture.convert("RGB")
+                source = _opaque(picture)
             fitted = _fit_area(source)
             reference_images = _reference_images([reference.path for reference in references])
             control.set_progress(0.15)

@@ -156,6 +156,22 @@ class Flux2KleinPlacementTests(unittest.TestCase):
                 self.assertEqual(len(pipe.call_args.kwargs["image"]), 1)
                 self.assertNotIn("image 2", pipe.encode_prompt.call_args.kwargs["prompt"])
 
+    def test_a_transparent_layer_is_edited_on_neutral_grey(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            layer = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+            layer.paste((200, 30, 30, 255), (16, 16, 48, 48))
+            layer.save(root / "layer.png")
+            pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (1024, 1024))]))
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe):
+                self.provider.edit(EditRequest(prompt="make it blue"), root / "layer.png", root / "output.png", MagicMock())
+                picture = pipe.call_args.kwargs["image"][0]
+                self.assertEqual(picture.mode, "RGB")
+                self.assertEqual(picture.getpixel((5, 5)), REFERENCE_BACKGROUND)
+                self.assertEqual(picture.getpixel((512, 512)), (200, 30, 30))
+                with Image.open(root / "output.png") as output:
+                    self.assertEqual(output.size, (64, 64))
+
     def test_edit_prompt_numbers_several_references_after_the_picture(self) -> None:
         prompt = _edit_prompt("Put them on the beach", ["Anna", "Reference 2", "Tom"])
         self.assertIn("Images 2 to 4 show the people or objects to bring in: Anna is image 2, Tom is image 4.", prompt)

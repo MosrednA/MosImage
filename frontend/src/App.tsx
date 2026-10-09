@@ -11,7 +11,7 @@ import { ImageSize } from "./canvas/coordinates";
 import { ExpansionCanvas } from "./canvas/ExpansionCanvas";
 import { validExpansion } from "./canvas/expansion";
 import { GENERATION_PRESETS, isKleinModel } from "./generation/presets";
-import { Operation, isWholeImage, operationHint, taskFor } from "./generation/operation";
+import { EditScope, Operation, isWholeImage, layerEditHint, operationHint, taskFor } from "./generation/operation";
 import { SettingsControls, defaultSettings, settingsSummary } from "./components/EditorSettings";
 import { Icon } from "./components/Icon";
 import { ControlDialog } from "./components/ControlDialog";
@@ -28,7 +28,7 @@ import { ReferencePanel } from "./components/ReferencePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { SidePanel, SideTab } from "./components/SidePanel";
 import { LayerStage } from "./layers/LayerStage";
-import { cutSelection, flatten, invertMask, layerFootprint, loadImage, loadMask, selectionPatch, solidMask } from "./layers/bitmaps";
+import { FlatLayer, canvasBlob, cutSelection, flatten, invertMask, layerFootprint, loadImage, loadMask, maskedLayer, selectionPatch, solidMask, withTransparencyOf } from "./layers/bitmaps";
 import { generationPlacement, initialPlacement } from "./layers/geometry";
 import { MAX_LAYERS } from "./layers/stack";
 import { useLayers } from "./hooks/useLayers";
@@ -48,9 +48,10 @@ interface JobContext {
   /** The accepted generation or regional edit becomes a layer. */
   result: LayerResult | null;
 }
-/** A full generation, or the selected footprint of a regional AI edit. */
+/** A full generation, the selected footprint of a regional AI edit, or an edit of one layer. */
 type LayerResult = { kind: "selection"; mask: Blob; name: string; replaces: string | null }
-  | { kind: "generation"; name: string };
+  | { kind: "generation"; name: string }
+  | { kind: "layer"; layerId: string; name: string };
 interface JobExtras { layerId?: string; layerOffset?: { x: number; y: number }; result?: LayerResult }
 const initialExpansion: Expansion = { left: 128, top: 0, right: 128, bottom: 0 };
 const PANEL_COLLAPSED_KEY = "mosimage.sidePanelCollapsed";
@@ -96,6 +97,7 @@ export default function App() {
   const [layerPoints, setLayerPoints] = useState<SelectionPoint[]>([]);
   const [blendTarget, setBlendTarget] = useState<string | null>(null);
   const [layerResult, setLayerResult] = useState<LayerResult | null>(null);
+  const [editScope, setEditScope] = useState<EditScope>("visible");
   const [generationPreviewUrl, setGenerationPreviewUrl] = useState<string | null>(null);
   const composite = useRef<{ key: string; file: File } | null>(null);
   /** Start-screen references behind the proposals under review. */
@@ -118,13 +120,15 @@ export default function App() {
   const locked = busy || reviewing;
   const chosen = alternatives[selected];
   const proposalUrls = alternatives.map((item, index) => fileUrl(proposal?.alternatives[index]?.output_image_url ?? item.output_image_url));
-  const previewUrl = chosen && !compare ? layerResult?.kind === "generation" && document
+  const previewUrl = chosen && !compare ? layerResult && layerResult.kind !== "selection" && document
     ? generationPreviewUrl : proposalUrls[selected] : null;
   const task = taskFor(operation);
   // References place people in a selection (Replace), the whole picture (Edit) or a new image (Generate).
   const references = ((operation === "replace" || operation === "edit") && source) || operation === "generate" ? refs.active : [];
   const referenceNeedsQuality = references.length > 0 && !isKleinModel(settings.model_name);
   const activeLayer = operation === "expand" || isWholeImage(operation) ? null : layers.active;
+  // The layer Edit works on alone; it stays selected without its transform handles.
+  const editLayer = operation === "edit" && editScope === "layer" ? layers.active : null;
   const blending = layers.layers.find(layer => layer.id === blendTarget && layer.visible) ?? null;
   const cudaBlocked = !!system && (!system.torch_available || (system.preferred_device === "cuda" && !system.cuda_available && !system.allow_cpu_generation));
 
@@ -136,20 +140,32 @@ export default function App() {
     return () => { if (url) URL.revokeObjectURL(url); };
   }, [source]);
 
-  // Preview a full generation at exactly the placement Apply will use.
+  // Preview a full generation or layer edit exactly as Apply will place it.
   useEffect(() => {
     setGenerationPreviewUrl(null);
-    if (layerResult?.kind !== "generation" || !chosen || !source || !size) return;
+    if (!layerResult || layerResult.kind === "selection" || !chosen || !source || !size) return;
     let disposed = false;
     let url: string | null = null;
     void (async () => {
-      const background = await createImageBitmap(await editImage());
-      try {
-        const image = await loadImage(fileUrl(chosen.output_image_url));
-        const dimensions = { width: image.naturalWidth, height: image.naturalHeight };
-        const blob = await flatten(background, size, [{ ...dimensions, ...generationPlacement(dimensions, size), image, mask: null, opacity: 1 }]);
-        if (!disposed) { url = URL.createObjectURL(blob); setGenerationPreviewUrl(url); }
-      } finally { background.close(); }
+      const image = await loadImage(fileUrl(chosen.output_image_url));
+      let blob: Blob;
+      if (layerResult.kind === "generation") {
+        const background = await createImageBitmap(await editImage());
+        try {
+          const dimensions = { width: image.naturalWidth, height: image.naturalHeight };
+          blob = await flatten(background, size, [{ ...dimensions, ...generationPlacement(dimensions, size), image, mask: null, opacity: 1 }]);
+        } finally { background.close(); }
+      } else {
+        // The edited copy shows where the layer is; the original is hidden, as after Apply.
+        const parts = await Promise.all((documentRef.current?.layers ?? []).map(async (layer): Promise<FlatLayer | null> => {
+          const mask = layer.mask_url ? await loadMask(fileUrl(layer.mask_url)) : null;
+          if (layer.id === layerResult.layerId) return { ...layer, image: await editedLayer(image, layer), mask, opacity: layer.opacity };
+          return layer.visible && layer.opacity > 0 ? { ...layer, image: await loadImage(fileUrl(layer.image_url)), mask } : null;
+        }));
+        const background = await createImageBitmap(source);
+        try { blob = await flatten(background, size, parts.filter((part): part is FlatLayer => part !== null)); } finally { background.close(); }
+      }
+      if (!disposed) { url = URL.createObjectURL(blob); setGenerationPreviewUrl(url); }
     })().catch(err => { if (!disposed) setError(message(err)); });
     return () => { disposed = true; if (url) URL.revokeObjectURL(url); };
   }, [layerResult, chosen, source, size]);
@@ -315,13 +331,23 @@ export default function App() {
     setAlternatives([]); setProposal(null); setLayerResult(null); setBlendTarget(null); setOperation("generate"); setJob(null); setError(null);
     if (settings.model_name === "flux1-fill-dev") setSettings(current => ({ ...current, preset: "quality", model_name: defaultSettings.model_name, steps: defaultSettings.steps, guidance: defaultSettings.guidance }));
   }
+  function chooseEditScope(next: EditScope) {
+    setEditScope(next);
+    if (next === "visible") { layers.select(null); return; }
+    // Start on the top layer; the Layers panel picks another.
+    if (!layers.active && layers.layers.length) layers.select(layers.layers[layers.layers.length - 1].id);
+    setSideTab("layers"); collapsePanel(false);
+  }
   function chooseTool(next: CanvasTool) {
     setTool(next);
     if (operation === "expand" || isWholeImage(operation)) { clearSelection(); setOperation("replace"); }
   }
   function chooseOperation(next: "generate" | "edit" | "replace" | "remove") {
     if (isWholeImage(next)) {
-      layers.select(null); clearSelection();
+      // With a layer selected, Edit starts on that layer alone.
+      if (next === "edit") setEditScope(layers.active ? "layer" : "visible");
+      else layers.select(null);
+      clearSelection();
       if (!models.find(model => model.name === settings.model_name)?.capabilities.includes(taskFor(next))) {
         setSettings(current => ({ ...current, preset: "quality", model_name: defaultSettings.model_name, steps: defaultSettings.steps, guidance: defaultSettings.guidance }));
       }
@@ -330,6 +356,7 @@ export default function App() {
   }
   function selectLayer(id: string | null) {
     layers.select(id);
+    if (operation === "edit") { setEditScope(id ? "layer" : "visible"); return; }
     if (id) { setTool("transform"); if (operation === "expand" || isWholeImage(operation)) setOperation("replace"); }
   }
   async function addLayerImages(files: File[]) {
@@ -465,11 +492,20 @@ export default function App() {
         queued(await generateImage({ ...parameters, width: settings.width, height: settings.height, reference_ids: referenceIds }), null,
           document ? { result: { kind: "generation", name: resultName(null, operation, prompt) } } : {});
       }
-      else if (task === "edit" && source && document) {
+      else if (task === "edit" && source && document && editLayer) {
+        // Only this layer, through its mask; the result replaces it in place.
+        const image = await loadImage(fileUrl(editLayer.image_url));
+        const layerMask = editLayer.mask_url ? await loadMask(fileUrl(editLayer.mask_url)) : null;
+        const picture = new File([await canvasBlob(maskedLayer(image, layerMask, editLayer.width, editLayer.height))], "layer.png", { type: "image/png" });
+        queued(await editWholeImage(picture, { ...parameters, reference_ids: references.map(item => item.id) }), null,
+          { result: { kind: "layer", layerId: editLayer.id, name: `${editLayer.name} · AI` } });
+      }
+      else if (task === "edit" && source && document && editScope === "visible") {
         // The AI sees every visible layer; the result covers the canvas as a new layer.
         queued(await editWholeImage(await editImage(), { ...parameters, reference_ids: references.map(item => item.id) }), null,
           { result: { kind: "generation", name: resultName(null, operation, prompt) } });
       }
+      else if (task === "edit") throw new Error("Pick the layer to edit in the Layers panel.");
       else if (task === "outpaint" && source && size && validExpansion(size, expansion)) queued(await outpaintImage(source, { ...parameters, ...expansion }), "outpaint", { layerOffset: { x: expansion.left, y: expansion.top } });
       else if (source && mask && document) {
         // Every regional edit becomes a layer over the picture the AI saw.
@@ -512,6 +548,12 @@ export default function App() {
       const image = await loadImage(url);
       const placement = generationPlacement({ width: image.naturalWidth, height: image.naturalHeight }, size);
       if (!await layers.addResult(file, null, result.name, placement, null)) return;
+    } else if (result.kind === "layer") {
+      const layer = layers.layers.find(item => item.id === result.layerId);
+      if (!layer) throw new Error("That layer was deleted, so the edit has nowhere to go.");
+      const image = await canvasBlob(await editedLayer(await loadImage(url), layer));
+      const layerMask = layer.mask_url ? await fileFromUrl(fileUrl(layer.mask_url), "mask.png") : null;
+      if (!await layers.addResult(image, layerMask, result.name, layer, layer.id, "Edit layer")) return;
     } else {
       const patch = await selectionPatch(await loadImage(url), size, result.mask);
       if (!patch) throw new Error("The selection was empty, so there is nothing to add.");
@@ -521,6 +563,10 @@ export default function App() {
     await layers.settled();
     discard(); clearSelection(); setOperation("replace"); setTool("transform"); setSideTab("layers"); collapsePanel(false);
     await refresh();
+  }
+  /** An edited layer image with the original layer's transparency. */
+  async function editedLayer(edited: HTMLImageElement, layer: LayerRecord): Promise<HTMLCanvasElement> {
+    return withTransparencyOf(edited, await loadImage(fileUrl(layer.image_url)), layer.width, layer.height);
   }
   /** Selects where a layer shows, a little wider, so the AI can redraw it to fit the scene. */
   async function blendLayerIn(id: string) {
@@ -607,9 +653,10 @@ export default function App() {
   const expansionValid = !!size && validExpansion(size, expansion);
   const canSubmit = !locked && online && !cudaBlocked && (task === "outpaint"
     ? expansionValid && !!settings.prompt.trim()
-    : (operation === "remove" || !!settings.prompt.trim()) && (task === "text-to-image" || (task === "edit" && !!source) || !!mask) && !referenceNeedsQuality);
+    : (operation === "remove" || !!settings.prompt.trim()) && (task === "text-to-image" || (task === "edit" && !!source && (editScope === "visible" || !!editLayer)) || !!mask) && !referenceNeedsQuality);
   const hint = activeLayer ? `Editing layer “${activeLayer.name}”. Press Esc for AI edits; they see every visible layer.`
     : referenceNeedsQuality ? "References need the Quality model. Choose Quality in generation settings."
+    : operation === "edit" && editScope === "layer" ? layerEditHint(editLayer?.name ?? null, references.map(item => item.name))
     : blending && mask ? `Blending “${blending.name}” in: the AI redraws it and its edges to fit the scene. Widen the area with the brush if needed.`
     : operationHint(operation, !!source, !!mask, tool, references.map(item => item.name)) + (source && operation !== "expand" && !isWholeImage(operation) ? " Apply adds the result as a new layer." : "");
   const referenceNote = operation === "expand" ? "References are used for Replace edits. Leave Expand to place one."
@@ -641,6 +688,7 @@ export default function App() {
       {reviewing
         ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} />
         : <CommandCard operation={operation} onOperation={chooseOperation} hasImage={!!source} locked={locked}
+          editScope={editScope} onEditScope={document && layers.layers.length ? chooseEditScope : undefined}
           settingsLabel={settingsSummary(settings, task)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
           references={references.map(item => ({ id: item.id, name: item.name, imageUrl: fileUrl(item.subject_url ?? item.image_url) }))} onRemoveReference={id => refs.toggle(id)}
           hint={hint} cancelled={job?.status === "cancelled"} jobActive={jobActive} cancelling={cancelling} canSubmit={canSubmit}
@@ -653,7 +701,7 @@ export default function App() {
     </section>
     <SidePanel tab={document ? sideTab : "references"} onTab={setSideTab} collapsed={panelCollapsed} onCollapsed={collapsePanel} layerCount={layers.layers.length} referenceCount={refs.references.length} showLayers={!!document}>
       {document && sideTab === "layers"
-        ? <LayersPanel layers={layers.layers} activeId={activeLayer?.id ?? null} backgroundUrl={sourceUrl} uploading={layers.uploading} disabled={locked}
+        ? <LayersPanel layers={layers.layers} activeId={activeLayer?.id ?? editLayer?.id ?? null} backgroundUrl={sourceUrl} uploading={layers.uploading} disabled={locked}
           canCopySelection={!!mask} onSelect={selectLayer} onAdd={files => void addLayerImages(files)} onCopySelection={() => void copySelectionToLayer()}
           onUpdate={layers.update} onPreview={layers.preview} onRemove={layers.remove} onDuplicate={layers.duplicate} onReorder={layers.reorder}
           onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)} />

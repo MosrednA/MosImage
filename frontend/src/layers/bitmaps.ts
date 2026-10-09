@@ -56,8 +56,8 @@ export function solidMask(width: number, height: number): HTMLCanvasElement {
   return canvas;
 }
 
-/** Draws the layer image through its mask. */
-export function composeLayer(target: HTMLCanvasElement, image: CanvasImageSource, mask: HTMLCanvasElement | null): void {
+/** Draws the layer image through its mask; any image's alpha can serve as the mask. */
+export function composeLayer(target: HTMLCanvasElement, image: CanvasImageSource, mask: CanvasImageSource | null): void {
   const context = target.getContext("2d");
   if (!context) return;
   context.save();
@@ -68,6 +68,20 @@ export function composeLayer(target: HTMLCanvasElement, image: CanvasImageSource
     context.drawImage(mask, 0, 0, target.width, target.height);
   }
   context.restore();
+}
+
+/** A layer's image through its mask, at its own size: what an edit of that layer alone sees. */
+export function maskedLayer(image: CanvasImageSource, mask: HTMLCanvasElement | null, width: number, height: number): HTMLCanvasElement {
+  const canvas = blankCanvas(width, height);
+  composeLayer(canvas, image, mask);
+  return canvas;
+}
+
+/** An edited layer image cut back to the original's transparency, so cut-outs stay cut out. */
+export function withTransparencyOf(edited: CanvasImageSource, original: CanvasImageSource, width: number, height: number): HTMLCanvasElement {
+  const canvas = blankCanvas(width, height);
+  composeLayer(canvas, edited, original);
+  return canvas;
 }
 
 export interface FlatLayer extends Placement { image: CanvasImageSource; mask: HTMLCanvasElement | null; opacity: number }

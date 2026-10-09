@@ -12,6 +12,15 @@ export function isWholeImage(operation: Operation): boolean {
   return operation === "generate" || operation === "edit";
 }
 
+/** Edit works on everything visible, or on one layer alone. */
+export type EditScope = "visible" | "layer";
+
+export function layerEditHint(layerName: string | null, referenceNames: readonly string[] = []): string {
+  if (!layerName) return "Pick the layer to edit in the Layers panel.";
+  const keep = referenceNames.length ? ` ${joinNames(referenceNames)} ${referenceNames.length > 1 ? "keep" : "keeps"} the look of their reference.` : "";
+  return `The AI edits only “${layerName}”; its transparent parts stay transparent.${keep} Apply puts the result above it and hides the original.`;
+}
+
 export function submitLabel(operation: Operation): string {
   return operation === "remove" ? "Remove" : operation === "expand" ? "Expand" : operation === "edit" ? "Edit" : "Generate";
 }
