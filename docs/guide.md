@@ -48,7 +48,7 @@ Default runtime behavior:
 - CUDA is preferred with `bfloat16`.
 - TF32 is enabled for faster CUDA matrix operations.
 - Only one large pipeline is kept resident by default to protect 16 GB VRAM.
-- Model CPU offload is enabled by default because Z-Image Turbo can sit right on the edge of 16 GB VRAM on Windows.
+- Model CPU offload is enabled by default for the Klein 4B models in Balanced mode; Klein 9B stays resident on the GPU.
 - PyTorch uses `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` to reduce allocator fragmentation.
 
 For Windows and RTX 5070 Ti, use Python 3.13 or 3.12 for the backend virtual environment. The startup script prefers `py -3.13`, then `py -3.12`. The current pinned runtime is PyTorch 2.14.1 with CUDA 13.0 from `backend/requirements-torch-cu130.txt`; the verified local NVIDIA driver is 617.42. The old CUDA 12.8 requirements are retained as a historical baseline and do not match the current dependency set.
@@ -73,7 +73,7 @@ The final command must print `True` for CUDA availability before generation will
 
 ### Hugging Face login (optional)
 
-Both generation defaults and SAM 2.1 Tiny are public and work without a Hugging Face token. Logging in is useful for higher authenticated download limits and is required for the optional gated FLUX.1 Fill specialist after accepting its license on Hugging Face:
+Every model MosImage uses is public and works without a Hugging Face token. Logging in only raises the download limits:
 
 ```powershell
 cd backend
@@ -114,27 +114,29 @@ With Object, **Find…** selects everything matching a short English description
 
 In an open document, Generate creates a full image without requiring a selection. Apply adds it as a new layer, centred and fitted to the canvas without changing its aspect ratio; the preview uses the same placement. New still starts a separate document with its first image as the background. Replace and Remove always add the selected proposal as a new layer, including when the layer stack is empty or all layers are hidden. They work on the picture as you see it, including every visible layer. The selected patch is cropped to the mask's footprint; the result already contains the feathered blend, so its layer mask retains the footprint without blending the edge twice. Apply selects the result with Transform and opens Layers. Hide, delete, opacity, undo/redo and reopening keep the background available. A failed layer save leaves the proposal available for retry. Blend in keeps its lower-strength edit and places the blended copy above the original, hiding that original. Expand extends the background and moves the layers with the content. See [AI layer validation, 9 October](notes/2026-10-07-focus-implementation.md#ai-results-as-layers-9-october-2026).
 
-Expand supports draggable edges, format presets, and exact pixel margins. It adds space without cropping or changing the original pixels. The native canvas is capped at 4096 × 4096; generation still uses a model-facing image capped at 1024 on its longest edge. Applying an expansion updates document dimensions; undo/redo and reopening restore the corresponding revision dimensions.
+Expand supports draggable edges, format presets, and exact pixel margins. It adds space without cropping, and only a 16 px band along the original edge blends into the new area. The native canvas is capped at 4096 × 4096; generation still uses a model-facing image capped at 1024 on its longest edge. Applying an expansion updates document dimensions; undo/redo and reopening restore the corresponding revision dimensions.
 
-Expand automatically chooses a mask-conditioned provider: Z-Image Turbo at 8 steps and guidance 0, or the optional FLUX Fill specialist. A short description of the scene or desired new content is required: generic continuation text produced a decorative frame in the local fixture. Klein remains excluded from expansion after the earlier instruction-editing route left padding intact; its new native inpaint route has only been validated for regional edits. Z-Image receives descriptive content rather than instructions about gray margins.
+Expand runs on the chosen Klein model, like every other tool: 9B for Quality, 4B for Fast. Describe what the new area should show, such as "more beach and sea"; Klein is asked to extend the scene seamlessly, without a frame or border. The model also redraws a 16 px band inside the original. MosImage carries that band's tone offset into the new area and crossfades across it, so the new area meets the original without a visible line; every original pixel beyond the band stays exact. In the 9 October trial with 9B, widening a 1254 px garden and kitchen photo to 1894 px and a 832 × 1216 portrait to 1664 px each took 7–10 s once loaded, with seamless edges.
 
 Transparent images stay RGBA in documents and protected compositing. Model input is flattened onto neutral gray before resizing; this prevents fully transparent expansion margins from turning black during RGBA resampling.
 
 ## Runtime Modes
 
-The UI exposes Quality/Fast presets and keeps technical controls under Settings:
+Every AI tool runs on FLUX.2 Klein. The UI exposes Quality/Fast presets and keeps technical controls under Settings:
 
-- `Quality` uses FLUX.2 Klein 9B Distilled NVFP4 at four steps and guidance 1.0; Klein 4B NVFP4 and 4B BF16 remain selectable in Advanced controls. Generation uses `Flux2KleinPipeline`; editing uses `Flux2KleinInpaintPipeline`, which receives the actual mask and edit strength. Generation and editing share one set of weights; switching models releases the previous pipeline. 9B keeps its transformer and VAE on the GPU in every mode and streams its text encoder from RAM; the 4B adapters use model CPU offload in Balanced mode.
-- `Fast` uses Z-Image Turbo at 8 steps for quick iteration. Text-to-image and inpaint task switches reuse their components with an explicit runtime dtype, preserving BF16 on the default CUDA profile.
-- `FLUX.1 Fill Dev (specialist)` has an optional Advanced adapter, but its current BF16 component-offload route is not ready for the 16 GB profile: the 12B transformer alone exceeds that GPU's memory. A measured quantized or finer-grained offload route is required before use on this profile. The weights are gated and non-commercially licensed. Quality remains on FLUX.2 Klein by default; see the [next model comparisons](notes/2026-10-07-inpainting.md#next-model-and-sampling-comparisons).
+- `Quality` uses FLUX.2 Klein 9B Distilled NVFP4 at four steps and guidance 1.0. Generation uses `Flux2KleinPipeline`; editing uses `Flux2KleinInpaintPipeline`, which receives the actual mask and edit strength. Generation and editing share one set of weights; switching models releases the previous pipeline. 9B keeps its transformer and VAE on the GPU in every mode and streams its text encoder from RAM; the 4B adapters use model CPU offload in Balanced mode.
+- `Fast` uses FLUX.2 Klein 4B Distilled NVFP4 with the same settings, at about 60% of 9B's time and under a commercial-friendly licence. It does everything Quality does, including references, sketches and faces, with less faithful identities and scenes.
+- Advanced controls → Model also offers Klein 4B BF16, for GPUs without NVFP4 support.
 
 Prompt embeddings are cached without autograd graphs. The [8 October app-provider check](../benchmarks/INPAINT_QUALITY_2026-10-08.md#actual-app-performance-and-the-verified-fix) fixed retained encoder activations: repeated reference edits used about 3.0 GiB of PyTorch allocation, and a changed prompt completed in 4.2 seconds on the target GPU. Cold loading remained about 33 seconds; these are measured small-crop results, not promises for every resolution. Restart the backend after updating to pick up this fix.
 
 The three runtime modes are:
 
-- `Balanced` uses model CPU offload for FLUX.2 Klein 4B on the default 16 GB profile; Klein 9B stays resident in every mode. Z-Image keeps text-to-image on GPU up to `896x896` and uses component-level offload for inpainting. Start here for these validated providers. Fill's current component-offload adapter needs a separate 16 GB memory implementation and validation.
-- `Safe / lower VRAM` always uses model CPU offload. Use this for large text-to-image jobs or after an OOM.
-- `Performance / GPU resident` keeps the model on GPU. Use this for fast iteration at `768x768` or `896x896`; it may OOM at `1024x1024`.
+- `Balanced` uses model CPU offload for the Klein 4B models on the default 16 GB profile. Start here.
+- `Safe / lower VRAM` always uses model CPU offload for 4B. Use this after an OOM.
+- `Performance / GPU resident` keeps 4B entirely on the GPU, for the quickest iteration.
+
+Klein 9B ignores these modes: its transformer and VAE always stay on the GPU and its text encoder streams from RAM.
 
 After a CUDA OOM, restart the backend before benchmarking another mode. PyTorch can hold fragmented allocations after an OOM.
 

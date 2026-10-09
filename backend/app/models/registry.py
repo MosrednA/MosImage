@@ -4,8 +4,6 @@ from app.models.base import ImageModelProvider
 from app.jobs import JobControl
 from app.models.flux2_klein import Flux2KleinProvider
 from app.models.flux2_klein_nvfp4 import Flux2Klein9bNvfp4Provider, Flux2KleinNvfp4Provider
-from app.models.flux_fill import FluxFillProvider
-from app.models.z_image import ZImageTurboProvider
 from app.schemas import LoadModelRequest, ModelInfo
 
 
@@ -15,8 +13,6 @@ class ModelRegistry:
             "flux2-klein-9b-nvfp4": Flux2Klein9bNvfp4Provider(),
             "flux2-klein-4b-nvfp4": Flux2KleinNvfp4Provider(),
             "flux2-klein-4b": Flux2KleinProvider(),
-            "z-image-turbo": ZImageTurboProvider(),
-            "flux1-fill-dev": FluxFillProvider(),
         }
 
     def list(self) -> list[ModelInfo]:

@@ -49,7 +49,7 @@ def require_generation_device() -> None:
     if selected_device(torch) == "cuda" or settings.allow_cpu_generation:
         return
     raise RuntimeError(
-        "CUDA is not available, so Z-Image generation was stopped before model load. "
+        "CUDA is not available, so generation was stopped before model load. "
         "Your RTX 5070 Ti should run this on GPU; install a CUDA-enabled PyTorch build "
         "for your NVIDIA driver, then restart the backend. Set "
         "MOSIMAGE_ALLOW_CPU_GENERATION=true only for debugging, because CPU generation "
@@ -78,7 +78,6 @@ def system_info() -> dict[str, Any]:
         "enable_cpu_offload": settings.enable_cpu_offload,
         "allow_cpu_generation": settings.allow_cpu_generation,
         "runtime_mode": settings.runtime_mode,
-        "gpu_resident_max_pixels": settings.gpu_resident_max_pixels,
         "max_loaded_pipelines": settings.max_loaded_pipelines,
         "attention_backend": settings.attention_backend,
         "cuda_alloc_conf": settings.cuda_alloc_conf,

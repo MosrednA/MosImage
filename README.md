@@ -62,15 +62,14 @@ For manual setup, troubleshooting a CPU-only PyTorch install and every runtime o
 
 | Model | Used for | Notes |
 |---|---|---|
-| FLUX.2 Klein 9B NVFP4 | Quality default: generate, edit, references, sketch, faces | Non-commercial licence |
-| FLUX.2 Klein 4B NVFP4 / BF16 | Quality alternatives | Choose 4B NVFP4 for commercial work |
-| Z-Image Turbo | Fast mode and canvas expansion | |
+| FLUX.2 Klein 9B NVFP4 | Quality preset: every AI tool | Non-commercial licence |
+| FLUX.2 Klein 4B NVFP4 | Fast preset: every AI tool, quicker and lighter | Use this for commercial work |
+| FLUX.2 Klein 4B BF16 | For GPUs without NVFP4 support | Advanced controls |
 | SAM 2.1 Tiny | Click selection and layer cut-outs | Runs on the CPU |
 | Grounding DINO tiny | Find, Subject and face detection | Runs on the CPU |
 | ViTMatte small | Soft edges for Subject and Remove background | Runs on the CPU |
-| FLUX.1 Fill Dev | Optional specialist | Gated and not yet fit for 16 GB |
 
-On the target GPU a 1024 × 1024 generation takes about 3 s, and a full-frame edit about 8 s. The engine warms up the Quality model in the background at start-up. See the [model comparison](benchmarks/MODEL_COMPARISON_2026-10-09.md) for measurements.
+One FLUX.2 Klein model does all the AI work: generate, edit, replace, remove, sketch, fix faces and expand. The CPU models handle selection. On the target GPU a 1024 × 1024 generation takes about 3 s, a full-frame edit about 8 s, and widening a 1254 px photo by half about 10 s. The engine warms up the Quality model in the background at start-up. See the [model comparison](benchmarks/MODEL_COMPARISON_2026-10-09.md) for measurements.
 
 ## Desktop app
 

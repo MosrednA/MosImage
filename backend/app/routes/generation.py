@@ -7,7 +7,6 @@ from pydantic import ValidationError
 from .. import storage
 from ..faces import run_face_fix
 from ..jobs import jobs
-from ..models.flux2_klein_nvfp4 import KLEIN_MODELS
 from ..schemas import EditRequest, FaceFixRequest, GenerationRecord, InpaintForm, JobResponse, OutpaintForm, TextToImageRequest
 from ..services import run_image_edit, run_inpaint, run_outpaint, run_text_to_image
 from .common import check_references, http_errors, job_response, parse_parameters, read_uploaded_image, require_capability
@@ -17,15 +16,16 @@ router = APIRouter(prefix="/api")
 
 @router.post("/generate", response_model=JobResponse)
 def generate(request: TextToImageRequest) -> JobResponse:
-    check_references(request.reference_ids, request.model_name)
+    require_capability(request.model_name, "text-to-image", "This model cannot generate images.")
+    check_references(request.reference_ids)
     return job_response(jobs.submit("text-to-image", lambda control: run_text_to_image(request, control)))
 
 
 @router.post("/edit", response_model=JobResponse)
 async def edit_image(image: UploadFile = File(...), parameters: str = Form(...)) -> JobResponse:
     request = parse_parameters(EditRequest, parameters)
-    require_capability(request.model_name, "edit", "Editing the whole image needs the Quality model (FLUX.2 Klein).")
-    check_references(request.reference_ids, request.model_name)
+    require_capability(request.model_name, "edit", "This model cannot edit the whole image.")
+    check_references(request.reference_ids)
     content = await read_uploaded_image(image)
     return job_response(jobs.submit("edit", lambda control: run_image_edit(request, content, image.filename, control)))
 
@@ -68,9 +68,8 @@ async def inpaint(
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if request.edit_operation == "sketch" and request.model_name not in KLEIN_MODELS:
-        raise HTTPException(status_code=422, detail="Rendering a sketch needs the Quality model (FLUX.2 Klein).")
-    check_references(request.reference_ids, request.model_name)
+    require_capability(request.model_name, "inpaint", "This model cannot edit a selection.")
+    check_references(request.reference_ids)
     image_bytes = await read_uploaded_image(image)
     mask_bytes = await read_uploaded_image(mask)
     return job_response(jobs.submit(
@@ -82,7 +81,7 @@ async def inpaint(
 @router.post("/outpaint", response_model=JobResponse)
 async def outpaint(image: UploadFile = File(...), parameters: str = Form(...)) -> JobResponse:
     request = parse_parameters(OutpaintForm, parameters)
-    require_capability(request.model_name, "outpaint", "Choose a mask-conditioned model for expansion: Z-Image Turbo or FLUX Fill.")
+    require_capability(request.model_name, "outpaint", "This model cannot expand the canvas.")
     content = await read_uploaded_image(image)
     return job_response(jobs.submit("outpaint", lambda control: run_outpaint(request, content, control)))
 
@@ -90,8 +89,8 @@ async def outpaint(image: UploadFile = File(...), parameters: str = Form(...)) -
 @router.post("/faces", response_model=JobResponse)
 async def fix_faces(image: UploadFile = File(...), parameters: str = Form(...), mask: UploadFile | None = File(None)) -> JobResponse:
     request = parse_parameters(FaceFixRequest, parameters)
-    require_capability(request.model_name, "edit", "Fix faces needs the Quality model (FLUX.2 Klein).")
-    check_references(request.reference_ids, request.model_name)
+    require_capability(request.model_name, "edit", "This model cannot fix faces.")
+    check_references(request.reference_ids)
     content = await read_uploaded_image(image)
     mask_bytes = await read_uploaded_image(mask) if mask is not None else None
     return job_response(jobs.submit("edit", lambda control: run_face_fix(request, content, image.filename, mask_bytes, control)))

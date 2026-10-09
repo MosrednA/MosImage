@@ -40,14 +40,13 @@ MosImage is two local processes: a FastAPI engine that owns the models, the job 
 
 ### Model providers (`models/`)
 
-Every runtime sits behind the `ImageModelProvider` protocol in `base.py`. `registry.py` keeps one large pipeline resident at a time to fit 16 GB of VRAM.
+Every runtime sits behind the `ImageModelProvider` protocol in `base.py`. `registry.py` keeps one large pipeline resident at a time to fit 16 GB of VRAM. All three models are FLUX.2 Klein and support every task: generation, whole-picture edits, masked edits and expansion.
 
 | Provider | File | Role |
 |---|---|---|
-| FLUX.2 Klein 9B NVFP4 | `flux2_klein_nvfp4.py`, `klein_text_encoder.py` | Quality default: generation, editing, references, sketch, faces |
-| FLUX.2 Klein 4B NVFP4 / BF16 | `flux2_klein.py` | Lighter and commercially licensed alternatives |
-| Z-Image Turbo | `z_image.py` | Fast mode and canvas expansion |
-| FLUX.1 Fill Dev | `flux_fill.py` | Optional specialist; not ready for the 16 GB profile |
+| FLUX.2 Klein 9B NVFP4 | `flux2_klein_nvfp4.py`, `klein_text_encoder.py` | Quality preset |
+| FLUX.2 Klein 4B NVFP4 | `flux2_klein_nvfp4.py` | Fast preset; commercially licensed |
+| FLUX.2 Klein 4B BF16 | `flux2_klein.py` | For GPUs without NVFP4 support |
 
 `nvfp4_runtime.py` loads the native CUDA NVFP4 transformer, shared with the benchmark tools.
 
@@ -55,7 +54,7 @@ Every runtime sits behind the `ImageModelProvider` protocol in `base.py`. `regis
 
 | Module | Purpose |
 |---|---|
-| `compositing.py` | Context crops, soft masks, colour-drift correction and protected compositing for inpainting |
+| `compositing.py` | Context crops, soft masks, colour-drift correction, seam matching for expansion and protected compositing |
 | `selection.py` | SAM 2.1 Tiny point selection, text selection and subject cut-outs |
 | `detection.py` | Grounding DINO tiny text-to-box detection |
 | `matting.py` | ViTMatte edge refinement for hair and fur |

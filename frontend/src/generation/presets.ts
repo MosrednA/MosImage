@@ -18,17 +18,14 @@ export const GENERATION_PRESETS: Record<GenerationPreset, GenerationPresetConfig
   },
   fast: {
     label: "Fast",
-    description: "Quick iterations",
-    modelName: "z-image-turbo",
-    steps: 8,
-    guidance: 0,
+    description: "Quicker, lighter model",
+    modelName: "flux2-klein-4b-nvfp4",
+    steps: 4,
+    guidance: 1,
   },
 };
 
+/** Both 4B variants count as Fast; 9B is Quality. */
 export function presetForModel(modelName: string): GenerationPreset {
-  return modelName === GENERATION_PRESETS.fast.modelName ? "fast" : "quality";
-}
-
-export function isKleinModel(modelName: string): boolean {
-  return modelName === "flux2-klein-9b-nvfp4" || modelName === "flux2-klein-4b" || modelName === "flux2-klein-4b-nvfp4";
+  return modelName.startsWith("flux2-klein-4b") ? "fast" : "quality";
 }

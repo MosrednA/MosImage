@@ -5,7 +5,7 @@
 MosImage uses a split local app architecture:
 
 - `backend/` contains the FastAPI API, SQLite metadata layer, job queue, and model provider registry.
-- `backend/app/models/` contains runtime adapters. The Quality default is FLUX.2 Klein 9B NVFP4 (`flux2_klein_nvfp4.py`, with its RAM-streamed FP8 text encoder in `klein_text_encoder.py`); Klein 4B NVFP4/BF16 (`flux2_klein.py`), Z-Image Turbo (`z_image.py`, Fast) and FLUX Fill stay registered in `registry.py`.
+- `backend/app/models/` contains runtime adapters. The Quality default is FLUX.2 Klein 9B NVFP4 (`flux2_klein_nvfp4.py`, with its RAM-streamed FP8 text encoder in `klein_text_encoder.py`); Klein 4B NVFP4 (the Fast preset) and 4B BF16 (`flux2_klein.py`) are the other models in `registry.py`. Every AI tool, including expansion, runs on FLUX.2 Klein; selection runs on CPU models (SAM 2.1 Tiny, Grounding DINO tiny, ViTMatte).
 - `frontend/` contains the React + Vite UI and optional Tauri shell in `frontend/src-tauri/`.
 - `data/images/{inputs,masks,outputs}/` stores local image files. `data/app.db` stores metadata.
 - `models/` is reserved for local checkpoints or manually downloaded model files.
@@ -38,6 +38,6 @@ Before submitting changes, run `npm run build` in `frontend/` and at least `pyth
 
 ## Commit & Pull Request Guidelines
 
-Use concise, imperative commit messages such as `Add Z-Image provider` or `Fix inpaint mask upload`.
+Use concise, imperative commit messages such as `Add Klein expansion` or `Fix inpaint mask upload`.
 
 Pull requests should include a summary, test results, linked issues when applicable, and screenshots for UI changes. Keep PRs scoped to one logical change.

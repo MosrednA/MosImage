@@ -6,7 +6,6 @@ import { EditorSettings } from "../components/EditorSettings";
 import { canvasBlob, loadImage, loadMask, maskedLayer } from "../layers/bitmaps";
 import { MAX_LAYERS } from "../layers/stack";
 import { EditScope, Operation, SketchScope, taskFor } from "./operation";
-import { isKleinModel } from "./presets";
 
 /** A full generation, the selected footprint of a regional AI edit, an edit of one layer, or the fixed faces. */
 export type LayerResult = { kind: "selection"; mask: Blob; name: string; replaces: string | null }
@@ -58,17 +57,16 @@ export interface SubmissionInput {
 
 /** Blending keeps most of the layer and redraws its light and edges. */
 export const BLEND_STRENGTH = 0.6;
-const FILL_REMOVE_PROMPT = "Remove the selected object completely. Reconstruct the background naturally, matching the surrounding lighting, texture and perspective. ";
 
 export function requestPrompt(operation: Operation, settings: EditorSettings): string {
   const prompt = settings.prompt.trim();
   if (operation !== "remove") return prompt;
-  return isKleinModel(settings.model_name) ? prompt || "Continue the surrounding background." : FILL_REMOVE_PROMPT + prompt;
+  return prompt || "Continue the surrounding background.";
 }
 
 export function requestParameters(settings: EditorSettings, prompt: string): EditParameters {
   return {
-    prompt, negative_prompt: settings.negative_prompt || undefined, model_name: settings.model_name, runtime_mode: settings.runtime_mode,
+    prompt, model_name: settings.model_name, runtime_mode: settings.runtime_mode,
     seed: settings.seed ? Number(settings.seed) : undefined, steps: settings.steps, guidance: settings.guidance, count: settings.count,
   };
 }

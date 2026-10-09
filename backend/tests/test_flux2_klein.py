@@ -13,8 +13,7 @@ from app.jobs import JobCancelled
 from app.models.base import ModelReference
 from app.models.flux2_klein import MULTI_REFERENCE_AREA, REFERENCE_BACKGROUND, Flux2KleinProvider, _edit_prompt, _inpaint_prompt
 from app.models.registry import ModelRegistry
-from app.models.z_image import ZImageTurboProvider
-from app.schemas import EditRequest, InpaintForm, LoadModelRequest, TextToImageRequest
+from app.schemas import EditRequest, InpaintForm, LoadModelRequest, OutpaintForm, TextToImageRequest
 
 
 class Flux2KleinPlacementTests(unittest.TestCase):
@@ -32,7 +31,7 @@ class Flux2KleinPlacementTests(unittest.TestCase):
     def test_model_reports_native_editing_capabilities(self) -> None:
         info = self.provider.info()
         self.assertEqual(info.name, "flux2-klein-4b")
-        self.assertEqual(info.capabilities, ["text-to-image", "edit", "inpaint"])
+        self.assertEqual(info.capabilities, ["text-to-image", "edit", "inpaint", "outpaint"])
 
     def test_switching_to_inpaint_shares_the_loaded_weights_without_reloading(self) -> None:
         generation = MagicMock()
@@ -262,11 +261,19 @@ class Flux2KleinPlacementTests(unittest.TestCase):
         self.assertIn("soft dusk", prompt)
         self.assertNotIn("Place one complete subject", prompt)
 
+    def test_expansion_prompt_continues_the_scene_into_the_border(self) -> None:
+        prompt = _inpaint_prompt(OutpaintForm(prompt="a sunny beach.", left=64))
+        self.assertTrue(prompt.startswith("Extend the picture outward into the masked border with a sunny beach."))
+        self.assertIn("no frame, border or visible seam", prompt)
+        self.assertIn("Match the surrounding lighting", prompt)
+
 
 class ModelRegistryTests(unittest.TestCase):
-    def test_registry_lists_quality_fast_and_specialist_models(self) -> None:
-        names = [model.name for model in ModelRegistry().list()]
-        self.assertEqual(names, ["flux2-klein-9b-nvfp4", "flux2-klein-4b-nvfp4", "flux2-klein-4b", "z-image-turbo", "flux1-fill-dev"])
+    def test_registry_lists_only_klein_models_and_each_does_every_task(self) -> None:
+        models = ModelRegistry().list()
+        self.assertEqual([model.name for model in models], ["flux2-klein-9b-nvfp4", "flux2-klein-4b-nvfp4", "flux2-klein-4b"])
+        for model in models:
+            self.assertEqual(set(model.capabilities), {"text-to-image", "edit", "inpaint", "outpaint"})
 
     def test_switching_precision_releases_the_other_klein_pipeline(self) -> None:
         registry = ModelRegistry()
@@ -277,17 +284,6 @@ class ModelRegistryTests(unittest.TestCase):
                 registry.activate(target)
                 self.assertFalse(provider.info().loaded)
 
-    def test_activating_quality_releases_the_fast_pipeline(self) -> None:
-        registry = ModelRegistry()
-        fast = registry.get("z-image-turbo")
-        self.assertIsInstance(fast, ZImageTurboProvider)
-        fast._text_pipe = object()
-        fast._text_placement = "cuda"
-
-        selected = registry.activate("flux2-klein-4b")
-
-        self.assertIsInstance(selected, Flux2KleinProvider)
-        self.assertFalse(fast.info().loaded)
 
 
 if __name__ == "__main__":

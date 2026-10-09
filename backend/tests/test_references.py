@@ -197,10 +197,10 @@ class ReferenceApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIsNotNone(response.json()["subject_url"])
 
-    def test_inpaint_rejects_missing_references_and_non_klein_models_before_queueing(self) -> None:
+    def test_inpaint_rejects_missing_references_and_unknown_models_before_queueing(self) -> None:
         with isolated_data():
             reference_id = references.create_reference(new_document(), png(Image.new("RGB", (8, 8))), "p.png")["id"]
-            for fields in ({"reference_ids": [str(reference_id), str(reference_id + 5)]}, {"reference_ids": [str(reference_id)], "model_name": "z-image-turbo"}):
+            for fields in ({"reference_ids": [str(reference_id), str(reference_id + 5)]}, {"reference_ids": [str(reference_id)], "model_name": "not-a-model"}):
                 with self.subTest(fields=fields), patch("app.main.jobs.submit") as submit:
                     response = TestClient(app).post(
                         "/api/inpaint",
@@ -211,22 +211,22 @@ class ReferenceApiTests(unittest.TestCase):
                     submit.assert_not_called()
 
 
-    def test_generation_rejects_missing_references_and_non_klein_models_before_queueing(self) -> None:
+    def test_generation_rejects_missing_references_and_unknown_models_before_queueing(self) -> None:
         with isolated_data():
             reference_id = references.create_reference(None, png(Image.new("RGB", (8, 8))), "p.png")["id"]
-            for fields in ({"reference_ids": [reference_id, reference_id + 5]}, {"reference_ids": [reference_id], "model_name": "z-image-turbo"}):
+            for fields in ({"reference_ids": [reference_id, reference_id + 5]}, {"reference_ids": [reference_id], "model_name": "not-a-model"}):
                 with self.subTest(fields=fields), patch("app.main.jobs.submit") as submit:
                     response = TestClient(app).post("/api/generate", json={"prompt": "on a roller coaster", **fields})
                     self.assertEqual(response.status_code, 422)
                     submit.assert_not_called()
 
 
-    def test_whole_image_edits_need_klein_and_existing_references_before_queueing(self) -> None:
+    def test_whole_image_edits_need_a_known_model_and_existing_references_before_queueing(self) -> None:
         with isolated_data():
             reference_id = references.create_reference(None, png(Image.new("RGB", (8, 8))), "p.png")["id"]
             client = TestClient(app)
             picture = ("picture.png", png(Image.new("RGB", (64, 48))), "image/png")
-            for fields in ({"model_name": "z-image-turbo"}, {"reference_ids": [reference_id + 5]}, {"prompt": ""}):
+            for fields in ({"model_name": "not-a-model"}, {"reference_ids": [reference_id + 5]}, {"prompt": ""}):
                 with self.subTest(fields=fields), patch("app.main.jobs.submit") as submit:
                     parameters = json.dumps({"prompt": "make it night", **fields})
                     self.assertEqual(client.post("/api/edit", files={"image": picture}, data={"parameters": parameters}).status_code, 422)

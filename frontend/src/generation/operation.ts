@@ -8,11 +8,6 @@ export function taskFor(operation: Operation): ImageTask {
   return operation === "generate" ? "text-to-image" : operation === "edit" || operation === "sketch" || operation === "faces" ? "edit" : operation === "expand" ? "outpaint" : "inpaint";
 }
 
-/** Operations that only the Quality model (FLUX.2 Klein) can do. */
-export function needsQuality(operation: Operation): boolean {
-  return operation === "sketch" || operation === "faces";
-}
-
 /** Render a sketch on its own patch of the picture, or redraw the whole picture around it. */
 export type SketchScope = "strokes" | "whole";
 

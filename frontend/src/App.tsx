@@ -10,8 +10,7 @@ import { ImageSize } from "./canvas/coordinates";
 import { ExpansionCanvas } from "./canvas/ExpansionCanvas";
 import { validExpansion } from "./canvas/expansion";
 import { errorMessage } from "./errors";
-import { GENERATION_PRESETS, isKleinModel } from "./generation/presets";
-import { EditScope, Operation, SketchScope, isWholeImage, needsQuality, taskFor } from "./generation/operation";
+import { EditScope, Operation, SketchScope, isWholeImage, taskFor } from "./generation/operation";
 import { CommandState, canSubmit, commandHint } from "./generation/commandState";
 import { LayerResult, submitJob } from "./generation/submission";
 import { SettingsControls, defaultSettings, settingsSummary } from "./components/EditorSettings";
@@ -254,7 +253,6 @@ export default function App() {
     documentRef.current = null;
     setSource(null); setDocument(null); setSize(null); selection.reset();
     setAlternatives([]); setProposal(null); setLayerResult(null); setBlendTarget(null); setOperation("generate"); jobs.setJob(null); setError(null);
-    if (settings.model_name === "flux1-fill-dev") setSettings(current => ({ ...current, preset: "quality", model_name: defaultSettings.model_name, steps: defaultSettings.steps, guidance: defaultSettings.guidance }));
   }
 
   function chooseEditScope(next: EditScope) {
@@ -279,13 +277,7 @@ export default function App() {
     if (operation === "expand" || operation === "sketch" || isWholeImage(operation)) { selection.clear(); setOperation("replace"); }
   }
   function finishMasking() { setLayerMasking(false); selection.setLayerPoints([]); setTool("transform"); }
-  /** Sketch, Fix faces and references need FLUX.2 Klein. */
-  function switchToQuality() {
-    setSettings(current => isKleinModel(current.model_name) ? current
-      : { ...current, preset: "quality", model_name: GENERATION_PRESETS.quality.modelName, steps: GENERATION_PRESETS.quality.steps, guidance: GENERATION_PRESETS.quality.guidance });
-  }
   function chooseOperation(next: Exclude<Operation, "expand">) {
-    if (needsQuality(next)) switchToQuality();
     // The pencil belongs to Sketch; other operations go back to selecting.
     if (next === "sketch") { layers.select(null); setLayerMasking(false); setTool("sketch"); }
     else if (tool === "sketch" || (next === "faces" && tool === "transform")) setTool("object");
@@ -296,19 +288,10 @@ export default function App() {
       if (next === "edit") setEditScope(layers.active ? "layer" : "visible");
       else layers.select(null);
       selection.clear();
-      if (!models.find(model => model.name === settings.model_name)?.capabilities.includes(taskFor(next))) {
-        setSettings(current => ({ ...current, preset: "quality", model_name: defaultSettings.model_name, steps: defaultSettings.steps, guidance: defaultSettings.guidance }));
-      }
     }
     setOperation(next);
   }
-  function chooseExpansion() {
-    if (!models.find(model => model.name === settings.model_name)?.capabilities.includes("outpaint")) {
-      const config = GENERATION_PRESETS.fast;
-      setSettings(current => ({ ...current, preset: "fast", model_name: config.modelName, steps: config.steps, guidance: config.guidance }));
-    }
-    setOperation("expand");
-  }
+  function chooseExpansion() { setOperation("expand"); }
   function chooseReference(id: number) {
     const wasActive = refs.active.some(item => item.id === id);
     if (!refs.toggle(id)) { setError(`Use up to ${MAX_ACTIVE_REFERENCES} references per edit. Take one out first.`); return; }
@@ -316,11 +299,8 @@ export default function App() {
     // Without a picture, references compose a new image.
     if (!source) setOperation("generate");
     else if (operation !== "replace" && !isWholeImage(operation)) setOperation("replace");
-    // References need FLUX.2 Klein; two proposals make a good likeness easy to pick.
-    setSettings(current => {
-      const quality = isKleinModel(current.model_name) ? {} : { preset: "quality" as const, model_name: GENERATION_PRESETS.quality.modelName, steps: GENERATION_PRESETS.quality.steps, guidance: GENERATION_PRESETS.quality.guidance };
-      return { ...current, ...quality, count: current.count === 1 ? 2 : current.count };
-    });
+    // Two proposals make a good likeness easy to pick.
+    setSettings(current => ({ ...current, count: current.count === 1 ? 2 : current.count }));
   }
   function collapsePanel(collapsed: boolean) {
     setPanelCollapsed(collapsed);
@@ -452,9 +432,8 @@ export default function App() {
     if (file && !locked) void perform(() => openFile(file));
   }
 
-  const quality = isKleinModel(settings.model_name);
   const command: CommandState = {
-    operation, prompt: settings.prompt, quality, hasImage: !!source, hasMask: !!mask, hasSketch: !!sketch,
+    operation, prompt: settings.prompt, hasImage: !!source, hasMask: !!mask, hasSketch: !!sketch,
     expansionValid: !!size && validExpansion(size, expansion), editScope, editLayerName: editLayer?.name ?? null, sketchScope,
     referenceNames: references.map(item => item.name), tool, activeLayerName: activeLayer?.name ?? null, layerMasking, blendingName: blending?.name ?? null,
   };

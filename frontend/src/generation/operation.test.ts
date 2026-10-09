@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { facesHint, isWholeImage, joinNames, layerEditHint, needsQuality, operationHint, promptPlaceholder, sketchHint, submitLabel, taskFor } from "./operation";
+import { facesHint, isWholeImage, joinNames, layerEditHint, operationHint, promptPlaceholder, sketchHint, submitLabel, taskFor } from "./operation";
 
 describe("sketch and faces", () => {
-  it("run on the Quality model's edit pipeline", () => {
+  it("run on FLUX.2 Klein's edit pipeline", () => {
     expect(taskFor("sketch")).toBe("edit");
     expect(taskFor("faces")).toBe("edit");
-    expect(needsQuality("sketch") && needsQuality("faces")).toBe(true);
-    expect(needsQuality("replace")).toBe(false);
     expect(isWholeImage("sketch") || isWholeImage("faces")).toBe(false);
     expect(submitLabel("sketch")).toBe("Render");
     expect(submitLabel("faces")).toBe("Fix faces");

@@ -82,7 +82,6 @@ export interface SystemInfo {
   enable_cpu_offload?: boolean;
   allow_cpu_generation?: boolean;
   runtime_mode?: RuntimeMode;
-  gpu_resident_max_pixels?: number;
   max_loaded_pipelines?: number;
   attention_backend?: string;
   cuda_available?: boolean;
@@ -96,7 +95,6 @@ export interface SystemInfo {
 
 export interface TextToImageRequest {
   prompt: string;
-  negative_prompt?: string;
   model_name: string;
   runtime_mode: RuntimeMode;
   seed?: number;

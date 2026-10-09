@@ -14,7 +14,7 @@ from app.config import settings
 from app.jobs import JobCancelled, JobControl
 from app.models.base import ModelReference
 from app.runtime import require_generation_device, selected_device, selected_dtype, torch_module
-from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, RuntimeMode, TextToImageRequest
+from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, OutpaintForm, RuntimeMode, TextToImageRequest
 
 
 Placement = Literal["cuda", "offload"]
@@ -35,7 +35,12 @@ MATCH_SURROUNDINGS = " Match the surrounding lighting, color palette, perspectiv
 
 
 def _inpaint_prompt(request: InpaintForm, references: Sequence[str] = ()) -> str:
-    if request.edit_operation == "sketch":
+    if isinstance(request, OutpaintForm):
+        # The masked border is neutral grey padding around the original picture.
+        instruction = (f"Extend the picture outward into the masked border with {request.prompt.strip().rstrip('.')}."
+                       " Continue the existing scene seamlessly: lines, horizon, objects and textures that reach the edge"
+                       " carry on naturally, with no frame, border or visible seam.")
+    elif request.edit_operation == "sketch":
         # In the local trial this followed a crude deer and top hat closely,
         # with the sketched crop also given as the reference image.
         instruction = (f"Turn the rough coloured sketch in the masked area into {request.prompt.strip().rstrip('.')}."
@@ -186,7 +191,7 @@ class Flux2KleinProvider:
             name=self.name,
             display_name=self.display_name,
             model_id=self.model_id,
-            capabilities=["text-to-image", "edit", "inpaint"],
+            capabilities=["text-to-image", "edit", "inpaint", "outpaint"],
             loaded=bool(self._pipes),
             loaded_pipelines=[f"{task}:{self._placement}" for task in self._pipes],
         )

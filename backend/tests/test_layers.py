@@ -95,7 +95,7 @@ class LayerTests(unittest.TestCase):
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
         document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset)], "Add layer")
         generation = storage.create_generation({
-            "task": "outpaint", "prompt": "more garden", "negative_prompt": None, "model_name": "z-image-turbo",
+            "task": "outpaint", "prompt": "more garden", "negative_prompt": None, "model_name": "flux2-klein-9b-nvfp4",
             "runtime_mode": "balanced", "seed": 1, "steps": 4, "guidance": 1.0, "width": 160, "height": 64, "strength": 1.0,
             "input_image_path": None, "mask_image_path": None, "output_image_path": self._output((160, 64)),
         })

@@ -22,7 +22,6 @@ BASE_REVISION_9B = "92196c8e11f7b6cf2b7493e037d8c5345c559216"
 QUANT_REPO_9B = "black-forest-labs/FLUX.2-klein-9b-nvfp4"
 QUANT_REVISION_9B = "e882f64f6aa086fcf8915a7763550e05af10ef13"
 QUANT_FILENAME_9B = "flux-2-klein-9b-nvfp4.safetensors"
-KLEIN_MODELS = frozenset({"flux2-klein-9b-nvfp4", "flux2-klein-4b", "flux2-klein-4b-nvfp4"})
 
 
 class Flux2KleinNvfp4Provider(Flux2KleinProvider):

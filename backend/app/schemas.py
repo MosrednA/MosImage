@@ -98,9 +98,6 @@ class InpaintForm(BaseModel):
 class OutpaintForm(InpaintForm):
     model_config = ConfigDict(extra="forbid")
     reference_ids: list[int] = Field(default_factory=list, max_length=0)
-    model_name: str = "z-image-turbo"
-    steps: int = Field(default=8, ge=1, le=100)
-    guidance: float = Field(default=0.0, ge=0.0, le=30.0)
     left: int = Field(default=0, ge=0, le=2048)
     top: int = Field(default=0, ge=0, le=2048)
     right: int = Field(default=0, ge=0, le=2048)

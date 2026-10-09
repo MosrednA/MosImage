@@ -194,7 +194,7 @@ class SmartToolApiTests(unittest.TestCase):
 
     def test_fix_faces_needs_klein_and_takes_an_optional_selection(self) -> None:
         with patch("app.main.jobs.submit") as submit:
-            parameters = json.dumps({"model_name": "z-image-turbo"})
+            parameters = json.dumps({"model_name": "not-a-model"})
             self.assertEqual(self.client.post("/api/faces", files={"image": self.picture}, data={"parameters": parameters}).status_code, 422)
             submit.assert_not_called()
         with self.queued("edit") as submit:
@@ -203,10 +203,10 @@ class SmartToolApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(submit.call_args.args[0], "edit")
 
-    def test_sketches_need_klein(self) -> None:
+    def test_sketches_need_a_known_model(self) -> None:
         with patch("app.main.jobs.submit") as submit:
             mask = ("mask.png", png(Image.new("L", (64, 48), 255)), "image/png")
-            data = {"prompt": "a deer", "edit_operation": "sketch", "model_name": "z-image-turbo"}
+            data = {"prompt": "a deer", "edit_operation": "sketch", "model_name": "not-a-model"}
             self.assertEqual(self.client.post("/api/inpaint", files={"image": self.picture, "mask": mask}, data=data).status_code, 422)
             submit.assert_not_called()
 

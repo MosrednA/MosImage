@@ -34,7 +34,7 @@ beforeEach(() => vi.clearAllMocks());
 describe("prompts and names", () => {
   it("fills in a removal prompt", () => {
     expect(requestPrompt("remove", { ...defaultSettings, prompt: " " })).toBe("Continue the surrounding background.");
-    expect(requestPrompt("remove", { ...defaultSettings, model_name: "flux1-fill-dev", prompt: "x" })).toMatch(/^Remove the selected object completely\..* x$/);
+    expect(requestPrompt("remove", { ...defaultSettings, prompt: " x " })).toBe("x");
     expect(requestPrompt("replace", { ...defaultSettings, prompt: "  hat " })).toBe("hat");
   });
   it("names results after the prompt or the blended layer", () => {

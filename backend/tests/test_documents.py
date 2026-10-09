@@ -77,7 +77,7 @@ class DocumentPersistenceTests(unittest.TestCase):
                 "task": "inpaint",
                 "prompt": "replace object",
                 "negative_prompt": None,
-                "model_name": "z-image-turbo",
+                "model_name": "flux2-klein-9b-nvfp4",
                 "runtime_mode": "balanced",
                 "seed": seed,
                 "steps": 8,

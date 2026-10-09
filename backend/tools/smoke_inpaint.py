@@ -8,7 +8,7 @@ from typing import Any
 
 from app.compositing import prepare_inpaint_workspace
 from app.config import settings
-from app.models.z_image import ZImageTurboProvider
+from app.models.flux2_klein_nvfp4 import Flux2Klein9bNvfp4Provider
 from app.schemas import InpaintForm
 
 
@@ -32,10 +32,10 @@ def main() -> None:
     parser.add_argument("input", type=Path)
     parser.add_argument("mask", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--steps", type=int, default=1)
+    parser.add_argument("--steps", type=int, default=4)
     args = parser.parse_args()
 
-    provider = ZImageTurboProvider()
+    provider = Flux2Klein9bNvfp4Provider()
     control = ConsoleJobControl()
     started = time.perf_counter()
     try:
@@ -57,7 +57,7 @@ def main() -> None:
                 prompt="Preserve the scene while making a subtle coherent edit",
                 runtime_mode="balanced",
                 steps=args.steps,
-                guidance=0.0,
+                guidance=1.0,
                 strength=1.0,
             )
             provider.inpaint(

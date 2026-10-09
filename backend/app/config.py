@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     max_loaded_pipelines: int = 1
     enable_cpu_offload: bool = True
     runtime_mode: str = "balanced"
-    gpu_resident_max_pixels: int = 802816
     preferred_device: str = "cuda"
     preferred_dtype: str = "bfloat16"
     enable_tf32: bool = True

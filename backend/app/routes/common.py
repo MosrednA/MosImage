@@ -10,7 +10,6 @@ from pydantic import BaseModel, ValidationError
 from .. import references
 from ..config import settings
 from ..jobs import Job
-from ..models.flux2_klein_nvfp4 import KLEIN_MODELS
 from ..models.registry import registry
 from ..schemas import JobResponse
 
@@ -46,13 +45,11 @@ def require_capability(model_name: str, capability: str, message: str) -> None:
         raise HTTPException(status_code=422, detail=message)
 
 
-def check_references(reference_ids: list[int], model_name: str) -> None:
+def check_references(reference_ids: list[int]) -> None:
     if not reference_ids:
         return
     if any(references.get_reference(reference_id) is None for reference_id in reference_ids):
         raise HTTPException(status_code=422, detail="A selected reference no longer exists.")
-    if model_name not in KLEIN_MODELS:
-        raise HTTPException(status_code=422, detail="References need the Quality model (FLUX.2 Klein).")
 
 
 def job_response(job: Job) -> JobResponse:
