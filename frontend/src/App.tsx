@@ -1,7 +1,7 @@
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import {
   DocumentRecord, Expansion, GenerationRecord, JobStatus, LayerRecord, RevisionRecord,
-  acceptAlternative, copyReferences, createDocument, deleteDocument, deleteGeneration, fileUrl, getDocument, getGeneration,
+  acceptAlternative, copyReferences, createDocument, cropDocument, deleteDocument, deleteGeneration, fileUrl, getDocument, getGeneration,
   importGeneration, listModels, proposeAlternatives, redoDocument, undoDocument, updateDocument,
 } from "./api";
 import { EditorCanvas } from "./canvas/EditorCanvas";
@@ -9,6 +9,8 @@ import { CanvasTool, isSelectionTool, toolForKey } from "./canvas/tools";
 import { ImageSize } from "./canvas/coordinates";
 import { ExpansionCanvas } from "./canvas/ExpansionCanvas";
 import { validExpansion } from "./canvas/expansion";
+import { CropCanvas } from "./canvas/CropCanvas";
+import { CropRatio, CropRect, cropForRatio, fullCrop, ratioValue, resizeCrop, validCrop } from "./canvas/crop";
 import { errorMessage } from "./errors";
 import { EditScope, Operation, SketchScope, isWholeImage } from "./generation/operation";
 import { CommandState, canSubmit, commandHint } from "./generation/commandState";
@@ -23,6 +25,7 @@ import { CommandCard } from "./components/CommandCard";
 import { ProposalTray } from "./components/ProposalTray";
 import { JobOverlay } from "./components/JobOverlay";
 import { ExpansionDialog } from "./components/ExpansionDialog";
+import { CropBar } from "./components/CropBar";
 import { WelcomeCanvas } from "./components/WelcomeCanvas";
 import { ShortcutsDialog } from "./components/ShortcutsDialog";
 import { ReferencePanel } from "./components/ReferencePanel";
@@ -47,6 +50,8 @@ const BLEND_PROMPT = "Blend it naturally into the scene: match the lighting, col
 export default function App() {
   const [settings, setSettings] = useState(defaultSettings);
   const [error, setError] = useState<string | null>(null);
+  // A short confirmation, such as where an export was saved.
+  const [notice, setNotice] = useState<string | null>(null);
   const engine = useEngine(setError);
   const { models, setModels, system, online, cudaBlocked, refresh } = engine;
   const [document, setDocument] = useState<DocumentRecord | null>(null);
@@ -77,6 +82,8 @@ export default function App() {
   const [sketch, setSketch] = useState<Blob | null>(null);
   const [sketchClear, setSketchClear] = useState(0);
   const [sketchScope, setSketchScope] = useState<SketchScope>("strokes");
+  // Crop works on the picture as you see it; the image is a flattened copy, released when crop ends.
+  const [crop, setCrop] = useState<{ rect: CropRect; ratio: CropRatio; imageUrl: string } | null>(null);
   /** Start-screen references behind the proposals under review. */
   const generationReferences = useRef<number[]>([]);
   const refs = useReferences(document?.id ?? null, setError);
@@ -144,6 +151,13 @@ export default function App() {
     if (maskViewId !== layers.activeId) setMaskViewId(null);
   }, [layers.activeId]);
 
+  useEffect(() => () => { if (crop) URL.revokeObjectURL(crop.imageUrl); }, [crop?.imageUrl]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   useEffect(() => {
     const url = source ? URL.createObjectURL(source) : null;
     setSourceUrl(url);
@@ -166,7 +180,7 @@ export default function App() {
   useWindowEvents({ onKey: shortcut, onPaste: paste });
 
   function paste(event: ClipboardEvent) {
-    if (locked) return;
+    if (locked || crop) return;
     const file = Array.from(event.clipboardData?.files ?? []).find(item => item.type.startsWith("image/"));
     if (!file) return;
     event.preventDefault();
@@ -189,6 +203,12 @@ export default function App() {
       return;
     }
     if (locked) return;
+    if (crop && (event.key === "Enter" || event.key === "Escape")) {
+      event.preventDefault();
+      if (event.key === "Enter") void applyCrop(); else setCrop(null);
+      return;
+    }
+    if (ctrl && key === "s") { event.preventDefault(); if (source) void exportPicture(); return; }
     // , and . (or < and >) step through the proposals kept in an AI layer.
     const variantStep = { ",": -1, "<": -1, ".": 1, ">": 1 }[event.key];
     if (variantStep && !ctrl && !event.altKey && layers.active && layers.active.variant_paths.length > 1) {
@@ -214,7 +234,7 @@ export default function App() {
       if (event.shiftKey ? document.can_redo : document.can_undo) void perform(() => travel(event.shiftKey ? "redo" : "undo"));
     }
     if (!ctrl && !event.altKey && source) {
-      if (key === "c") { chooseExpansion(); return; }
+      if (key === "c") { if (event.shiftKey) chooseExpansion(); else void startCrop(); return; }
       const next = toolForKey(key);
       if (next) chooseTool(next);
     }
@@ -248,7 +268,7 @@ export default function App() {
     setSource(file); setDocument(record); setSize({ width: record.canvas_width, height: record.canvas_height });
     selection.reset(); setAlternatives([]); setProposal(null); setCompare(false);
     setBlendTarget(null); setLayerResult(null);
-    setOperation("replace"); setTool("object"); setExpansion(initialExpansion); setLibraryOpen(false); jobs.setJob(null);
+    setOperation("replace"); setTool("object"); setExpansion(initialExpansion); setLibraryOpen(false); jobs.setJob(null); setCrop(null);
   }
   async function openFile(file: File) {
     if (!file.type.startsWith("image/")) throw new Error("Choose a PNG, JPG or WebP image.");
@@ -293,7 +313,7 @@ export default function App() {
     setSettings(current => ({ ...current, prompt: "", scene_context: "" }));
     documentRef.current = null;
     setSource(null); setDocument(null); setSize(null); selection.reset();
-    setAlternatives([]); setProposal(null); setLayerResult(null); setBlendTarget(null); setOperation("generate"); jobs.setJob(null); setError(null);
+    setAlternatives([]); setProposal(null); setLayerResult(null); setBlendTarget(null); setOperation("generate"); jobs.setJob(null); setError(null); setCrop(null);
   }
 
   function chooseEditScope(next: EditScope) {
@@ -304,6 +324,7 @@ export default function App() {
     setSideTab("layers"); collapsePanel(false);
   }
   function chooseTool(next: CanvasTool) {
+    setCrop(null);
     if (next === "sketch") { chooseOperation("sketch"); return; }
     setTool(next);
     if (operation === "sketch" && next !== "move") setOperation("replace");
@@ -352,6 +373,7 @@ export default function App() {
     // The pencil belongs to Sketch; other operations go back to selecting.
     if (next === "sketch") { layers.select(null); setMaskingId(null); setTool("sketch"); }
     else if (tool === "sketch" || (next === "faces" && tool === "transform")) setTool("object");
+    setCrop(null);
     // Faces work on the picture as you see it; a selection may narrow them down.
     if (next === "faces") { layers.select(null); setMaskingId(null); }
     if (isWholeImage(next)) {
@@ -362,7 +384,41 @@ export default function App() {
     }
     setOperation(next);
   }
-  function chooseExpansion() { setOperation("expand"); }
+  function chooseExpansion() { setCrop(null); setOperation("expand"); }
+  /** Crop, as in Photoshop: the whole picture to start, then drag the edges. */
+  async function startCrop() {
+    if (!source || !size || locked || crop) return;
+    await perform(async () => {
+      await layers.settled();
+      const image = await picture.editImage();
+      selection.clear(); layers.select(null); setMaskingId(null);
+      if (operation === "expand" || operation === "sketch" || isWholeImage(operation)) setOperation("replace");
+      setCrop({ rect: fullCrop(size), ratio: "free", imageUrl: URL.createObjectURL(image) });
+    });
+  }
+  function cropRatio(ratio: CropRatio) {
+    if (!crop || !size) return;
+    const value = ratioValue(ratio, size);
+    setCrop({ ...crop, ratio, rect: ratio === "original" ? fullCrop(size) : value ? cropForRatio(size, value) : crop.rect });
+  }
+  async function applyCrop() {
+    if (!crop || !document || !size || !validCrop(size, crop.rect)) return;
+    const { rect } = crop;
+    await perform(async () => {
+      await layers.settled();
+      const current = documentRef.current ?? document;
+      if (current.current_revision_id === null || current.current_revision_id === undefined) throw new Error("This document has no image.");
+      await openSaved(await cropDocument(current.id, current.current_revision_id, rect));
+      await refresh();
+    });
+  }
+  async function exportPicture() {
+    setNotice(null);
+    try {
+      const saved = await picture.exportPicture(document?.name ?? "MosImage");
+      if (saved) setNotice(`Exported to ${saved}`);
+    } catch (err) { setError(errorMessage(err)); }
+  }
   function chooseReference(id: number) {
     const wasActive = refs.active.some(item => item.id === id);
     if (!refs.toggle(id)) { setError(`Use up to ${MAX_ACTIVE_REFERENCES} references per edit. Take one out first.`); return; }
@@ -529,12 +585,14 @@ export default function App() {
   return <main className="focus-app with-references">
     <TopBar document={document} onRename={name => document && setDocument({ ...document, name })} online={online} connecting={engine.connecting} system={system} warmUp={engine.warmUp} locked={locked} canExport={!!source}
       onUndo={() => void perform(() => travel("undo"))} onRedo={() => void perform(() => travel("redo"))}
-      onOpen={() => upload.current?.click()} onLibrary={() => setLibraryOpen(true)} onExport={() => void picture.exportPicture(document?.name ?? "MosImage").catch(err => setError(errorMessage(err)))} />
+      onOpen={() => upload.current?.click()} onLibrary={() => setLibraryOpen(true)} onExport={() => void exportPicture()} />
     <input ref={upload} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={onFile} />
-    <ToolRail hasImage={!!source} tool={tool} expanding={operation === "expand"} locked={locked} onNew={newImage} onTool={chooseTool} onExpand={chooseExpansion} />
+    <ToolRail hasImage={!!source} tool={tool} expanding={operation === "expand" && !crop} cropping={!!crop} locked={locked} onNew={newImage} onTool={chooseTool} onExpand={chooseExpansion} onCrop={() => void startCrop()} />
     <section className="focus-workspace" onDragOver={event => { event.preventDefault(); if (!locked) setDropActive(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false); }} onDrop={drop}>
       <div className="canvas-area">
-        {source && sourceUrl ? operation === "expand" && size
+        {source && sourceUrl ? crop && size
+          ? <CropCanvas imageUrl={crop.imageUrl} size={size} rect={crop.rect} ratio={ratioValue(crop.ratio, size)} onChange={rect => setCrop({ ...crop, rect })} disabled={locked} />
+          : operation === "expand" && size
           ? <ExpansionCanvas imageUrl={sourceUrl} size={size} expansion={expansion} onChange={setExpansion} disabled={locked} reviewing={reviewing} previewUrl={previewUrl} previewSize={chosen?.width && chosen.height ? { width: chosen.width, height: chosen.height } : null} />
           : <EditorCanvas imageUrl={sourceUrl} previewImageUrl={previewUrl} reviewing={reviewing} imageName={document?.name} onMaskChange={selection.setMask} tool={tool} disabled={locked} maskImportUrl={selection.maskUrl} clearToken={selection.clearToken}
             points={selection.points} onObjectPoint={point => void selection.objectPoint(point)} onRemovePoint={index => void selection.removePoint(index)} onClearSelection={selection.clear}
@@ -556,7 +614,11 @@ export default function App() {
         {busy && <JobOverlay job={job} />}
         {dropActive && <div className="drop-overlay">Drop to open your image</div>}
       </div>
-      {reviewing
+      {crop && size && !reviewing
+        ? <CropBar size={size} rect={crop.rect} ratio={crop.ratio} busy={busy} onRatio={cropRatio}
+          onSize={(width, height, keep) => setCrop({ ...crop, rect: resizeCrop(crop.rect, width, height, ratioValue(crop.ratio, size), keep) })}
+          onReset={() => setCrop({ ...crop, ratio: "free", rect: fullCrop(size) })} onCancel={() => setCrop(null)} onApply={() => void applyCrop()} />
+        : reviewing
         ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} onApplySeparately={layerResult ? () => void apply(true) : undefined} />
         : <CommandCard promptRef={promptRef} operation={operation} onOperation={chooseOperation} hasImage={!!source} locked={locked}
           editScope={editScope} onEditScope={document && layers.layers.length ? chooseEditScope : undefined} sketchScope={sketchScope} onSketchScope={setSketchScope}
@@ -564,6 +626,10 @@ export default function App() {
           references={references.map(item => ({ id: item.id, name: item.name, imageUrl: fileUrl(item.subject_url ?? item.image_url) }))} onRemoveReference={id => refs.toggle(id)}
           hint={commandHint(command)} cancelled={job?.status === "cancelled"} jobActive={jobs.active} cancelling={jobs.cancelling} canSubmit={submittable}
           onCanvasSize={() => setPanel("expansion")} onSettings={() => setPanel("settings")} onSubmit={() => void submit()} onCancel={() => void jobs.cancel()} />}
+      {notice && !error && <div className="saved-notice" role="status">
+        <span>{notice}</span>
+        <button className="icon-button" aria-label="Dismiss message" onClick={() => setNotice(null)}><Icon name="close" /></button>
+      </div>}
       {(cudaBlocked || error) && <div className="error-notice" role="alert">
         <span>{error ?? system?.setup_hint ?? "CUDA is unavailable. Check the local PyTorch installation."}</span>
         {!online && !engine.connecting && <button onClick={() => void engine.connect()}>Reconnect</button>}
@@ -572,7 +638,7 @@ export default function App() {
     </section>
     <SidePanel tab={document ? sideTab : "references"} onTab={setSideTab} collapsed={panelCollapsed} onCollapsed={collapsePanel} layerCount={layers.layers.length} referenceCount={refs.references.length} showLayers={!!document}>
       {document && sideTab === "layers"
-        ? <LayersPanel layers={layers.layers} activeId={activeLayer?.id ?? editLayer?.id ?? null} backgroundUrl={sourceUrl} uploading={layers.uploading} disabled={locked}
+        ? <LayersPanel layers={layers.layers} activeId={activeLayer?.id ?? editLayer?.id ?? null} backgroundUrl={sourceUrl} uploading={layers.uploading} disabled={locked || !!crop}
           canCopySelection={!!mask} onSelect={selectLayer} onAdd={files => void addLayerImages(files)} onCopySelection={() => void copySelectionToLayer()}
           onUpdate={layers.update} onPreview={layers.preview} onRemove={layers.remove} onDuplicate={layers.duplicate} onReorder={layers.reorder}
           onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)} onRemoveBackground={id => void selection.removeLayerBackground(id)}

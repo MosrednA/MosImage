@@ -339,6 +339,64 @@ def save_layers(document_id: int, base_revision_id: int, layers: list[dict[str, 
     return get_document(document_id) or _missing_document(document_id)
 
 
+MIN_CANVAS = 16
+MAX_CANVAS = 4096
+
+
+def crop(document_id: int, base_revision_id: int, x: int, y: int, width: int, height: int) -> dict[str, Any]:
+    """Cuts the canvas to a rectangle in background pixels, without AI.
+
+    The rectangle may reach past the picture: that space stays transparent, as
+    an empty canvas in Photoshop. Layers keep their place over the content.
+    """
+    if not (MIN_CANVAS <= width <= MAX_CANVAS and MIN_CANVAS <= height <= MAX_CANVAS):
+        raise ValueError(f"The canvas must be {MIN_CANVAS} to {MAX_CANVAS} pixels on each side.")
+    with storage.connect() as db:
+        document = db.execute("SELECT current_revision_id FROM documents WHERE id = ?", (document_id,)).fetchone()
+        if document is None:
+            raise LookupError("Document not found")
+        if document["current_revision_id"] != base_revision_id:
+            raise RevisionConflict("The document changed. Try again.")
+        base = db.execute("SELECT composite_image_path, layers FROM revisions WHERE id = ?", (base_revision_id,)).fetchone()
+        path = _cropped_image(_absolute_path(base["composite_image_path"]), x, y, width, height)
+        try:
+            revision_id = _insert_revision(
+                db,
+                document_id=document_id,
+                parent_revision_id=base_revision_id,
+                operation_type="crop",
+                composite_path=storage.to_relative(path),
+                mask_path=None,
+                parameters={"x": x, "y": y, "width": width, "height": height},
+                accepted=True,
+                layers=layer_store.shifted(layer_store.parse(base["layers"]), -x, -y),
+            )
+            _set_current_revision(db, document_id, revision_id)
+            db.commit()
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+    return get_document(document_id) or _missing_document(document_id)
+
+
+def _cropped_image(source: Path, x: int, y: int, width: int, height: int) -> Path:
+    with Image.open(source) as image:
+        image.load()
+        if (x, y, width, height) == (0, 0, *image.size):
+            raise ValueError("The canvas already has this size.")
+        if x >= image.width or y >= image.height or x + width <= 0 or y + height <= 0:
+            raise ValueError("Keep part of the picture on the canvas.")
+        if x >= 0 and y >= 0 and x + width <= image.width and y + height <= image.height:
+            result = image.crop((x, y, x + width, y + height))
+        else:
+            result = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            result.paste(image.convert("RGBA"), (-x, -y))
+    # PNG, so a cropped JPEG loses nothing more.
+    path = settings.revision_dir / f"revision-{uuid4().hex}.png"
+    result.save(path, "PNG")
+    return path
+
+
 def delete_document(document_id: int) -> None:
     """Removes a document, all its revisions and associated reference records and files."""
     with storage.connect() as db:

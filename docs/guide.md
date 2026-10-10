@@ -118,6 +118,14 @@ In an open document, Generate creates a full image without requiring a selection
 
 Expand supports draggable edges, format presets, and exact pixel margins. It adds space without cropping, and only a 16 px band along the original edge blends into the new area. The native canvas is capped at 4096 × 4096; generation still uses a model-facing image capped at 1024 on its longest edge. Applying an expansion updates document dimensions; undo/redo and reopening restore the corresponding revision dimensions.
 
+Crop (C, as in Photoshop) resizes the canvas without AI. Shift+C now opens Expand. Crop shows the picture as you see it, with its visible layers, and a box with rule-of-thirds lines.
+
+- **Edges and corners:** drag them in to cut. Drag them past the picture to add space, which stays transparent; dragging inside moves the box.
+- **Ratios:** Free, Original, 1:1, 4:5, 3:2, 16:9 and 9:16, applied from the largest centred crop.
+- **Size:** exact width and height fields resize around the centre.
+
+Enter or **Crop** applies and Esc cancels. The background becomes a new revision of 16 to 4096 px per side, which must keep part of the picture. Space past the picture is saved as transparent PNG. Layers keep their pixels and move with the content, and Ctrl+Z restores the old canvas.
+
 Expand normally runs on the chosen Klein model: 9B for Quality, 4B for Fast. Describe what the new area should show, such as "more beach and sea"; Klein is asked to extend the scene seamlessly, without a frame or border. Its generation mask reaches 32 pixels into the original at model resolution, keeping useful overlap even when a large canvas is downscaled. The final blend still changes only a 16 px band at native resolution. MosImage matches low-frequency colour using untouched context outside the generation footprint, carries the edge band's tone offset into the new area and crossfades across it. Every original pixel beyond the final band stays exact. Structural joins and texture can still vary by seed; see the [paired mask comparison](../benchmarks/EDIT_MASK_RESULTS_2026-10-09.md) for outputs and timings. Settings also offers the optional Specialized outpaint route described below.
 
 Transparent images stay RGBA in documents and protected compositing. Model input is flattened onto neutral gray before resizing; this prevents fully transparent expansion margins from turning black during RGBA resampling.
@@ -203,6 +211,8 @@ For everyday use, start the app from a desktop shortcut to `frontend\src-tauri\t
 - Backend changes apply the next time the app starts, without a rebuild, because the engine runs from the checkout.
 - Frontend changes are embedded in the executable, so they need `npm run tauri:build`.
 - Close MosImage before building. Windows locks a running `mosimage.exe`, and the build cannot replace it.
+
+In the app, Export (Ctrl+S) opens a Save As dialog through `tauri-plugin-dialog`. The image goes to the `save_image` command as raw bytes, and a notice shows where the file was saved. In a browser, Export downloads the file instead.
 
 To create the shortcut:
 

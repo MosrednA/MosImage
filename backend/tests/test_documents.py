@@ -110,6 +110,38 @@ class DocumentPersistenceTests(unittest.TestCase):
         with self.assertRaises(documents.RevisionConflict):
             documents.create_alternative_proposal(document["id"], [generation_id], "outpaint", document["current_revision_id"] - 1)
 
+    def test_crop_cuts_the_canvas_moves_layers_and_undoes(self) -> None:
+        document = documents.create_from_upload("Base", png_bytes((10, 20, 30)), "base.png")
+        with storage.connect() as db:
+            db.execute("UPDATE revisions SET layers = ? WHERE id = ?", ('[{"id": "a", "image_path": "images/layers/layer-x.png", "x": 50, "y": 40}]', document["current_revision_id"]))
+            db.commit()
+
+        cropped = documents.crop(document["id"], document["current_revision_id"], 10, 8, 60, 40)
+
+        self.assertEqual((cropped["canvas_width"], cropped["canvas_height"]), (60, 40))
+        self.assertEqual((cropped["layers"][0]["x"], cropped["layers"][0]["y"]), (40, 32))
+        with Image.open(settings.data_dir / cropped["current_image_url"].replace("/files/", "")) as image:
+            self.assertEqual(image.getpixel((0, 0))[:3], (10, 20, 30))
+        undone = documents.undo(document["id"])
+        self.assertEqual((undone["canvas_width"], undone["canvas_height"]), (96, 64))
+        self.assertEqual(undone["layers"][0]["x"], 50)
+        with self.assertRaises(documents.RevisionConflict):
+            documents.crop(document["id"], cropped["current_revision_id"], 0, 0, 50, 50)
+
+    def test_crop_past_the_picture_leaves_transparent_canvas(self) -> None:
+        document = documents.create_from_upload("Base", png_bytes((200, 0, 0)), "base.png")
+
+        grown = documents.crop(document["id"], document["current_revision_id"], -20, 0, 136, 64)
+
+        with Image.open(settings.data_dir / grown["current_image_url"].replace("/files/", "")) as image:
+            self.assertEqual(image.size, (136, 64))
+            self.assertEqual(image.getpixel((5, 10))[3], 0)
+            self.assertEqual(image.getpixel((30, 10)), (200, 0, 0, 255))
+        with self.assertRaises(ValueError):
+            documents.crop(document["id"], grown["current_revision_id"], 0, 0, 136, 64)
+        with self.assertRaises(ValueError):
+            documents.crop(document["id"], grown["current_revision_id"], 200, 0, 50, 50)
+
     def test_delete_document_removes_records_and_files(self) -> None:
         document = documents.create_from_upload("ToDelete", png_bytes((10, 10, 10)), "delete.png")
         doc_id = document["id"]

@@ -36,7 +36,7 @@ export function TopBar({ document, onRename, online, connecting, system, warmUp,
       </div>
       <EngineStatus online={online} connecting={connecting} system={system} warmUp={warmUp} />
       <button className="quiet-button" aria-label="Library" disabled={locked} onClick={onLibrary}><Icon name="library" /><span>Library</span></button>
-      <button className="export-button" aria-label="Export image" title="Export the current image" disabled={!canExport || locked} onClick={onExport}><Icon name="download" /><span>Export</span></button>
+      <button className="export-button" aria-label="Export image" title="Save the picture as an image file (Ctrl+S)" disabled={!canExport || locked} onClick={onExport}><Icon name="download" /><span>Export</span></button>
     </div>
   </header>;
 }

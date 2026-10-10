@@ -233,6 +233,15 @@ class DocumentUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
 
 
+class CropRequest(BaseModel):
+    base_revision_id: int
+    # The new canvas in background pixels; it may reach past the picture.
+    x: int = Field(ge=-4096, le=4096)
+    y: int = Field(ge=-4096, le=4096)
+    width: int = Field(ge=16, le=4096)
+    height: int = Field(ge=16, le=4096)
+
+
 class AlternativeProposalRequest(BaseModel):
     generation_ids: list[int] = Field(min_length=1, max_length=4)
     operation_type: Literal["generate", "inpaint", "outpaint"]

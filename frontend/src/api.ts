@@ -418,6 +418,13 @@ export async function deleteDocument(id: number): Promise<void> {
   await request(`/api/v2/documents/${id}`, { method: "DELETE" });
 }
 
+/** Cuts the canvas to a rectangle in picture pixels, without AI; past the picture it becomes transparent. */
+export async function cropDocument(documentId: number, baseRevisionId: number, rect: { x: number; y: number; width: number; height: number }): Promise<DocumentRecord> {
+  return request(`/api/v2/documents/${documentId}/crop`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_revision_id: baseRevisionId, ...rect }),
+  });
+}
+
 export async function undoDocument(documentId: number): Promise<DocumentRecord> {
   return request(`/api/v2/documents/${documentId}/undo`, { method: "POST" });
 }

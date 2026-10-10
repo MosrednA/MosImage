@@ -5,7 +5,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from .. import documents, layers
 from ..documents import RevisionConflict
-from ..schemas import AlternativeProposalRequest, DocumentRecord, DocumentUpdate, LayerAsset, LayersUpdate, RevisionRecord
+from ..schemas import AlternativeProposalRequest, CropRequest, DocumentRecord, DocumentUpdate, LayerAsset, LayersUpdate, RevisionRecord
 from .common import http_errors, read_uploaded_image
 
 router = APIRouter(prefix="/api/v2")
@@ -83,6 +83,12 @@ async def upload_layer_asset(document_id: int, image: UploadFile = File(...), ki
 def save_document_layers(document_id: int, request: LayersUpdate) -> dict:
     with http_errors(CHANGED):
         return documents.save_layers(document_id, request.base_revision_id, [layer.model_dump() for layer in request.layers], request.label)
+
+
+@router.post("/documents/{document_id}/crop", response_model=DocumentRecord)
+def crop_document(document_id: int, request: CropRequest) -> dict:
+    with http_errors({**CHANGED, OSError: 422}):
+        return documents.crop(document_id, request.base_revision_id, request.x, request.y, request.width, request.height)
 
 
 @router.post("/documents/{document_id}/alternatives", response_model=RevisionRecord)

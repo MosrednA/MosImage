@@ -2,6 +2,7 @@ import { MutableRefObject, useRef } from "react";
 import { DocumentRecord, LayerRecord, fileUrl } from "../api";
 import { ImageSize } from "../canvas/coordinates";
 import { fileFromUrl, flatten, loadImage, shownMask, withTransparencyOf } from "../layers/bitmaps";
+import { saveFile } from "../saveFile";
 
 /** An edited layer image with the original layer's transparency. */
 export async function editedLayer(edited: HTMLImageElement, layer: LayerRecord): Promise<HTMLCanvasElement> {
@@ -45,20 +46,17 @@ export function usePicture(source: File | null, size: ImageSize | null, sourceUr
     }
     return file;
   }
-  /** Downloads the picture; layers are flattened onto it as PNG to keep every edge crisp. */
-  async function exportPicture(name: string) {
-    if (!sourceUrl || !source) return;
+  /** Saves the picture where the user picks; layers are flattened onto it as PNG to keep every edge crisp. Returns where, or null if cancelled. */
+  async function exportPicture(name: string): Promise<string | null> {
+    if (!source) return null;
     const visible = visibleLayers();
-    let href = sourceUrl;
+    let image: Blob = source;
     let extension = source.type === "image/jpeg" ? ".jpg" : source.type === "image/webp" ? ".webp" : ".png";
     if (visible.length && size) {
-      href = URL.createObjectURL(await flattenLayers(visible));
+      image = await flattenLayers(visible);
       extension = ".png";
     }
-    const anchor = window.document.createElement("a"); anchor.href = href;
-    anchor.download = name.replace(/[<>:"/\\|?*]+/g, "-").replace(/\.[^.]+$/, "") + extension;
-    anchor.click();
-    if (href !== sourceUrl) window.setTimeout(() => URL.revokeObjectURL(href), 1000);
+    return saveFile(image, name.replace(/[<>:"/\\|?*]+/g, "-").replace(/\.[^.]+$/, "") + extension);
   }
 
   return { visibleLayers, editImage, layerFile, exportPicture };

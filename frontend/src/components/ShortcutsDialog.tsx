@@ -1,7 +1,7 @@
 import { ControlDialog } from "./ControlDialog";
 
 const GROUPS: [string, [string, string][]][] = [
-  ["Tools", [["W", "Object selection"], ["B", "Brush"], ["E", "Eraser"], ["L", "Lasso"], ["M", "Box"], ["P", "Sketch"], ["V / Ctrl + T", "Transform layers"], ["H", "Pan"], ["C", "Expand canvas"]]],
+  ["Tools", [["W", "Object selection"], ["B", "Brush"], ["E", "Eraser"], ["L", "Lasso"], ["M", "Box"], ["P", "Sketch"], ["V / Ctrl + T", "Transform layers"], ["H", "Pan"], ["C", "Crop canvas"], ["Shift + C", "Expand canvas"]]],
   ["Selection", [
     ["Click / right-click", "Include / exclude an object point"],
     ["Click a marker", "Remove that point"],
@@ -34,6 +34,8 @@ const GROUPS: [string, [string, string][]][] = [
     ["Ctrl + Z", "Undo the selection, then the image"],
     ["Ctrl + Shift + Z", "Redo"],
     ["Ctrl + O", "Open an image"],
+    ["Ctrl + S", "Export the picture"],
+    ["Enter / Esc", "Apply / cancel a crop"],
   ]],
 ];
 
