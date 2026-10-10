@@ -33,7 +33,7 @@ import { ReferencePanel } from "./components/ReferencePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { SidePanel, SideTab } from "./components/SidePanel";
 import { LayerStage } from "./layers/LayerStage";
-import { blankCanvas, canvasBlob, cutSelection, fileFromUrl, invertMask, layerFootprint, layerSelection, loadImage, loadMask, selectionPatch, selectionToLayerMask, shownMask, solidMask } from "./layers/bitmaps";
+import { blankCanvas, canvasBlob, cutSelection, decodeImage, fileFromUrl, invertMask, layerFootprint, layerSelection, loadImage, loadMask, selectionPatch, selectionToLayerMask, shownMask, solidMask } from "./layers/bitmaps";
 import { generationPlacement, initialPlacement } from "./layers/geometry";
 import { MergeKind } from "./layers/stack";
 import { useLayers } from "./hooks/useLayers";
@@ -517,8 +517,7 @@ export default function App() {
     await perform(async () => {
       await layers.settled();
       // The selected part of the picture as you see it, as Copy Merged does.
-      const seen = await createImageBitmap(await picture.editImage());
-      const cut = await cutSelection(seen, size, mask).finally(() => seen.close());
+      const cut = await cutSelection(await decodeImage(await picture.editImage()), size, mask);
       if (!cut) throw new Error("Select the area you want on its own layer first.");
       const layer = await layers.addImage(cut.blob, "Selection.png", { x: cut.box.x + cut.box.width / 2, y: cut.box.y + cut.box.height / 2 });
       if (!layer) return;

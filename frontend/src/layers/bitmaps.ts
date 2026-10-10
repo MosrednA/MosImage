@@ -23,6 +23,24 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
   return loading;
 }
 
+/**
+ * Decodes an image file exactly, ready to draw. WebKit's createImageBitmap
+ * dithers (black mask pixels come back as 1, so a thresholded selection
+ * covers the whole canvas); an <img> decodes exactly in every engine, and
+ * keeps drawing after its object URL is revoked.
+ */
+export async function decodeImage(file: Blob): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 /** A stored greyscale layer mask as an editable canvas that keeps coverage in alpha. */
 export function loadMask(url: string): Promise<HTMLCanvasElement> {
   let loading = masks.get(url);
@@ -112,7 +130,7 @@ export function renderLayer(target: HTMLCanvasElement, image: CanvasImageSource,
 
 /** A selection on the picture (coverage in alpha) as a mask in a layer's own pixels. */
 export async function selectionToLayerMask(selection: Blob, size: ImageSize, layer: Placement): Promise<HTMLCanvasElement> {
-  const bitmap = await createImageBitmap(selection);
+  const bitmap = await decodeImage(selection);
   const mask = blankCanvas(layer.width, layer.height);
   const context = mask.getContext("2d")!;
   // The inverse of the layer's placement: canvas pixels into layer pixels.
@@ -121,7 +139,6 @@ export async function selectionToLayerMask(selection: Blob, size: ImageSize, lay
   context.rotate((-layer.rotation * Math.PI) / 180);
   context.translate(-layer.x, -layer.y);
   context.drawImage(bitmap, 0, 0, size.width, size.height);
-  bitmap.close();
   return mask;
 }
 
@@ -267,11 +284,10 @@ export interface Patch { image: Blob; mask: Blob; box: ImageBox }
  * layer mask keeps its footprint without applying that blend a second time.
  */
 export async function selectionPatch(result: CanvasImageSource, size: ImageSize, selection: Blob): Promise<Patch | null> {
-  const mask = await createImageBitmap(selection);
+  const mask = await decodeImage(selection);
   const maskCanvas = blankCanvas(size.width, size.height);
   const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true })!;
   maskContext.drawImage(mask, 0, 0, size.width, size.height);
-  mask.close();
   const coverage = maskContext.getImageData(0, 0, size.width, size.height);
   // AI selections are opaque greyscale PNGs, not alpha masks.
   luminanceToAlpha(coverage.data);
@@ -291,11 +307,10 @@ export interface Cutout { blob: Blob; box: ImageBox }
 
 /** The selected part of the background as a transparent PNG, cropped to the selection. */
 export async function cutSelection(background: CanvasImageSource, size: ImageSize, selection: Blob): Promise<Cutout | null> {
-  const mask = await createImageBitmap(selection);
+  const mask = await decodeImage(selection);
   const maskCanvas = blankCanvas(size.width, size.height);
   const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true })!;
   maskContext.drawImage(mask, 0, 0, size.width, size.height);
-  mask.close();
   const box = maskBounds(maskContext.getImageData(0, 0, size.width, size.height));
   if (!box) return null;
   const cut = blankCanvas(box.width, box.height);
