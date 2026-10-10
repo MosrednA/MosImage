@@ -1,5 +1,9 @@
 # Inpainting benchmark fixtures
 
+The [10 October official Qwen Turbo quantization evaluation](QWEN_TURBO_QUANTS_2026-10-10.md) compares native NVFP4 and Unsloth Q4_K_M against Klein 9B, with frozen prompts/seeds, alpha/protected-pixel checks and a separate prompt-to-file lifecycle. It retains memory and loader failures. The user prefers FLUX overall; Qwen is not selected for integration.
+
+The [10 October SeedVR2 3B test](SEEDVR2_3B_2026-10-10.md) adds 27 retained generative-restoration outputs on the same six sources, including two seeds/repeats and colour-correction ablations on three faces. Warm native 2x processing takes about 9 seconds on the one-megapixel man and 3.5–3.7 seconds on 512² portraits. It adds skin/beard texture but redraws faces, cloth and text. Standalone memory fits the 16GB card; Klein coexistence and user visual acceptance remain open.
+
 The [10 October texture-preservation follow-up](UPSCALING_FIDELITY_2026-10-10.md) compares classical 2x SwinIR Light/M and Swin2SR on six native enlargements and reconstruction diagnostics, including one real camera photo. It records BF16 and larger-tile measurements, source/alpha/protected-pixel contracts and shared-runtime observations. Light is the next visual-review candidate; no AI upscale feature or quality default is approved.
 
 The [10 October upscaling comparison](UPSCALING_2026-10-10.md) measures RealESRGAN_x2plus and compact x4v3, including PNG save time, four retained quality cases, tile/alpha/protected-pixel checks and coexistence with real Klein 9B edits. This is experimental tooling and evidence; AI upscaling is not yet integrated into Export or the editor.

@@ -8,6 +8,9 @@
 
 ## Benchmarks
 
+- [Official Qwen 2.1 Turbo NVFP4 and GGUF, 10 October 2026](../benchmarks/QWEN_TURBO_QUANTS_2026-10-10.md): native Blackwell kernels, controlled eight-step renders, memory/loader failures and prompt-to-file lifecycle; the user prefers FLUX overall and Qwen is not selected for integration.
+
+- [SeedVR2 3B detail, speed and face changes, 10 October 2026](../benchmarks/SEEDVR2_3B_2026-10-10.md): 27 retained outputs, native/reconstruction cases, two seeds, exact repeatability, colour ablation and standalone VRAM; more inferred texture with identity/text/fabric changes, not an accepted default or implemented feature.
 - [Natural texture and classical 2x upscaling, 10 October 2026](../benchmarks/UPSCALING_FIDELITY_2026-10-10.md): six native/reconstruction cases, SwinIR Light/M and Swin2SR, BF16 and tile-size comparisons; Light preserves more source texture, with visual acceptance and shared-runtime timing recorded separately.
 - [Upscaling quality, speed and Klein residency, 10 October 2026](../benchmarks/UPSCALING_2026-10-10.md): x2plus/x4v3, timings and shared-GPU evidence; the user rejected all displayed faces as too smooth, so photo integration awaits an accepted recipe.
 - [LoRA, specialized outpaint and detail crops, 9 October 2026](../benchmarks/QUALITY_CANDIDATES_2026-10-09.md): native NVFP4 compatibility, optional editor switches and GPU acceptance, Consistency V2, fast FAL outpaint, the Base latency rejection and selected texture findings.

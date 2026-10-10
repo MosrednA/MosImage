@@ -1,6 +1,6 @@
 # Upscaling comparison — 10 October 2026
 
-Status: bounded local experiment completed after midnight, following a 9 October start. Native inference works on the current Windows runtime. This adds comparison tools and evidence; **AI upscaling is not yet an editor or Export feature**. HAT and SeedVR2 were not tested.
+Status: bounded local experiment completed after midnight, following a 9 October start. Native inference works on the current Windows runtime. This adds comparison tools and evidence; **AI upscaling is not yet an editor or Export feature**. HAT and SeedVR2 were not tested in this first stage; the later [SeedVR2 3B experiment](SEEDVR2_3B_2026-10-10.md) records its separate quality and runtime results.
 
 ## Decision and flow
 
@@ -117,7 +117,7 @@ Implementation: [benchmark_upscalers.py](../backend/tools/benchmark_upscalers.py
 
 ## Remaining acceptance work
 
-Find a recipe that passes the user's face/texture acceptance before implementing photo upscaling. Validate native-source enlargement, real camera images, alpha edge colour, text/logo bypass, larger-image tile joins, cancellation between tiles, export size limits, source/proposal/export consistency and UI review. Retain one heavy Klein pipeline; the small SR model can stay loaded as demonstrated. HAT and optional generative restoration remain untested comparisons, with no accepted quality result or measured substitute timings.
+Find a recipe that passes the user's face/texture acceptance before implementing photo upscaling. Validate native-source enlargement, real camera images, alpha edge colour, text/logo bypass, larger-image tile joins, cancellation between tiles, export size limits, source/proposal/export consistency and UI review. Retain one heavy Klein pipeline; the small SR model can stay loaded as demonstrated. HAT remains untested. The later [SeedVR2 3B test](SEEDVR2_3B_2026-10-10.md) adds more inferred texture with substantial source changes; its standalone measurements do not inherit this stage's Klein residency result or constitute user acceptance.
 
 ## Validation
 

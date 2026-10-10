@@ -2,6 +2,8 @@
 
 MosImage's Quality default is now **FLUX.2 Klein 9B distilled NVFP4**. This page records the comparison behind that change and how the 9B model fits on the 16 GB RTX 5070 Ti.
 
+The Qwen arm below is the **Viggle community six-step FP8 model**. The [10 October evaluation](QWEN_TURBO_QUANTS_2026-10-10.md) tests the distinct official eight-step Turbo release with NVFP4 and GGUF; its lifecycle timings should not be confused with the render-only timings here.
+
 ## Comparison
 
 [`backend/tools/benchmark_model_comparison.py`](../backend/tools/benchmark_model_comparison.py) renders twelve cases with three seeds (7, 42, 20261009) per arm: 216 outputs, all retained, none failed. Each arm runs in its own process. Prompts are encoded first with the full BF16 encoder, which is then released before the renderer loads.

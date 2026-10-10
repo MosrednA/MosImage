@@ -10,7 +10,11 @@ Status: research snapshot completed before implementation. The investigation ins
 
 **Texture-preservation follow-up, 10 October:** the [classical 2x study](../../benchmarks/UPSCALING_FIDELITY_2026-10-10.md) tests SwinIR Light/M and Swin2SR on six native-source and reconstruction cases, including one public-domain camera photo. Light keeps more beard/skin texture than the rejected reconstruction, but some enlarged texture appears stippled and missing natural detail is not guaranteed recoverable. FP32 and 512px tiles are the next recipe; the report separates warm standalone speed, cold initialization and actual Klein residency. Visual acceptance remains open and the existing Export is unchanged.
 
+**SeedVR2 3B follow-up, 10 October:** the [27-output standalone test](../../benchmarks/SEEDVR2_3B_2026-10-10.md) adds visible skin, beard and cloth detail at about 9 seconds per one-megapixel native 2x input. The same seed is pixel-identical across repeats/processes. It also redraws eyes, fabric and small text; LAB colour correction helps tone but does not remove content changes. This is an optional extra-detail preview candidate, with user acceptance and Klein coexistence open. No product integration was added.
+
 Keep Klein 9B distilled NVFP4 as the interactive baseline. Improve the editing workspace and compositing first, and evaluate one compatible consistency LoRA alongside that work. Outpainting, recolouring, removal and inserting a subject need different masks, context and acceptance criteria.
+
+**Second-model follow-up, 10 October:** the [official eight-step Qwen Turbo quantization evaluation](../../benchmarks/QWEN_TURBO_QUANTS_2026-10-10.md) tests native NVFP4 and Unsloth GGUF, distinct from the earlier Viggle six-step model. It records alpha support, reference-resolution/speed tradeoffs, GPU/RAM pressure and complete new-prompt latency. The user prefers FLUX overall after the comparison; Qwen is not selected for integration and Klein 9B remains the Quality model.
 
 | Priority | Work | Expected benefit | Evidence level |
 |---|---|---|---|
