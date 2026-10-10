@@ -11,13 +11,19 @@ from PIL import Image, ImageDraw, ImageFilter
 from . import storage
 from .compositing import FAST_PNG
 from .config import settings
-from .detection import Box, Detection, detector, strongest
+from .detection import Box, Detection, coverage, detector, strongest
 from .jobs import JobControl
 from .models.registry import registry
 from .schemas import EditRequest, FaceFixRequest
 from .services import _alternative_seed, _model_references, _new_image_path, _save_bytes, release_after_failure
 
 FACE_QUERY = "human face."
+# Grounding DINO also calls cakes, dogs and signs a face, scoring them like small
+# or blurry real faces, so a face counts only inside a person that is bigger than
+# it: without people, one object tends to come back as both face and person.
+PERSON_QUERY = "person."
+FACE_IN_PERSON = 0.6
+PERSON_TO_FACE = 1.5
 MIN_FACE_SIDE = 16
 MAX_FACES = 8
 # The crop shows hair, chin and some background, so the face sits in context.
@@ -61,10 +67,15 @@ def matched_colours(restored: Image.Image, original: Image.Image) -> Image.Image
     return Image.fromarray(np.clip(restored_pixels + shift, 0, 255).astype(np.uint8), mode="RGB")
 
 
-def faces_to_fix(detections: list[Detection], selection: np.ndarray | None) -> list[Detection]:
+def in_a_person(face: Detection, people: list[Detection]) -> bool:
+    """Whether a detected person holds most of the face and is clearly bigger than it."""
+    return any(coverage(face.box, person.box) >= FACE_IN_PERSON and person.area >= face.area * PERSON_TO_FACE for person in people)
+
+
+def faces_to_fix(detections: list[Detection], people: list[Detection], selection: np.ndarray | None) -> list[Detection]:
     """Real faces, largest first; with a selection, only those centred inside it."""
     faces = [item for item in strongest(detections, relative=0, limit=32)
-             if min(item.box[2] - item.box[0], item.box[3] - item.box[1]) >= MIN_FACE_SIDE]
+             if min(item.box[2] - item.box[0], item.box[3] - item.box[1]) >= MIN_FACE_SIDE and in_a_person(item, people)]
     if selection is not None:
         height, width = selection.shape
         faces = [item for item in faces
@@ -90,7 +101,9 @@ def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | 
                 # Selections arrive with their coverage in alpha when they have one.
                 band = uploaded_mask.getchannel("A") if "A" in uploaded_mask.getbands() else uploaded_mask.convert("L")
                 selection = np.asarray(band.resize(picture.size))
-        faces = faces_to_fix(detector.detect(picture, FACE_QUERY, control, activity="Finding faces"), selection)
+        found = detector.detect(picture, FACE_QUERY, control, activity="Finding faces")
+        people = detector.detect(picture, PERSON_QUERY, control, activity="Finding faces") if found else []
+        faces = faces_to_fix(found, people, selection)
         if not faces:
             raise ValueError("No faces found in the selection" if selection is not None else "No faces found in the picture")
         crops = [face_crop_box(face.box, picture.width, picture.height) for face in faces]

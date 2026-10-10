@@ -13,14 +13,19 @@ from PIL import Image
 
 from app import storage
 from app.config import settings
-from app.detection import Detection, detection_query, iou, strongest
-from app.faces import face_blend_mask, face_crop_box, faces_to_fix, matched_colours, run_face_fix
+from app.detection import Detection, coverage, detection_query, iou, strongest
+from app.faces import FACE_QUERY, face_blend_mask, face_crop_box, faces_to_fix, matched_colours, run_face_fix
 from app.main import app
 from app.matting import UNKNOWN, edge_radius, mask_box, trimap
 from app.models.flux2_klein import ENHANCE_TRIGGER, FACE_AREA, Flux2KleinProvider, _face_prompt, _inpaint_prompt, _mode_prompt, _sketch_prompt
 from app.schemas import EditRequest, FaceFixRequest, InpaintForm
 from app.selection import main_subjects
 from tests.test_references import isolated_data, png
+
+
+def detected(faces: list[Detection]):
+    """Stands in for the detector: these faces, and one person around them all."""
+    return lambda _image, query, *_args, **_kwargs: faces if query == FACE_QUERY else [Detection("person", 0.8, (0, 0, 10_000, 10_000))]
 
 
 class DetectionTests(unittest.TestCase):
@@ -36,6 +41,7 @@ class DetectionTests(unittest.TestCase):
         self.assertEqual([item.score for item in strongest(found)], [0.8, 0.6])
         self.assertEqual(strongest([]), [])
         self.assertAlmostEqual(iou((0, 0, 10, 10), (5, 0, 15, 10)), 1 / 3)
+        self.assertAlmostEqual(coverage((0, 0, 10, 10), (5, 0, 30, 30)), 1 / 2)
 
     def test_main_subjects_keep_a_group_but_not_small_background_people(self) -> None:
         found = [Detection("person", 0.8, (0, 0, 500, 1000)), Detection("animal", 0.6, (400, 300, 700, 800)),
@@ -86,10 +92,24 @@ class FaceGeometryTests(unittest.TestCase):
 
     def test_selection_and_size_pick_the_faces_to_fix(self) -> None:
         faces = [Detection("face", 0.6, (10, 10, 40, 40)), Detection("face", 0.5, (60, 10, 100, 50)), Detection("face", 0.5, (0, 60, 8, 68))]
-        self.assertEqual([item.box for item in faces_to_fix(faces, None)], [(60, 10, 100, 50), (10, 10, 40, 40)])
+        people = [Detection("person", 0.8, (0, 0, 120, 100))]
+        self.assertEqual([item.box for item in faces_to_fix(faces, people, None)], [(60, 10, 100, 50), (10, 10, 40, 40)])
         selection = np.zeros((100, 120), dtype=np.uint8)
         selection[:, :50] = 255
-        self.assertEqual([item.box for item in faces_to_fix(faces, selection)], [(10, 10, 40, 40)])
+        self.assertEqual([item.box for item in faces_to_fix(faces, people, selection)], [(10, 10, 40, 40)])
+
+    def test_only_faces_inside_a_bigger_person_are_fixed(self) -> None:
+        # Measured on a street picture: a pastry on a sign among cherry blossoms
+        # scored 0.33 as a face, no more than small blurry real faces do.
+        woman, pastry = Detection("human face", 0.53, (673, 303, 704, 346)), Detection("human face", 0.33, (486, 193, 532, 233))
+        blurry = Detection("human face", 0.32, (557, 674, 578, 698))
+        people = [Detection("person", 0.74, (629, 292, 740, 704)), Detection("person", 0.76, (478, 377, 542, 541)),
+                  Detection("person", 0.44, (515, 657, 600, 824))]
+        self.assertEqual(faces_to_fix([woman, pastry, blurry], people, None), [woman, blurry])
+        self.assertEqual(faces_to_fix([woman], [], None), [])
+        # Without people, one object tends to come back as both face and person.
+        ball = Detection("human face", 0.51, (400, 300, 600, 500))
+        self.assertEqual(faces_to_fix([ball], [Detection("person", 0.31, (398, 301, 601, 502))], None), [])
 
 
 class FaceFixServiceTests(unittest.TestCase):
@@ -106,7 +126,7 @@ class FaceFixServiceTests(unittest.TestCase):
             provider.edit.side_effect = fake_edit
             picture = Image.new("RGB", (200, 120), (40, 40, 40))
             faces = [Detection("human face", 0.7, (30, 30, 60, 70)), Detection("human face", 0.6, (130, 30, 160, 70))]
-            with patch("app.faces.registry.activate", return_value=provider), patch("app.faces.detector.detect", return_value=faces):
+            with patch("app.faces.registry.activate", return_value=provider), patch("app.faces.detector.detect", side_effect=detected(faces)):
                 ids = run_face_fix(FaceFixRequest(count=2), png(picture), "photo.png", None, MagicMock())
                 self.assertEqual(provider.edit.call_count, 4)
                 first, second = (storage.get_generation(item) for item in ids)
@@ -136,7 +156,7 @@ class FaceFixServiceTests(unittest.TestCase):
             provider.edit.side_effect = fake_edit
             picture = png(Image.new("RGB", (120, 120), (90, 60, 40)))
             faces = [Detection("human face", 0.7, (40, 40, 80, 80))]
-            with patch("app.faces.registry.activate", return_value=provider), patch("app.faces.detector.detect", return_value=faces):
+            with patch("app.faces.registry.activate", return_value=provider), patch("app.faces.detector.detect", side_effect=detected(faces)):
                 [faithful] = run_face_fix(FaceFixRequest(), picture, "photo.png", None, MagicMock())
                 run_face_fix(FaceFixRequest(faithful=False), picture, "photo.png", None, MagicMock())
                 run_face_fix(FaceFixRequest(model_name="flux2-klein-4b-nvfp4"), picture, "photo.png", None, MagicMock())

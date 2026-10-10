@@ -51,6 +51,14 @@ def iou(first: Box, second: Box) -> float:
     return overlap / union if union > 0 else 0.0
 
 
+def coverage(inner: Box, outer: Box) -> float:
+    """The share of the inner box that lies inside the outer one."""
+    left, top = max(inner[0], outer[0]), max(inner[1], outer[1])
+    right, bottom = min(inner[2], outer[2]), min(inner[3], outer[3])
+    area = Detection("", 0, inner).area
+    return max(0.0, right - left) * max(0.0, bottom - top) / area if area > 0 else 0.0
+
+
 def strongest(detections: Sequence[Detection], *, relative: float = 0.5, overlap: float = 0.6, limit: int = 12) -> list[Detection]:
     """The confident detections, best first, without near-duplicate boxes.
 
