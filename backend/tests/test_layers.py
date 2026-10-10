@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,17 +46,62 @@ class LayerTests(unittest.TestCase):
     def layer(self, asset: dict, **values: object) -> dict:
         return {"id": "anna", "name": "Anna", "image_path": asset["path"], "x": 48.0, "y": 32.0, **values}
 
+    def background(self, **values: object) -> dict:
+        """The document's picture as its bottom layer, as the layer state the app saves."""
+        state = {key: value for key, value in self.document["layers"][0].items() if key not in {"image_url", "mask_url", "variant_urls"}}
+        return {**state, **values}
+
+    def test_a_new_document_starts_with_its_picture_as_the_background_layer(self) -> None:
+        [background] = self.document["layers"]
+        self.assertEqual((background["id"], background["name"]), ("background", "Background"))
+        self.assertEqual(background["image_url"], self.document["current_image_url"])
+        self.assertEqual((background["x"], background["y"], background["width"], background["height"]), (48.0, 32.0, 96, 64))
+        # It is an ordinary layer: hidden, moved or gone, the picture follows the stack.
+        hidden = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.background(visible=False, x=10.0)], "Hide layer")
+        self.assertEqual((hidden["layers"][0]["visible"], hidden["layers"][0]["x"]), (False, 10.0))
+        empty = documents.save_layers(hidden["id"], hidden["current_revision_id"], [], "Delete layer")
+        self.assertEqual((empty["layers"], empty["canvas_width"]), ([], 96))
+
+    def test_older_revisions_get_their_picture_as_the_bottom_layer(self) -> None:
+        asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
+        document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.background(), self.layer(asset, visible=False)], "Add layer")
+        generation = storage.create_generation({
+            "task": "outpaint", "prompt": "more garden", "negative_prompt": None, "model_name": "flux2-klein-9b-nvfp4",
+            "runtime_mode": "balanced", "seed": 1, "steps": 4, "guidance": 1.0, "width": 160, "height": 64, "strength": 1.0,
+            "input_image_path": None, "mask_image_path": None, "output_image_path": self._output((160, 64)),
+        })
+        proposal = documents.create_alternative_proposal(document["id"], [generation], "outpaint", layer_offset=(32, 0))
+        # Revisions from before the Background was a layer: the picture under a stack of their own.
+        with storage.connect() as db:
+            for revision in db.execute("SELECT id, layers, operation_parameters FROM revisions").fetchall():
+                stack = [layer for layer in json.loads(revision["layers"]) if layer["id"] != "background"]
+                parameters = {key: value for key, value in json.loads(revision["operation_parameters"]).items() if key != "result_layer"}
+                db.execute("UPDATE revisions SET layers = ?, operation_parameters = ? WHERE id = ?", (json.dumps(stack), json.dumps(parameters), revision["id"]))
+            db.execute("DELETE FROM schema_migrations WHERE name = 'documents.0003_background_layers'")
+            db.commit()
+
+        documents.ensure_document_storage()
+        documents.ensure_document_storage()
+
+        current = documents.get_document(document["id"])
+        self.assertEqual([layer["id"] for layer in current["layers"]], ["background", "anna"])
+        self.assertEqual(current["layers"][0]["image_url"], current["current_image_url"])
+        first = documents.get_revision(self.document["current_revision_id"])
+        self.assertEqual([layer["id"] for layer in first["layers"]], ["background"])
+        # A proposal still waiting shows its chosen alternative in that bottom layer.
+        self.assertEqual(documents.get_revision(proposal["id"])["operation_parameters"]["result_layer"], "background")
+
     def test_layer_changes_are_undoable_revisions_over_the_same_background(self) -> None:
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 128)), "image")
-        added = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset)], "Add layer")
-        moved = documents.save_layers(added["id"], added["current_revision_id"], [self.layer(asset, x=10.0)], "Move layer")
+        added = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.background(), self.layer(asset)], "Add layer")
+        moved = documents.save_layers(added["id"], added["current_revision_id"], [self.background(), self.layer(asset, x=10.0)], "Move layer")
 
         self.assertEqual(moved["current_image_url"], self.document["current_image_url"])
-        self.assertEqual((moved["layers"][0]["x"], moved["layers"][0]["width"]), (10.0, 20))
-        self.assertTrue(moved["layers"][0]["image_url"].startswith("/files/images/layers/layer-"))
-        self.assertEqual(documents.undo(moved["id"])["layers"][0]["x"], 48.0)
-        self.assertEqual(documents.undo(moved["id"])["layers"], [])
-        self.assertEqual(documents.redo(moved["id"])["layers"][0]["x"], 48.0)
+        self.assertEqual((moved["layers"][1]["x"], moved["layers"][1]["width"]), (10.0, 20))
+        self.assertTrue(moved["layers"][1]["image_url"].startswith("/files/images/layers/layer-"))
+        self.assertEqual(documents.undo(moved["id"])["layers"][1]["x"], 48.0)
+        self.assertEqual([layer["id"] for layer in documents.undo(moved["id"])["layers"]], ["background"])
+        self.assertEqual(documents.redo(moved["id"])["layers"][1]["x"], 48.0)
 
     def test_deleting_document_cleans_layer_assets_from_its_entire_history(self) -> None:
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 128)), "image")
@@ -96,7 +142,7 @@ class LayerTests(unittest.TestCase):
 
     def test_expand_continues_the_visible_picture_and_moves_layers_over_their_own_background(self) -> None:
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
-        document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset)], "Add layer")
+        document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.background(), self.layer(asset)], "Add layer")
         # The engine saw the background with the red layer on it and drew the new area beside it.
         seen = Image.new("RGBA", (160, 64), (128, 128, 128, 0))
         seen.paste((10, 20, 30, 255), (32, 0, 128, 64))
@@ -111,18 +157,22 @@ class LayerTests(unittest.TestCase):
             "output_image_path": self._save(output, settings.output_dir / "output-wide.png"),
         })
         proposal = documents.create_alternative_proposal(document["id"], [generation], "outpaint", layer_offset=(32, 0))
-        self.assertEqual(proposal["layers"][0]["x"], 80.0)
+        self.assertEqual(proposal["layers"][1]["x"], 80.0)
         with Image.open(settings.data_dir / proposal["alternatives"][0]["output_image_path"]) as alternative:
             self.assertEqual(alternative.getpixel((80, 32)), (10, 20, 30, 255))  # The background, not a copy of the layer.
             self.assertEqual(alternative.getpixel((4, 32)), (1, 2, 3, 255))
         accepted = documents.accept_alternative(document["id"], proposal["id"], proposal["alternatives"][0]["id"])
-        self.assertEqual((accepted["layers"][0]["x"], accepted["layers"][0]["y"]), (80.0, 32.0))
+        # The Background grows with the canvas and the layer moves along with the content.
+        background, layer = accepted["layers"]
+        self.assertEqual((background["id"], background["x"], background["width"], background["height"]), ("background", 80.0, 160, 64))
+        self.assertEqual(background["image_path"], proposal["alternatives"][0]["output_image_path"])
+        self.assertEqual((layer["x"], layer["y"]), (80.0, 32.0))
         self.assertEqual((accepted["canvas_width"], accepted["canvas_height"]), (160, 64))
 
     def test_expanding_a_layered_picture_from_engine_to_accepted_background(self) -> None:
         # A layer covers the left of the picture, up to its edge, as an applied AI result often does.
         asset = layers.save_asset(image_bytes("RGBA", (40, 64), (200, 30, 30, 255)), "image")
-        document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset, x=20.0)], "Add layer")
+        document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.background(), self.layer(asset, x=20.0)], "Add layer")
         picture = Image.new("RGB", (96, 64), (10, 20, 30))
         picture.paste((200, 30, 30), (0, 0, 40, 64))
         buffer = io.BytesIO()
@@ -140,7 +190,8 @@ class LayerTests(unittest.TestCase):
         proposal = documents.create_alternative_proposal(document["id"], generation_ids, "outpaint", document["current_revision_id"], (32, 0))
         accepted = documents.accept_alternative(document["id"], proposal["id"], proposal["alternatives"][0]["id"])
 
-        self.assertEqual((accepted["layers"][0]["x"], accepted["canvas_width"]), (52.0, 160))
+        self.assertEqual((accepted["layers"][1]["x"], accepted["canvas_width"]), (52.0, 160))
+        self.assertEqual(accepted["layers"][0]["image_url"], accepted["current_image_url"])
         with Image.open(settings.data_dir / accepted["current_image_url"].removeprefix("/files/")) as background:
             pixels = np.asarray(background.convert("RGBA")).astype(int)
         # The new edge continues the layer on the left and the background on the right.
@@ -151,7 +202,7 @@ class LayerTests(unittest.TestCase):
 
     def test_a_layered_expansion_needs_the_picture_the_engine_continued(self) -> None:
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
-        document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset)], "Add layer")
+        document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.background(), self.layer(asset)], "Add layer")
         generation = storage.create_generation({
             "task": "outpaint", "prompt": "more garden", "negative_prompt": None, "model_name": "flux2-klein-9b-nvfp4",
             "runtime_mode": "balanced", "seed": 1, "steps": 4, "guidance": 1.0, "width": 160, "height": 64, "strength": 1.0,
@@ -161,11 +212,36 @@ class LayerTests(unittest.TestCase):
             documents.create_alternative_proposal(document["id"], [generation], "outpaint", layer_offset=(32, 0))
         self.assertEqual(list(settings.revision_dir.glob("alternative-*")), [])
 
+    def test_expand_puts_the_new_picture_under_the_layers_when_the_bottom_one_does_not_fill_the_canvas(self) -> None:
+        moved = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.background(x=40.0)], "Move layer")
+        outputs = [self._save(Image.new("RGB", (160, 64), color), settings.output_dir / f"output-{index}.png") for index, color in enumerate(((1, 2, 3), (4, 5, 6)))]
+        generations = [storage.create_generation({
+            "task": "outpaint", "prompt": "more garden", "negative_prompt": None, "model_name": "flux2-klein-9b-nvfp4",
+            "runtime_mode": "balanced", "seed": index, "steps": 4, "guidance": 1.0, "width": 160, "height": 64, "strength": 1.0,
+            "input_image_path": None, "mask_image_path": None, "output_image_path": output,
+        }) for index, output in enumerate(outputs)]
+        proposal = documents.create_alternative_proposal(moved["id"], generations, "outpaint", layer_offset=(32, 0))
+        accepted = documents.accept_alternative(moved["id"], proposal["id"], proposal["alternatives"][1]["id"])
+
+        expanded, background = accepted["layers"]
+        self.assertEqual((expanded["name"], expanded["width"], expanded["x"]), ("Expanded", 160, 80.0))
+        self.assertEqual(expanded["image_path"], proposal["alternatives"][1]["output_image_path"])
+        self.assertEqual((background["id"], background["x"], background["width"]), ("background", 72.0, 96))
+
+    def test_crop_keeps_the_background_layer_whole(self) -> None:
+        cropped = documents.crop(self.document["id"], self.document["current_revision_id"], 16, 8, 48, 40)
+        self.assertEqual((cropped["canvas_width"], cropped["canvas_height"]), (48, 40))
+        [background] = cropped["layers"]
+        self.assertEqual((background["x"], background["y"], background["width"]), (32.0, 24.0, 96))
+        self.assertEqual(background["image_url"], self.document["current_image_url"])
+
     def test_rejects_unknown_files_mismatched_masks_and_stale_bases(self) -> None:
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
-        document_image = {"path": f"images/documents/{Path(self.document['current_image_url']).name}"}
+        output = {"path": self._output((20, 10))}
         with self.assertRaisesRegex(ValueError, "missing"):
-            documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(document_image)], "Add")
+            documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(output)], "Add")
+        with self.assertRaisesRegex(ValueError, "cannot be used"):
+            documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(layers.save_asset(image_bytes("L", (20, 10), 255), "mask"))], "Add")
         wrong_mask = layers.save_asset(image_bytes("L", (8, 8), 255), "mask")
         with self.assertRaisesRegex(ValueError, "match"):
             documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset, mask_path=wrong_mask["path"])], "Mask")
@@ -176,8 +252,8 @@ class LayerTests(unittest.TestCase):
         mask = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 255, 255, 77)), "mask")
         with Image.open(settings.data_dir / mask["path"]) as stored:
             self.assertEqual((stored.mode, stored.getpixel((3, 3))), ("L", 77))
-        large = layers.save_asset(image_bytes("RGB", (5000, 2500), (0, 0, 0), "JPEG"), "image")
-        self.assertEqual((large["width"], large["height"]), (4096, 2048))
+        large = layers.save_asset(image_bytes("RGB", (9000, 90), (0, 0, 0), "JPEG"), "image")
+        self.assertEqual((large["width"], large["height"]), (8192, 82))
 
     def test_masks_can_be_switched_off_and_older_stacks_keep_them_on(self) -> None:
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")

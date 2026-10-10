@@ -15,6 +15,12 @@ const GROUPS: [string, [string, string][]][] = [
   ["Layers", [
     ["Ctrl + V", "Paste an image as a layer"],
     ["Ctrl + J", "Copy the selection to a layer"],
+    ["Ctrl + click a layer", "Add it to the selected layers, or take it out"],
+    ["Shift + click a layer", "Select the layers in between"],
+    ["Ctrl + click a thumbnail", "Select that layer's pixels"],
+    ["Right-click a layer", "Merge, flatten and more"],
+    ["Ctrl + E", "Merge down, or merge the selected layers"],
+    ["Ctrl + Shift + E", "Merge the visible layers"],
     ["Click a mask thumbnail", "Paint that layer's mask"],
     ["B / E on a layer", "Paint its mask: show / hide"],
     ["X", "Swap the mask brush between white and black"],
@@ -25,8 +31,8 @@ const GROUPS: [string, [string, string][]][] = [
     ["Shift + drag a corner", "Stretch freely"],
     ["Shift + rotate", "Snap to 15°"],
     ["Arrows / Shift + arrows", "Nudge 1 px / 10 px"],
-    ["Delete", "Delete the layer"],
-    ["Esc", "Back to the background"],
+    ["Delete", "Delete the selected layers"],
+    ["Esc", "Deselect the layers"],
   ]],
   ["View", [["Space + drag", "Pan with any tool"], ["Ctrl + scroll", "Zoom at the cursor"], ["Ctrl + 0", "Fit to window"], ["Ctrl + 1", "Actual pixels"]]],
   ["Edit", [

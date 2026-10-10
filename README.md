@@ -59,7 +59,8 @@ Three steps on one picture, each about 3–10 seconds on an RTX 5070 Ti, straigh
 
 **Work with layers**
 - Every AI result can land on its own layer, with transform, mask, opacity and order.
-- Documents keep a full revision history: undo and redo cover the background and every layer.
+- Select several layers, merge them down or flatten, as in Photoshop; the picture itself is a layer too.
+- Documents keep a full revision history: undo and redo cover every layer.
 - Results come as one to four proposals. Compare them with the original, then apply or discard.
 
 ## Requirements

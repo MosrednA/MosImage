@@ -369,6 +369,7 @@ small { color: var(--muted); }
 .layers-actions { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid var(--line); }
 .layers-actions button { flex: 1; padding: 4px 8px; font-size: 11px; gap: 5px; }
 .layers-actions button svg { width: 14px; height: 14px; }
+.layers-actions .icon-button { flex: 0 0 28px; padding: 4px; }
 .layer-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0; padding: 0; }
 .layers-empty { margin: 8px; }
 .layer-row { display: flex; align-items: center; gap: 6px; min-height: 42px; padding: 3px 8px 3px 2px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; cursor: pointer; font-size: 12px; user-select: none; }
@@ -378,13 +379,12 @@ small { color: var(--muted); }
 .layer-row.hidden .layer-thumb, .layer-row.hidden .layer-name { opacity: .45; }
 .layer-row.drop-target { box-shadow: inset 0 2px 0 var(--accent); }
 .layer-row.uploading { justify-content: center; position: relative; }
-.layer-row.background { margin-top: 0; }
-.layer-row.background::before { content: ""; flex: 0 0 28px; }
 .layer-thumb { width: 34px; height: 34px; flex-shrink: 0; border-radius: 2px; overflow: hidden; display: grid; place-items: center; outline: 1px solid #0006; background: repeating-conic-gradient(#4a505b 0% 25%, #3a3f48 0% 50%) 50% / 8px 8px; }
 .layer-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
-.layer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; flex-direction: column; gap: 1px; }
+.layer-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.layer-name > span, .layer-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A hidden original kept under the AI layer that replaced it. */
 .layer-name small { font-size: 9.5px; color: var(--faint); }
-.layer-row:not(.background) .layer-name { display: block; }
 .layer-rename { flex: 1; min-width: 0; padding: 3px 6px; font-size: 12px; }
 .layer-row .icon-button { width: 28px; height: 28px; padding: 6px; border-color: transparent; background: transparent; color: #c5ccd8; }
 .layer-row .icon-button[aria-pressed=true] { color: var(--faint); }
@@ -419,6 +419,17 @@ small { color: var(--muted); }
 .mask-tool[aria-pressed=true] { color: var(--accent); background: var(--accent-soft); }
 .layer-blend, .layer-mask, .layer-cutout { gap: 6px; padding: 5px 8px; font-size: 11px; }
 .layer-blend svg, .layer-mask svg, .layer-cutout svg { width: 15px; height: 15px; }
+.layer-buttons { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
+.layer-buttons button { gap: 5px; padding: 5px 6px; font-size: 11px; white-space: nowrap; }
+.layer-buttons button svg { width: 14px; height: 14px; flex-shrink: 0; }
+.layer-hint { font-size: 10px; line-height: 1.4; color: var(--faint); }
+/* Right-click menus, such as the Layers panel's. */
+.context-menu { position: fixed; z-index: 40; min-width: 210px; display: grid; padding: 4px; background: var(--float); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow), inset 0 1px 0 #ffffff0d; }
+.context-menu button { justify-content: space-between; gap: 20px; padding: 5px 10px; border: 0; background: transparent; font-size: 12px; text-align: left; }
+.context-menu button:hover:not(:disabled), .context-menu button:focus-visible { background: var(--accent-soft); outline: 0; }
+.context-menu button.danger:hover:not(:disabled), .context-menu button.danger:focus-visible { color: var(--danger); }
+.context-menu kbd { font-family: inherit; font-size: 10.5px; color: var(--faint); }
+.context-menu-separator { height: 1px; margin: 4px 2px; background: var(--line-soft); }
 .layer-mask[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 
 /* Layers: on the canvas */

@@ -1,21 +1,33 @@
-import { DragEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { DragEvent, KeyboardEvent, MouseEvent, useEffect, useRef, useState } from "react";
 import { LayerRecord, fileUrl } from "../api";
-import { MAX_LAYERS, variantIndex } from "../layers/stack";
+import { MAX_LAYERS, MergeKind, replacementOf, variantIndex } from "../layers/stack";
+import { ContextMenu, MenuEntry } from "./ContextMenu";
 import { Icon } from "./Icon";
 
 interface Props {
   layers: LayerRecord[];
   activeId: string | null;
-  backgroundUrl: string | null;
+  /** Every selected layer, the active one among them. */
+  selectedIds: string[];
   uploading: number;
   disabled: boolean;
   canCopySelection: boolean;
+  /** Which merges have something to merge now. */
+  mergeable: Record<MergeKind, boolean>;
   onSelect: (id: string | null) => void;
+  /** Ctrl-click: adds the layer to the selection or takes it out. */
+  onToggleSelect: (id: string) => void;
+  /** Shift-click: selects the layers from the last one clicked. */
+  onSelectRange: (id: string) => void;
+  /** Ctrl-click on the thumbnail: selects the layer's pixels on the picture. */
+  onSelectPixels: (id: string) => void;
+  onMerge: (kind: MergeKind) => void;
   onAdd: (files: File[]) => void;
   onCopySelection: () => void;
   onUpdate: (id: string, patch: Partial<LayerRecord>, label: string) => void;
   onPreview: (id: string, patch: Partial<LayerRecord>) => void;
-  onRemove: (id: string) => void;
+  onRemove: (ids: string[]) => void;
+  onSetVisible: (ids: string[], visible: boolean) => void;
   onDuplicate: (id: string) => void;
   onReorder: (id: string, index: number) => void;
   onReset: (id: string) => void;
@@ -41,15 +53,68 @@ interface Props {
 const LAYER_DRAG_TYPE = "application/x-mosimage-layer";
 
 export function LayersPanel(props: Props) {
-  const { layers, activeId, disabled } = props;
+  const { layers, activeId, selectedIds, disabled, mergeable } = props;
   const picker = useRef<HTMLInputElement>(null);
   const [dropping, setDropping] = useState(false);
   const [dragTarget, setDragTarget] = useState<number | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const active = layers.find(layer => layer.id === activeId) ?? null;
+  const selected = layers.filter(layer => selectedIds.includes(layer.id));
   const full = layers.length >= MAX_LAYERS;
   // Top of the stack first, like any layers panel.
   const listed = [...layers].reverse();
+
+  function click(event: MouseEvent, id: string) {
+    if (event.shiftKey) props.onSelectRange(id);
+    else if (event.ctrlKey || event.metaKey) props.onToggleSelect(id);
+    else props.onSelect(id);
+  }
+  /** Right-click works on the selection, or on the layer alone when it was not selected, as in Photoshop. */
+  function openMenu(event: MouseEvent, id: string | null) {
+    // Renaming keeps the text field's own menu.
+    if ((event.target as HTMLElement).closest("input")) return;
+    event.preventDefault(); event.stopPropagation();
+    if (disabled) return;
+    if (id && !selectedIds.includes(id)) props.onSelect(id);
+    setMenu({ x: event.clientX, y: event.clientY });
+  }
+  function openMenuAt(element: HTMLElement) {
+    const box = element.getBoundingClientRect();
+    setMenu({ x: box.left, y: box.bottom + 2 });
+  }
+
+  function menuItems(): MenuEntry[] {
+    const merges: MenuEntry[] = [
+      { label: "Merge visible", shortcut: "Ctrl+Shift+E", disabled: !mergeable.visible, title: "Merge every visible layer into one; hidden layers stay", onSelect: () => props.onMerge("visible") },
+      { label: "Flatten image", disabled: !mergeable.flatten, title: "Merge everything into one Background layer; hidden layers are discarded", onSelect: () => props.onMerge("flatten") },
+    ];
+    if (selected.length > 1) {
+      const anyHidden = selected.some(layer => !layer.visible);
+      return [
+        { label: "Merge layers", shortcut: "Ctrl+E", disabled: !mergeable.selected, onSelect: () => props.onMerge("selected") },
+        { label: anyHidden ? "Show layers" : "Hide layers", onSelect: () => props.onSetVisible(selectedIds, anyHidden) },
+        { label: `Delete ${selected.length} layers`, shortcut: "Delete", danger: true, onSelect: () => props.onRemove(selectedIds) },
+        "separator", ...merges,
+      ];
+    }
+    const layer = selected[0] ?? null;
+    if (!layer) return [
+      { label: "Add image…", disabled: full, onSelect: () => picker.current?.click() },
+      { label: "Selection to layer", shortcut: "Ctrl+J", disabled: full || !props.canCopySelection, onSelect: props.onCopySelection },
+      "separator", ...merges,
+    ];
+    return [
+      { label: "Select pixels", shortcut: "Ctrl+click thumbnail", onSelect: () => props.onSelectPixels(layer.id) },
+      { label: layer.visible ? "Hide layer" : "Show layer", onSelect: () => props.onSetVisible([layer.id], !layer.visible) },
+      { label: "Rename", onSelect: () => setRenaming(layer.id) },
+      { label: "Duplicate layer", disabled: full, onSelect: () => props.onDuplicate(layer.id) },
+      { label: "Delete layer", shortcut: "Delete", danger: true, onSelect: () => props.onRemove([layer.id]) },
+      "separator",
+      { label: "Merge down", shortcut: "Ctrl+E", disabled: !mergeable.down, title: "Merge onto the next visible layer below", onSelect: () => props.onMerge("down") },
+      ...merges,
+    ];
+  }
 
   function drop(event: DragEvent<HTMLElement>, index: number | null) {
     event.preventDefault(); event.stopPropagation();
@@ -75,47 +140,83 @@ export function LayersPanel(props: Props) {
     <div className="layers-actions">
       <button disabled={disabled || full} title={full ? `Up to ${MAX_LAYERS} layers` : "Add images as layers"} onClick={() => picker.current?.click()}><Icon name="plus" />Add image</button>
       <button disabled={disabled || full || !props.canCopySelection} title="Copy the selected area to a new layer · Ctrl + J" onClick={props.onCopySelection}><Icon name="scissors" />Selection</button>
+      <button className="icon-button" disabled={disabled} aria-haspopup="menu" aria-expanded={!!menu} aria-label="Layer menu" title="Merge, flatten and more · or right-click a layer"
+        onClick={event => openMenuAt(event.currentTarget)}><Icon name="more" /></button>
     </div>
-    <div className="layer-list" role="listbox" aria-label="Layers">
+    <div className="layer-list" role="listbox" aria-label="Layers" aria-multiselectable="true" onContextMenu={event => openMenu(event, null)}>
       {!layers.length && !props.uploading && <button className="reference-empty layers-empty" disabled={disabled} onClick={() => picker.current?.click()}>
         <Icon name="layers" />
-        <strong>Stack images on your picture</strong>
-        <span>Add a photo or a transparent PNG, or copy a selection. Move, scale, stretch and rotate it, and cut parts away.</span>
+        <strong>An empty canvas</strong>
+        <span>Add a photo or a transparent PNG, or paste one. Move, scale, stretch and rotate it, and mask parts away.</span>
         <small>Drop or paste images, or click to browse</small>
       </button>}
-      {Array.from({ length: props.uploading }, (_, index) => <div key={"upload-" + index} className="layer-row uploading"><span className="reference-spinner" aria-label="Adding layer" /></div>)}
-      {listed.map((layer, index) => <div key={layer.id} role="option" aria-selected={layer.id === activeId} tabIndex={0}
-        className={"layer-row" + (layer.id === activeId ? " active" : "") + (layer.visible ? "" : " hidden") + (dragTarget === index ? " drop-target" : "")}
-        draggable={!disabled && renaming !== layer.id}
-        onClick={() => props.onSelect(layer.id)}
-        onKeyDown={event => { if (event.key === "Enter" && event.target === event.currentTarget) props.onSelect(layer.id); }}
-        onDragStart={event => { event.dataTransfer.setData(LAYER_DRAG_TYPE, layer.id); event.dataTransfer.effectAllowed = "move"; }}
-        onDragOver={event => { if (event.dataTransfer.types.includes(LAYER_DRAG_TYPE)) { event.preventDefault(); event.stopPropagation(); setDragTarget(index); } }}
-        onDrop={event => drop(event, index)}
-        onDragEnd={() => setDragTarget(null)}>
-        <button className="icon-button" disabled={disabled} aria-pressed={!layer.visible} title={layer.visible ? "Hide layer" : "Show layer"} aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
-          onClick={event => { event.stopPropagation(); props.onUpdate(layer.id, { visible: !layer.visible }, layer.visible ? "Hide layer" : "Show layer"); }}>
-          <Icon name={layer.visible ? "eye" : "eyeOff"} />
-        </button>
-        <span className={"layer-thumb" + (layer.id === activeId && !props.masking ? " targeted" : "")} title={variantIndex(layer) >= 0 ? `Variant ${variantIndex(layer) + 1} of ${layer.variant_paths.length} · , and . switch` : "Layer pixels"}>
-          <img crossOrigin="anonymous" src={fileUrl(layer.image_url)} alt="" draggable={false} />
-          {variantIndex(layer) >= 0 && <span className="variant-badge" aria-hidden="true">{variantIndex(layer) + 1}/{layer.variant_paths.length}</span>}
-        </span>
-        {layer.mask_url && <MaskThumb layer={layer} targeted={layer.id === activeId && props.masking} disabled={disabled}
-          onEdit={() => props.onEditMask(layer.id)} onView={() => props.onViewMask(layer.id)} onSwitch={() => props.onSwitchMask(layer.id)} />}
-        {renaming === layer.id
-          ? <RenameField name={layer.name} onDone={name => { setRenaming(null); if (name && name !== layer.name) props.onUpdate(layer.id, { name }, "Rename layer"); }} />
-          : <span className="layer-name" title={`${layer.name} · Double-click to rename`} onDoubleClick={() => !disabled && setRenaming(layer.id)}>{layer.name}</span>}
-      </div>)}
-      <div role="option" aria-selected={activeId === null} tabIndex={0} className={"layer-row background" + (activeId === null ? " active" : "")}
-        onClick={() => props.onSelect(null)} onKeyDown={event => { if (event.key === "Enter") props.onSelect(null); }}>
-        <span className="layer-thumb">{props.backgroundUrl && <img src={props.backgroundUrl} alt="" draggable={false} />}</span>
-        <span className="layer-name">Background<small>AI results arrive as layers</small></span>
-      </div>
+      {Array.from({ length: props.uploading }, (_, index) => <div key={"upload-" + index} className="layer-row uploading"><span className="reference-spinner" aria-label="Working on layers" /></div>)}
+      {listed.map((layer, index) => {
+        const isSelected = selectedIds.includes(layer.id);
+        const replacement = replacementOf(layers, layer.id);
+        return <div key={layer.id} role="option" aria-selected={isSelected} tabIndex={0}
+          className={"layer-row" + (isSelected ? " active" : "") + (layer.visible ? "" : " hidden") + (dragTarget === index ? " drop-target" : "")}
+          draggable={!disabled && renaming !== layer.id}
+          onClick={event => click(event, layer.id)}
+          onContextMenu={event => openMenu(event, layer.id)}
+          onKeyDown={event => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key === "Enter") props.onSelect(layer.id);
+            if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+              event.preventDefault();
+              if (!isSelected) props.onSelect(layer.id);
+              openMenuAt(event.currentTarget);
+            }
+          }}
+          onDragStart={event => { event.dataTransfer.setData(LAYER_DRAG_TYPE, layer.id); event.dataTransfer.effectAllowed = "move"; }}
+          onDragOver={event => { if (event.dataTransfer.types.includes(LAYER_DRAG_TYPE)) { event.preventDefault(); event.stopPropagation(); setDragTarget(index); } }}
+          onDrop={event => drop(event, index)}
+          onDragEnd={() => setDragTarget(null)}>
+          <button className="icon-button" disabled={disabled} aria-pressed={!layer.visible} title={layer.visible ? "Hide layer" : "Show layer"} aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
+            onClick={event => { event.stopPropagation(); props.onUpdate(layer.id, { visible: !layer.visible }, layer.visible ? "Hide layer" : "Show layer"); }}>
+            <Icon name={layer.visible ? "eye" : "eyeOff"} />
+          </button>
+          <span className={"layer-thumb" + (layer.id === activeId && !props.masking ? " targeted" : "")}
+            title={(variantIndex(layer) >= 0 ? `Variant ${variantIndex(layer) + 1} of ${layer.variant_paths.length} · , and . switch` : "Layer pixels") + "\nCtrl-click to select them"}
+            onClick={event => { if (!(event.ctrlKey || event.metaKey) || disabled) return; event.stopPropagation(); props.onSelectPixels(layer.id); }}>
+            <img crossOrigin="anonymous" src={fileUrl(layer.image_url)} alt="" draggable={false} />
+            {variantIndex(layer) >= 0 && <span className="variant-badge" aria-hidden="true">{variantIndex(layer) + 1}/{layer.variant_paths.length}</span>}
+          </span>
+          {layer.mask_url && <MaskThumb layer={layer} targeted={layer.id === activeId && props.masking} disabled={disabled}
+            onEdit={() => props.onEditMask(layer.id)} onView={() => props.onViewMask(layer.id)} onSwitch={() => props.onSwitchMask(layer.id)} />}
+          {renaming === layer.id
+            ? <RenameField name={layer.name} onDone={name => { setRenaming(null); if (name && name !== layer.name) props.onUpdate(layer.id, { name }, "Rename layer"); }} />
+            : <span className="layer-name" onDoubleClick={() => !disabled && setRenaming(layer.id)}
+              title={`${layer.name} · Double-click to rename` + (replacement ? `\nKept hidden under ${replacement.name}, which replaced it. Deleting ${replacement.name} shows it again; merging it lets this one go.` : "")}>
+              <span>{layer.name}</span>
+              {replacement && <small>Original of {replacement.name}</small>}
+            </span>}
+        </div>;
+      })}
     </div>
-    {active && <LayerProperties key={active.id} {...props} layer={active} />}
+    {selected.length > 1
+      ? <SelectedLayers {...props} selected={selected} />
+      : active && <LayerProperties key={active.id} {...props} layer={active} />}
     {dropping && <div className="reference-drop">Drop to add layers</div>}
+    {menu && <ContextMenu x={menu.x} y={menu.y} label="Layer actions" items={menuItems()} onClose={() => setMenu(null)} />}
   </div>;
+}
+
+/** What works on several layers at once. */
+function SelectedLayers({ selected, selectedIds, disabled, mergeable, onMerge, onSetVisible, onRemove }: Props & { selected: LayerRecord[] }) {
+  const anyHidden = selected.some(layer => !layer.visible);
+  return <section className="layer-properties" aria-label="Selected layers">
+    <div className="layer-group" role="group" aria-labelledby="layer-group-selected">
+      <h3 className="layer-group-title" id="layer-group-selected"><Icon name="layers" />{selected.length} layers</h3>
+      <div className="layer-buttons">
+        <button disabled={disabled || !mergeable.selected} title="Merge the visible selected layers into one · Ctrl + E" onClick={() => onMerge("selected")}><Icon name="merge" />Merge</button>
+        <button disabled={disabled} title={anyHidden ? "Show the selected layers" : "Hide the selected layers"} onClick={() => onSetVisible(selectedIds, anyHidden)}>
+          <Icon name={anyHidden ? "eye" : "eyeOff"} />{anyHidden ? "Show" : "Hide"}</button>
+        <button disabled={disabled} title="Delete the selected layers · Delete" onClick={() => onRemove(selectedIds)}><Icon name="trash" />Delete</button>
+      </div>
+      <small className="layer-hint">Ctrl-click adds or removes a layer · Shift-click selects a range</small>
+    </div>
+  </section>;
 }
 
 /**
@@ -156,7 +257,7 @@ function LayerVariants({ layer, disabled, onUpdate, onVariant, onSeparateVariant
   </div>;
 }
 
-function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDuplicate, onReset, onBlend, onRemoveBackground, masking, ...props }: Props & { layer: LayerRecord }) {
+function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDuplicate, onReset, onBlend, onRemoveBackground, masking, mergeable, ...props }: Props & { layer: LayerRecord }) {
   const [opacity, setOpacity] = useState(Math.round(layer.opacity * 100));
   useEffect(() => setOpacity(Math.round(layer.opacity * 100)), [layer.opacity]);
   const commitOpacity = () => { if (opacity / 100 !== layer.opacity) onUpdate(layer.id, { opacity: opacity / 100 }, "Change opacity"); };
@@ -178,7 +279,13 @@ function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDup
         <button className="icon-button" disabled={disabled} title="Rotate 90°" aria-label="Rotate 90 degrees" onClick={() => onUpdate(layer.id, { rotation: turnedQuarter(layer.rotation) }, "Rotate layer")}><Icon name="rotate" /></button>
         <button className="icon-button" disabled={disabled} title="Reset position, size and rotation" aria-label="Reset transform" onClick={() => onReset(layer.id)}><Icon name="reset" /></button>
         <button className="icon-button" disabled={disabled} title="Duplicate layer" aria-label="Duplicate layer" onClick={() => onDuplicate(layer.id)}><Icon name="duplicate" /></button>
-        <button className="icon-button" disabled={disabled} title="Delete layer · Delete" aria-label="Delete layer" onClick={() => onRemove(layer.id)}><Icon name="trash" /></button>
+        <button className="icon-button" disabled={disabled} title="Delete layer · Delete" aria-label="Delete layer" onClick={() => onRemove([layer.id])}><Icon name="trash" /></button>
+      </div>
+      <div className="layer-buttons">
+        <button disabled={disabled} title="Select where this layer shows, to fill, mask or copy it · Ctrl-click its thumbnail" onClick={() => props.onSelectPixels(layer.id)}>
+          <Icon name="rectangle" />Select pixels</button>
+        <button disabled={disabled || !mergeable.down} title={mergeable.down ? "Merge onto the next visible layer below · Ctrl + E" : "Needs a visible layer below, and this one shown"}
+          onClick={() => props.onMerge("down")}><Icon name="merge" />Merge down</button>
       </div>
       <button className="layer-blend" disabled={disabled || !layer.visible} title={layer.visible ? "Let the AI match its light, colours, shadows and edges to the picture" : "Show the layer to blend it in"}
         onClick={() => onBlend(layer.id)}><Icon name="spark" />Blend in</button>

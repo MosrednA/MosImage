@@ -319,6 +319,8 @@ class LayerState(BaseModel):
     rotation: float = 0.0
     opacity: float = Field(default=1.0, ge=0, le=1)
     visible: bool = True
+    # The layer an AI edit or Blend in replaced, kept hidden just below; merging this one lets it go.
+    original_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,40}$")
 
     @field_validator("scale_x", "scale_y")
     @classmethod
@@ -338,7 +340,7 @@ class LayerRecord(LayerState):
 
 class LayersUpdate(BaseModel):
     base_revision_id: int
-    layers: list[LayerState] = Field(max_length=32)
+    layers: list[LayerState] = Field(max_length=40)
     # Short description of the change, such as "Move layer".
     label: str = Field(default="Edit layers", max_length=60)
 
@@ -386,7 +388,7 @@ class DocumentRecord(BaseModel):
     color_profile: str
     current_revision_id: int | None = None
     current_image_url: str | None = None
-    # Layers above the background in the current revision, bottom first.
+    # The layers that make up the picture in the current revision, bottom first.
     layers: list[LayerRecord] = Field(default_factory=list)
     can_undo: bool
     can_redo: bool

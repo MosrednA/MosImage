@@ -2,7 +2,8 @@ import { MutableRefObject, useEffect, useRef, useState } from "react";
 import { DocumentRecord, LayerRecord, fileUrl } from "../api";
 import { ImageSize } from "../canvas/coordinates";
 import { errorMessage } from "../errors";
-import { fileFromUrl, flatten, loadImage, shownMask, withTransparencyOf } from "../layers/bitmaps";
+import { FlatLayer, fileFromUrl, flatten, loadImage, shownMask, withTransparencyOf } from "../layers/bitmaps";
+import { fillsCanvas, isShown } from "../layers/stack";
 import { saveFile } from "../saveFile";
 
 /** An edited layer image with the original layer's transparency. */
@@ -10,20 +11,20 @@ export async function editedLayer(edited: HTMLImageElement, layer: LayerRecord):
   return withTransparencyOf(edited, await loadImage(fileUrl(layer.image_url)), layer.width, layer.height);
 }
 
-/** Whether a layer shows in the picture. */
-export function isShown(layer: LayerRecord): boolean {
-  return layer.visible && layer.opacity > 0;
+/** Layers with their images and masks loaded, ready to draw. */
+export function flatLayers(layers: LayerRecord[]): Promise<FlatLayer[]> {
+  return Promise.all(layers.map(async layer => ({ ...layer, image: await loadImage(fileUrl(layer.image_url)), mask: await shownMask(layer) })));
 }
 
 /** `background` with the layers that show on top, as PNG. */
 export async function flattenVisible(background: CanvasImageSource, size: ImageSize, layers: LayerRecord[]): Promise<Blob> {
-  const parts = await Promise.all(layers.filter(isShown).map(async layer => ({
-    ...layer, image: await loadImage(fileUrl(layer.image_url)), mask: await shownMask(layer),
-  })));
-  return flatten(background, size, parts);
+  return flatten(background, size, await flatLayers(layers.filter(isShown)));
 }
 
-/** The picture as you see it: the background with its visible layers, cached between requests. */
+/**
+ * The picture as you see it, cached between requests. `source` is the empty
+ * canvas the layers are drawn on; the picture itself is in its layers.
+ */
 export function usePicture(source: File | null, size: ImageSize | null, sourceUrl: string | null, documentRef: MutableRefObject<DocumentRecord | null>) {
   const composite = useRef<{ key: string; file: File } | null>(null);
   const layerFiles = useRef(new Map<string, File>());
@@ -31,7 +32,7 @@ export function usePicture(source: File | null, size: ImageSize | null, sourceUr
   function visibleLayers(): LayerRecord[] {
     return (documentRef.current?.layers ?? []).filter(isShown);
   }
-  /** The background with these layers on top, as PNG. */
+  /** These layers on the canvas, as PNG. */
   async function flattenLayers(visible: LayerRecord[]): Promise<Blob> {
     if (!source || !size) throw new Error("Open an image first.");
     const background = await createImageBitmap(source);
@@ -55,16 +56,17 @@ export function usePicture(source: File | null, size: ImageSize | null, sourceUr
     }
     return file;
   }
-  /** Saves the picture where the user picks; layers are flattened onto it as PNG to keep every edge crisp. Returns where, or null if cancelled. */
+  /**
+   * Saves the picture where the user picks, flattened as PNG to keep every
+   * edge crisp; a lone background goes out as it came in. Returns where, or
+   * null if cancelled.
+   */
   async function exportPicture(name: string): Promise<string | null> {
-    if (!source) return null;
+    if (!source || !size) return null;
     const visible = visibleLayers();
-    let image: Blob = source;
-    let extension = source.type === "image/jpeg" ? ".jpg" : source.type === "image/webp" ? ".webp" : ".png";
-    if (visible.length && size) {
-      image = await flattenLayers(visible);
-      extension = ".png";
-    }
+    const plain = visible.length === 1 && fillsCanvas(visible[0], size) ? await layerFile(visible[0]) : null;
+    const image = plain ?? await flattenLayers(visible);
+    const extension = image.type === "image/jpeg" ? ".jpg" : image.type === "image/webp" ? ".webp" : ".png";
     return saveFile(image, name.replace(/[<>:"/\\|?*]+/g, "-").replace(/\.[^.]+$/, "") + extension);
   }
 

@@ -118,7 +118,7 @@ export interface DocumentRecord {
   color_profile: string;
   current_revision_id: number | null;
   current_image_url: string | null;
-  /** Layers above the background, bottom first. */
+  /** The layers that make up the picture, bottom first; the first is usually the Background. */
   layers: LayerRecord[];
   can_undo: boolean;
   can_redo: boolean;
@@ -143,6 +143,8 @@ export interface LayerState {
   rotation: number;
   opacity: number;
   visible: boolean;
+  /** The layer an AI edit or Blend in replaced, kept hidden just below; merging this one lets it go. */
+  original_id: string | null;
 }
 
 export interface LayerRecord extends LayerState {
@@ -192,7 +194,7 @@ export interface RevisionRecord {
   accepted: boolean;
   created_at: string;
   alternatives: AlternativeRecord[];
-  /** The layers over this revision's background; an Expand proposal has them moved with the content. */
+  /** This revision's layers; an Expand proposal has them moved with the content and its result in one of them. */
   layers: LayerRecord[];
 }
 
@@ -414,8 +416,8 @@ export async function uploadLayerAsset(documentId: number, image: Blob, kind: "i
 
 /** Saves the layer stack as an undoable revision; fails with 409 when the document moved on. */
 export async function saveLayers(documentId: number, baseRevisionId: number, layers: LayerState[], label: string): Promise<DocumentRecord> {
-  const body = layers.map(({ id, name, image_path, mask_path, mask_enabled, variant_paths, x, y, scale_x, scale_y, rotation, opacity, visible }) =>
-    ({ id, name, image_path, mask_path, mask_enabled, variant_paths, x, y, scale_x, scale_y, rotation, opacity, visible }));
+  const body = layers.map(({ id, name, image_path, mask_path, mask_enabled, variant_paths, x, y, scale_x, scale_y, rotation, opacity, visible, original_id }) =>
+    ({ id, name, image_path, mask_path, mask_enabled, variant_paths, x, y, scale_x, scale_y, rotation, opacity, visible, original_id }));
   return request(`/api/v2/documents/${documentId}/layers`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

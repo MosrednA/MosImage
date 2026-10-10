@@ -59,9 +59,36 @@ CREATE INDEX IF NOT EXISTS alternatives_revision_idx ON alternatives(revision_id
 """
 
 
+# Proposals whose chosen alternative a layer shows once it is applied.
+PROPOSAL_OPERATIONS = ("generate", "inpaint", "outpaint")
+RESULT_LAYER_NAMES = {"generate": "AI image", "inpaint": "AI edit", "outpaint": "Expanded"}
+
+
+def _background_layers(db: Connection) -> None:
+    """Older revisions drew their picture under the layers; it becomes their bottom layer, the Background."""
+    rows = db.execute("SELECT id, composite_image_path, layers, operation_type, operation_parameters, accepted FROM revisions").fetchall()
+    for row in rows:
+        stack = layer_store.parse(row["layers"])
+        if any(layer["id"] == layer_store.BACKGROUND_ID for layer in stack):
+            continue
+        try:
+            with Image.open(_absolute_path(row["composite_image_path"])) as image:
+                size = image.size
+        except (OSError, ValueError):
+            continue  # A picture that is gone has nothing to show.
+        parameters = json.loads(row["operation_parameters"] or "{}")
+        if not row["accepted"] and row["operation_type"] in PROPOSAL_OPERATIONS:
+            parameters["result_layer"] = layer_store.BACKGROUND_ID
+        db.execute(
+            "UPDATE revisions SET layers = ?, operation_parameters = ? WHERE id = ?",
+            (json.dumps([layer_store.background(row["composite_image_path"], size), *stack]), json.dumps(parameters), row["id"]),
+        )
+
+
 DOCUMENT_MIGRATIONS: list[storage.Migration] = [
     ("documents.0001_create", lambda db: db.executescript(DOCUMENT_SCHEMA)),
     ("documents.0002_revision_layers", lambda db: storage.add_column_if_missing(db, "revisions", "layers", "TEXT NOT NULL DEFAULT '[]'")),
+    ("documents.0003_background_layers", _background_layers),
 ]
 
 
@@ -94,6 +121,7 @@ def create_from_upload(name: str, content: bytes, filename: str | None) -> dict[
                 mask_path=None,
                 parameters={"filename": filename or "image.png"},
                 accepted=True,
+                layers=[layer_store.background(storage.to_relative(path), (width, height))],
             )
             _set_current_revision(db, document_id, revision_id)
             db.commit()
@@ -127,6 +155,7 @@ def import_generation(generation_id: int, name: str | None = None) -> dict[str, 
                 mask_path=None,
                 parameters={"generation_id": generation_id},
                 accepted=True,
+                layers=[layer_store.background(storage.to_relative(copied), (width, height))],
             )
             _set_current_revision(db, document_id, revision_id)
             db.commit()
@@ -178,6 +207,12 @@ def create_revision_from_upload(
         if (width, height) != (document["canvas_width"], document["canvas_height"]):
             raise ValueError("Revision dimensions must match the document canvas")
         with storage.connect() as db:
+            parent_layers = _layers_of(db, document["current_revision_id"])
+            # The new picture takes the place of a background that fills the canvas.
+            stack, _ = layer_store.with_result_layer(
+                parent_layers, storage.to_relative(path), (width, height), "Picture",
+                bool(parent_layers) and layer_store.fills_canvas(parent_layers[0], (width, height)),
+            )
             revision_id = _insert_revision(
                 db,
                 document_id=document_id,
@@ -187,6 +222,7 @@ def create_revision_from_upload(
                 mask_path=None,
                 parameters={},
                 accepted=True,
+                layers=stack,
             )
             _set_current_revision(db, document_id, revision_id)
             db.commit()
@@ -219,10 +255,12 @@ def create_alternative_proposal(
         raise ValueError("Generation task does not match the proposed operation")
 
     with storage.connect() as db:
-        parent = db.execute("SELECT composite_image_path, layers FROM revisions WHERE id = ?", (document["current_revision_id"],)).fetchone()
-    parent_layers = layer_store.parse(parent["layers"]) if parent else []
-    # Expand continued the picture with its layers, which stay on top of the new background.
-    rebase = operation_type == "outpaint" and bool(parent_layers)
+        parent_layers = _layers_of(db, document["current_revision_id"])
+    canvas = (document["canvas_width"], document["canvas_height"])
+    # The result shows in the bottom layer when that fills the canvas, as a background does; otherwise in a new layer under the rest.
+    replace_bottom = bool(parent_layers) and layer_store.fills_canvas(parent_layers[0], canvas)
+    # Expand continued the picture with its layers, which stay on top: the grown background keeps its own pixels under them.
+    rebase = operation_type == "outpaint" and replace_bottom and any(_shows(layer) for layer in parent_layers[1:])
     copied_paths: list[Path] = []
     copied_mask: Path | None = None
     proposal_size: tuple[int, int] | None = None
@@ -238,13 +276,19 @@ def create_alternative_proposal(
                 raise ValueError("Alternative dimensions must match each other")
             proposal_size = (width, height)
             copied_paths.append(
-                _rebased_expansion(generation, _absolute_path(parent["composite_image_path"]), layer_offset)
+                _rebased_expansion(generation, _absolute_path(parent_layers[0]["image_path"]), layer_offset)
                 if rebase else _copy_revision_asset(source, "alternative")
             )
         mask_relative = resolved[0].get("mask_image_path")
         if mask_relative:
             copied_mask = _copy_revision_asset(_absolute_path(mask_relative), "mask")
 
+        assert proposal_size is not None
+        # Expand moves the layers along with the content; the first alternative shows until one is chosen.
+        stack, result_layer = layer_store.with_result_layer(
+            layer_store.shifted(parent_layers, *layer_offset) if operation_type == "outpaint" else parent_layers,
+            storage.to_relative(copied_paths[0]), proposal_size, RESULT_LAYER_NAMES[operation_type], replace_bottom,
+        )
         with storage.connect() as db:
             revision_id = _insert_revision(
                 db,
@@ -253,9 +297,9 @@ def create_alternative_proposal(
                 operation_type=operation_type,
                 composite_path=storage.to_relative(copied_paths[0]),
                 mask_path=storage.to_relative(copied_mask),
-                parameters={"generation_ids": generation_ids},
+                parameters={"generation_ids": generation_ids, "result_layer": result_layer},
                 accepted=False,
-                layers=layer_store.shifted(parent_layers, *layer_offset) if operation_type == "outpaint" else parent_layers,
+                layers=stack,
             )
             for generation, path in zip(resolved, copied_paths, strict=True):
                 db.execute(
@@ -306,15 +350,21 @@ def accept_alternative(document_id: int, revision_id: int, alternative_id: int) 
         if current["current_revision_id"] != revision["parent_revision_id"]:
             raise RevisionConflict("The document changed after these alternatives were generated")
 
+        # The proposal's result layer shows the chosen alternative.
+        result_layer = json.loads(revision["operation_parameters"]).get("result_layer")
+        stack = [
+            {**layer, "image_path": alternative["output_image_path"]} if layer["id"] == result_layer else layer
+            for layer in layer_store.parse(revision["layers"])
+        ]
         db.execute("UPDATE alternatives SET selected = 0 WHERE revision_id = ?", (revision_id,))
         db.execute("UPDATE alternatives SET selected = 1 WHERE id = ?", (alternative_id,))
         db.execute(
             """
             UPDATE revisions
-            SET composite_image_path = ?, selected_alternative_id = ?, accepted = 1
+            SET composite_image_path = ?, selected_alternative_id = ?, accepted = 1, layers = ?
             WHERE id = ?
             """,
-            (alternative["output_image_path"], alternative_id, revision_id),
+            (alternative["output_image_path"], alternative_id, json.dumps(stack), revision_id),
         )
         _set_current_revision(db, document_id, revision_id)
         db.commit()
@@ -322,7 +372,7 @@ def accept_alternative(document_id: int, revision_id: int, alternative_id: int) 
 
 
 def save_layers(document_id: int, base_revision_id: int, layers: list[dict[str, Any]], label: str) -> dict[str, Any]:
-    """Records a new layer stack over the current background as an undoable revision."""
+    """Records a new layer stack as an undoable revision; the canvas stays as it is."""
     checked = layer_store.validate(layers)
     with storage.connect() as db:
         document = db.execute("SELECT current_revision_id FROM documents WHERE id = ?", (document_id,)).fetchone()
@@ -352,10 +402,11 @@ MAX_CANVAS = 4096
 
 
 def crop(document_id: int, base_revision_id: int, x: int, y: int, width: int, height: int) -> dict[str, Any]:
-    """Cuts the canvas to a rectangle in background pixels, without AI.
+    """Cuts the canvas to a rectangle in canvas pixels, without AI.
 
     The rectangle may reach past the picture: that space stays transparent, as
-    an empty canvas in Photoshop. Layers keep their place over the content.
+    an empty canvas in Photoshop. Layers, the Background among them, keep
+    their place over the content and their pixels past the new edges.
     """
     if not (MIN_CANVAS <= width <= MAX_CANVAS and MIN_CANVAS <= height <= MAX_CANVAS):
         raise ValueError(f"The canvas must be {MIN_CANVAS} to {MAX_CANVAS} pixels on each side.")
@@ -597,6 +648,10 @@ def _insert_revision(
     return int(cursor.lastrowid)
 
 
+def _shows(layer: dict[str, Any]) -> bool:
+    return layer.get("visible", True) and layer.get("opacity", 1.0) > 0
+
+
 def _layers_of(db: Connection, revision_id: int | None) -> list[dict[str, Any]]:
     if revision_id is None:
         return []
@@ -658,7 +713,7 @@ def _copy_revision_asset(source: Path, prefix: str) -> Path:
 
 
 def _rebased_expansion(generation: dict[str, Any], background: Path, offset: tuple[int, int]) -> Path:
-    """Expand's result over the document's own background, so no layer is baked into it."""
+    """Expand's result over the bottom layer's own pixels, so no layer above it is baked in."""
     if not generation.get("input_image_path"):
         raise ValueError("This expansion did not keep the picture it continued")
     with (

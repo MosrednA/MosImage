@@ -1,7 +1,9 @@
-"""Image layers stacked above a document's background.
+"""The image layers that make up a document's picture.
 
-Each revision stores its layer stack as JSON that points to immutable PNG
+Each revision stores its layer stack as JSON that points to immutable image
 files, so moving or masking a layer is a cheap revision and undo covers it.
+The picture a document starts from is its bottom layer, the Background, as
+an ordinary layer: it can be hidden, moved, masked, merged or deleted.
 """
 
 from __future__ import annotations
@@ -15,12 +17,15 @@ from uuid import uuid4
 from PIL import Image, ImageOps
 
 from . import storage
+from .compositing import FAST_PNG
 from .config import settings
 
-MAX_LAYERS = 32
-# Larger uploads are scaled down; layers are placed on canvases of a few megapixels.
-MAX_LAYER_DIMENSION = 4096
+# Room for 32 layers over the background that older documents kept apart.
+MAX_LAYERS = 40
+# Larger uploads are scaled down; a merged background keeps a large photo's size.
+MAX_LAYER_DIMENSION = 8192
 LAYER_ASSET_PREFIXES = ("layer-", "layer-mask-")
+BACKGROUND_ID = "background"
 
 
 def ensure_layer_storage() -> None:
@@ -47,7 +52,8 @@ def save_asset(content: bytes, kind: Literal["image", "mask"]) -> dict[str, Any]
         prefix = "layer-mask-"
     ensure_layer_storage()
     path = settings.layer_dir / f"{prefix}{uuid4().hex}.png"
-    image.save(path, "PNG")
+    # Fast compression: merging a large background uploads tens of megapixels.
+    image.save(path, "PNG", **FAST_PNG)
     width, height = image.size
     return {"path": storage.to_relative(path), "url": storage.image_url(storage.to_relative(path)), "width": width, "height": height}
 
@@ -75,6 +81,44 @@ def validate(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return checked
 
 
+def background(image_path: str, size: tuple[int, int], layer_id: str = BACKGROUND_ID, name: str = "Background") -> dict[str, Any]:
+    """A layer that fills the canvas with `image_path`, as a new document's picture does."""
+    width, height = size
+    return {
+        "id": layer_id, "name": name, "image_path": image_path, "mask_path": None, "mask_enabled": True, "variant_paths": [],
+        "x": width / 2, "y": height / 2, "scale_x": 1.0, "scale_y": 1.0, "rotation": 0.0, "opacity": 1.0, "visible": True,
+        "width": width, "height": height,
+    }
+
+
+def fills_canvas(layer: dict[str, Any], size: tuple[int, int]) -> bool:
+    """True for a visible, unmasked layer whose pixels are the canvas's own, one to one."""
+    width, height = size
+    return (
+        layer.get("visible", True) and layer.get("opacity", 1.0) == 1.0
+        and not (layer.get("mask_path") and layer.get("mask_enabled", True))
+        and (layer.get("width"), layer.get("height")) == (width, height)
+        and (layer["x"], layer["y"]) == (width / 2, height / 2)
+        and (layer.get("scale_x", 1.0), layer.get("scale_y", 1.0), layer.get("rotation", 0.0)) == (1.0, 1.0, 0.0)
+    )
+
+
+def with_result_layer(layers: list[dict[str, Any]], image_path: str, size: tuple[int, int], name: str, replace_bottom: bool) -> tuple[list[dict[str, Any]], str]:
+    """Shows a full-canvas result in the bottom layer, or in a new layer under every layer.
+
+    Returns the stack and the id of the layer that shows the result.
+    """
+    if layers and replace_bottom:
+        bottom = {**background(image_path, size, layers[0]["id"], layers[0]["name"]), "original_id": layers[0].get("original_id")}
+        return [bottom, *layers[1:]], bottom["id"]
+    added = background(image_path, size, new_id(), name)
+    return [added, *layers], added["id"]
+
+
+def new_id() -> str:
+    return f"layer-{uuid4().hex[:16]}"
+
+
 def records(layers_json: str | None) -> list[dict[str, Any]]:
     """Layer state plus file URLs, bottom layer first."""
     return [
@@ -82,6 +126,7 @@ def records(layers_json: str | None) -> list[dict[str, Any]]:
             **layer,
             # Stacks saved before masks could be switched off have them on.
             "mask_enabled": layer.get("mask_enabled", True),
+            "original_id": layer.get("original_id"),
             "image_url": storage.image_url(layer["image_path"]),
             "mask_url": storage.image_url(layer["mask_path"]) if layer.get("mask_path") else None,
             "variant_paths": layer.get("variant_paths", []),
@@ -102,8 +147,9 @@ def shifted(layers: Iterable[dict[str, Any]], dx: float, dy: float) -> list[dict
 
 def _layer_file(relative: str, prefix: str) -> Path:
     path = (settings.data_dir / relative).resolve()
-    layer_dir = settings.layer_dir.resolve()
-    if path.parent != layer_dir or not path.name.startswith(prefix) or not path.is_file():
+    # A background shows the document's own picture, or an Expand result, without a copy.
+    picture = prefix == "layer-" and path.parent in (settings.document_dir.resolve(), settings.revision_dir.resolve())
+    if not path.is_file() or not (picture or (path.parent == settings.layer_dir.resolve() and path.name.startswith(prefix))):
         raise ValueError("A layer image is missing. Add it again.")
     if prefix == "layer-" and path.name.startswith("layer-mask-"):
         raise ValueError("A layer mask cannot be used as a layer image.")

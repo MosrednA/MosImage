@@ -73,7 +73,7 @@ Optional Fine detail sends the contextual selected crop through `provider.edit` 
 
 - `storage.py` runs SQLite with WAL and named migrations, and records generation history.
 - `documents.py` stores documents, revisions, AI alternatives, undo and redo. A stale base revision raises `RevisionConflict`, which the API returns as HTTP 409.
-- `layers.py` stores layer images (RGBA PNG) and masks (greyscale PNG). A switched-off mask is kept with `mask_enabled: false`; stacks saved before that flag existed load with their masks on. A layer can hold up to eight same-sized `variant_paths`, the AI proposals it was applied with; `image_path` is the one shown and the others stay on disk until the document goes.
+- `layers.py` stores layer images (RGBA PNG) and masks (greyscale PNG). The opened picture is the bottom layer, `background`, which points at the document image itself; `revisions.composite_image_path` remains the canvas image that sets the size and the library thumbnail. An AI layer that replaced another keeps its `original_id`. A switched-off mask is kept with `mask_enabled: false`; stacks saved before that flag existed load with their masks on. A layer can hold up to eight same-sized `variant_paths`, the AI proposals it was applied with; `image_path` is the one shown and the others stay on disk until the document goes.
 - `references.py` stores reference images and their optional isolated subjects.
 
 All files live under `data/`. Only `data/images/` is served over HTTP.

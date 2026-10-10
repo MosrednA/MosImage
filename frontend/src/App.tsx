@@ -32,21 +32,29 @@ import { ReferencePanel } from "./components/ReferencePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { SidePanel, SideTab } from "./components/SidePanel";
 import { LayerStage } from "./layers/LayerStage";
-import { blankCanvas, canvasBlob, cutSelection, fileFromUrl, invertMask, layerFootprint, loadImage, loadMask, selectionPatch, selectionToLayerMask, shownMask, solidMask } from "./layers/bitmaps";
+import { blankCanvas, canvasBlob, cutSelection, fileFromUrl, invertMask, layerFootprint, layerSelection, loadImage, loadMask, selectionPatch, selectionToLayerMask, shownMask, solidMask } from "./layers/bitmaps";
 import { generationPlacement, initialPlacement } from "./layers/geometry";
+import { MergeKind } from "./layers/stack";
 import { useLayers } from "./hooks/useLayers";
 import { MAX_ACTIVE_REFERENCES, useReferences } from "./hooks/useReferences";
 import { useEngine } from "./hooks/useEngine";
 import { JobContext, useJobRunner } from "./hooks/useJobRunner";
 import { editedLayer, usePicture, usePictureUrl } from "./hooks/usePicture";
 import { useFaceDetection } from "./hooks/useFaceDetection";
-import { useExpansionPreview, useResultPreview } from "./hooks/useResultPreview";
+import { useResultPreview } from "./hooks/useResultPreview";
 import { useSelectionTools } from "./hooks/useSelectionTools";
 import { isTyping, useWindowEvents } from "./hooks/useWindowEvents";
 
 const initialExpansion: Expansion = { left: 128, top: 0, right: 128, bottom: 0 };
 const PANEL_COLLAPSED_KEY = "mosimage.sidePanelCollapsed";
 const BLEND_PROMPT = "Blend it naturally into the scene: match the lighting, colours, shadows, reflections, perspective and grain, so it looks photographed here. Keep its shape and details.";
+const MERGE_KINDS: MergeKind[] = ["down", "selected", "visible", "flatten"];
+
+/** The empty canvas a document's layers are drawn on; the picture itself is in its layers. */
+async function blankPicture(record: DocumentRecord): Promise<File> {
+  const canvas = blankCanvas(record.canvas_width, record.canvas_height);
+  return new File([await canvasBlob(canvas)], "canvas.png", { type: "image/png" });
+}
 
 export default function App() {
   const [settings, setSettings] = useState(defaultSettings);
@@ -110,7 +118,7 @@ export default function App() {
   const reviewing = alternatives.length > 0;
   const locked = busy || reviewing;
   const chosen = alternatives[selected];
-  // What the AI made of the picture as you saw it; an Expand proposal keeps the layers out of the background it stores.
+  // What the AI made of the picture as you saw it, which is also how an Expand proposal looks once applied.
   const proposalUrls = alternatives.map(item => fileUrl(item.output_image_url));
   // References place people in a selection (Replace), the whole picture (Edit) or a new image (Generate).
   const referencesFor = (chosen: Operation) => ((chosen === "replace" || chosen === "edit" || chosen === "faces") && source) || chosen === "generate" ? refs.active : [];
@@ -120,6 +128,8 @@ export default function App() {
   // The layer Edit works on alone; it stays selected without its transform handles.
   const editLayer = operation === "edit" && editScope === "layer" ? layers.active : null;
   const blending = layers.layers.find(layer => layer.id === blendTarget && layer.visible) ?? null;
+  // The layer the Layers panel shows as selected.
+  const panelLayerId = activeLayer?.id ?? editLayer?.id ?? null;
   const selection = useSelectionTools({
     source, locked, activeLayer, layers, perform, queued: jobs.queued, picture: picture.editImage, layerFile: picture.layerFile, setError,
     onClear: () => setBlendTarget(null),
@@ -128,12 +138,11 @@ export default function App() {
   // Fix faces shows the faces it finds, so you can leave some out or add others.
   const faceFinder = useFaceDetection({ active: operation === "faces" && !!source, picture: picture.editImage, source, layers: document?.layers, mask, size, setError });
   const generationPreviewUrl = useResultPreview({ result: layerResult, chosen, source, size, documentRef, picture: picture.editImage, onError: setError });
-  const expansionPreviewUrl = useExpansionPreview(proposal, selected, setError);
   // Expand shows the picture as you see it, which the new edges continue.
   const expansionPictureUrl = usePictureUrl(operation === "expand" && !crop, picture.editImage, source, document?.layers, setError);
-  // Full generations, layer edits and Expand proposals preview as Apply places them; regional results already show the whole picture.
+  // Full generations and layer edits preview as Apply places them; regional results and Expand already show the whole picture.
   const previewUrl = chosen && !compare ? layerResult && (layerResult.kind === "generation" || layerResult.kind === "layer") && document
-    ? generationPreviewUrl : proposal ? expansionPreviewUrl : proposalUrls[selected] : null;
+    ? generationPreviewUrl : proposalUrls[selected] : null;
 
   useEffect(() => { if (layers.activeId) setLastLayerId(layers.activeId); }, [layers.activeId]);
   const maskTarget = layers.layers.find(layer => layer.id === lastLayerId) ?? null;
@@ -228,11 +237,13 @@ export default function App() {
       const layerPoints = selection.layerPoints;
       if (arrows[event.key]) { event.preventDefault(); layers.nudge(activeLayer.id, arrows[event.key][0] * step, arrows[event.key][1] * step); return; }
       if (event.key === "Backspace" && tool === "object" && layerPoints.length) { event.preventDefault(); void selection.removeLayerPoint(layerPoints.length - 1); return; }
-      if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); layers.remove(activeLayer.id); return; }
+      if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); layers.remove(layers.selectedIds.length ? layers.selectedIds : [activeLayer.id]); return; }
       if (event.key === "\\" && layerMasking) { event.preventDefault(); setMaskOverlay(value => !value); return; }
       if (event.key === "Escape") { if (layerPoints.length) selection.setLayerPoints([]); else if (maskView) setMaskViewId(null); else if (layerMasking) finishMasking(); else layers.select(null); return; }
     }
     if (ctrl && key === "j" && mask && source) { event.preventDefault(); void copySelectionToLayer(); return; }
+    // Ctrl + E merges down, or the selected layers; with Shift every visible layer, as in Photoshop.
+    if (ctrl && key === "e" && document) { event.preventDefault(); void mergeLayers(event.shiftKey ? "visible" : layers.selectedIds.length > 1 ? "selected" : "down"); return; }
     if (ctrl && key === "o") { event.preventDefault(); upload.current?.click(); }
     if (ctrl && key === "t" && source) { event.preventDefault(); chooseTool("transform"); return; }
     if (ctrl && key === "d" && mask) { event.preventDefault(); selection.clear(); return; }
@@ -285,20 +296,18 @@ export default function App() {
     if (!file.type.startsWith("image/")) throw new Error("Choose a PNG, JPG or WebP image.");
     const record = await createDocument(file);
     await adoptReferences(record.id);
-    // The stored image, which phone photos reach turned upright.
-    stage(record.current_image_url ? await fileFromUrl(fileUrl(record.current_image_url), record.name) : file, record); await refresh();
+    // The stored image, which phone photos reach turned upright, is the Background layer.
+    stage(await blankPicture(record), record); await refresh();
   }
   async function openSaved(record: DocumentRecord) {
     const current = await getDocument(record.id);
-    if (!current.current_image_url) throw new Error("This document has no image.");
-    stage(await fileFromUrl(fileUrl(current.current_image_url), current.name), current);
+    stage(await blankPicture(current), current);
   }
   /** Opens a result as a new document; the start screen's references move into it. */
   async function openGeneration(generation: GenerationRecord) {
     const record = await importGeneration(generation.id);
-    if (!record.current_image_url) throw new Error("This document has no image.");
     await adoptReferences(record.id);
-    stage(await fileFromUrl(fileUrl(record.current_image_url), record.name), record);
+    stage(await blankPicture(record), record);
     setSideTab("layers"); collapsePanel(false);
   }
   /** A white canvas at the chosen size, ready to sketch on. */
@@ -317,8 +326,8 @@ export default function App() {
     await layers.settled();
     const before = documentRef.current ?? document;
     const record = direction === "undo" ? await undoDocument(before.id) : await redoDocument(before.id);
-    // Layer-only steps keep the same background, so the selection and prompt can stay.
-    if (source && record.current_image_url === before.current_image_url) {
+    // The picture is in the layers: steps that keep the canvas size keep the selection and prompt too.
+    if (source && record.canvas_width === before.canvas_width && record.canvas_height === before.canvas_height) {
       documentRef.current = { ...record, name: before.name };
       setDocument(documentRef.current);
     } else await openSaved(record);
@@ -458,6 +467,37 @@ export default function App() {
     if (operation === "edit") { setEditScope(id ? "layer" : "visible"); return; }
     if (id) { setTool("transform"); if (operation === "expand" || operation === "sketch" || isWholeImage(operation)) setOperation("replace"); }
   }
+  /** Ctrl- and Shift-click in the Layers panel pick several layers, to merge, hide or delete together. */
+  function pickLayers(pick: () => void) {
+    pick();
+    setTool("transform");
+    if (operation === "expand" || operation === "sketch" || isWholeImage(operation)) setOperation("replace");
+  }
+  async function mergeLayers(kind: MergeKind) {
+    if (locked || crop || !layers.mergeable(kind)) return;
+    await perform(async () => {
+      await layers.settled();
+      const merged = await layers.merge(kind);
+      if (!merged) return;
+      selectLayer(merged.id);
+      if (kind === "flatten" && merged.discarded) setNotice(`Flattened. ${merged.discarded} hidden layer${merged.discarded > 1 ? "s were" : " was"} discarded; Ctrl + Z brings ${merged.discarded > 1 ? "them" : "it"} back.`);
+    });
+  }
+  /** Selects where a layer shows on the picture, like Ctrl-clicking its thumbnail in Photoshop. */
+  async function selectLayerPixels(id: string) {
+    const layer = layers.layers.find(item => item.id === id);
+    if (!layer || !size || locked || crop) return;
+    await perform(async () => {
+      await layers.settled();
+      const [image, layerMask] = await Promise.all([loadImage(fileUrl(layer.image_url)), shownMask(layer)]);
+      const pixels = await layerSelection(size, { ...layer, image, mask: layerMask });
+      if (!pixels) throw new Error("None of this layer is on the canvas, so there is nothing to select.");
+      layers.select(null); setMaskingId(null); setBlendTarget(null);
+      if (operation === "expand" || operation === "sketch") setOperation("replace");
+      if (!isSelectionTool(tool)) setTool("brush");
+      selection.show(URL.createObjectURL(pixels));
+    });
+  }
   async function addLayerImages(files: File[]) {
     setSideTab("layers"); collapsePanel(false);
     await layers.settled();
@@ -469,8 +509,9 @@ export default function App() {
     if (!source || !mask || !size || locked) return;
     await perform(async () => {
       await layers.settled();
-      const background = await createImageBitmap(source);
-      const cut = await cutSelection(background, size, mask).finally(() => background.close());
+      // The selected part of the picture as you see it, as Copy Merged does.
+      const seen = await createImageBitmap(await picture.editImage());
+      const cut = await cutSelection(seen, size, mask).finally(() => seen.close());
       if (!cut) throw new Error("Select the area you want on its own layer first.");
       const layer = await layers.addImage(cut.blob, "Selection.png", { x: cut.box.x + cut.box.width / 2, y: cut.box.y + cut.box.height / 2 });
       if (!layer) return;
@@ -656,9 +697,13 @@ export default function App() {
     </section>
     <SidePanel tab={document ? sideTab : "references"} onTab={setSideTab} collapsed={panelCollapsed} onCollapsed={collapsePanel} layerCount={layers.layers.length} referenceCount={refs.references.length} showLayers={!!document}>
       {document && sideTab === "layers"
-        ? <LayersPanel layers={layers.layers} activeId={activeLayer?.id ?? editLayer?.id ?? null} backgroundUrl={sourceUrl} uploading={layers.uploading} disabled={locked || !!crop}
-          canCopySelection={!!mask} onSelect={selectLayer} onAdd={files => void addLayerImages(files)} onCopySelection={() => void copySelectionToLayer()}
-          onUpdate={layers.update} onPreview={layers.preview} onRemove={layers.remove} onDuplicate={layers.duplicate} onReorder={layers.reorder}
+        ? <LayersPanel layers={layers.layers} activeId={panelLayerId} selectedIds={activeLayer ? layers.selectedIds : panelLayerId ? [panelLayerId] : []}
+          uploading={layers.uploading} disabled={locked || !!crop} canCopySelection={!!mask}
+          mergeable={Object.fromEntries(MERGE_KINDS.map(kind => [kind, !!layers.mergeable(kind)])) as Record<MergeKind, boolean>}
+          onSelect={selectLayer} onToggleSelect={id => pickLayers(() => layers.toggle(id))} onSelectRange={id => pickLayers(() => layers.selectRange(id))}
+          onSelectPixels={id => void selectLayerPixels(id)} onMerge={kind => void mergeLayers(kind)}
+          onAdd={files => void addLayerImages(files)} onCopySelection={() => void copySelectionToLayer()}
+          onUpdate={layers.update} onPreview={layers.preview} onRemove={layers.remove} onSetVisible={layers.setVisible} onDuplicate={layers.duplicate} onReorder={layers.reorder}
           onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)} onRemoveBackground={id => void selection.removeLayerBackground(id)}
           masking={layerMasking} maskView={maskView !== null} onMask={toggleLayerMask} onEditMask={editLayerMask} onViewMask={viewLayerMask}
           onSwitchMask={switchLayerMask} onDeleteMask={deleteLayerMask} onAddMask={(id, hideAll) => void addLayerMask(id, hideAll)}

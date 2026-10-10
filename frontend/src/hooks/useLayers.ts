@@ -1,13 +1,23 @@
 import { Dispatch, MutableRefObject, SetStateAction, useEffect, useRef, useState } from "react";
 import { DocumentRecord, LayerRecord, getDocument, saveLayers, uploadLayerAsset } from "../api";
-import { canvasBlob } from "../layers/bitmaps";
+import { canvasBlob, mergeLayers } from "../layers/bitmaps";
 import { initialPlacement } from "../layers/geometry";
-import { MAX_LAYERS, duplicateLayer, insertResult, layerName, moveLayer, newLayerId, patchLayer, splitVariants, stepVariant } from "../layers/stack";
+import {
+  MAX_LAYERS, MergeKind, duplicateLayer, insertResult, layerName, mergeBounds, mergePlan, moveLayer, newLayerId, patchLayer, rangeIds,
+  removeLayers, splitVariants, stepVariant, withMerged,
+} from "../layers/stack";
+import { flatLayers } from "./usePicture";
 
 const ACCEPTED = new Set(["image/png", "image/jpeg", "image/webp"]);
 const NUDGE_SETTLE = 450;
+/** The longest side the engine keeps for a layer image. */
+const MAX_LAYER_SIDE = 8192;
+const MERGE_LABELS: Record<MergeKind, string> = { down: "Merge down", selected: "Merge layers", visible: "Merge visible", flatten: "Flatten image" };
 
 interface Draft { id: string; patch: Partial<LayerRecord> }
+/** The selected layers; `active` is the one the tools and settings work on. */
+interface Selection { active: string | null; ids: string[] }
+const NOTHING: Selection = { active: null, ids: [] };
 
 /**
  * The layer stack of the open document. Changes show at once and are saved in
@@ -20,7 +30,9 @@ export function useLayers(
   documentRef: MutableRefObject<DocumentRecord | null>,
   onError: (message: string) => void,
 ) {
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selection>(NOTHING);
+  // Where Shift-click selects from, as in Photoshop.
+  const anchor = useRef<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [uploading, setUploading] = useState(0);
   const queue = useRef<Promise<void>>(Promise.resolve());
@@ -30,11 +42,36 @@ export function useLayers(
 
   const committed = document?.layers ?? [];
   const layers = draft ? patchLayer(committed, draft.id, draft.patch) : committed;
+  const activeId = selection.active;
   const active = layers.find(layer => layer.id === activeId) ?? null;
 
-  useEffect(() => { setActiveId(null); setDraft(null); }, [document?.id]);
-  // Undo can take the selected layer away.
-  useEffect(() => { if (activeId && !committed.some(layer => layer.id === activeId)) setActiveId(null); }, [committed, activeId]);
+  useEffect(() => { setSelection(NOTHING); setDraft(null); }, [document?.id]);
+  // Undo, merges and deletes can take selected layers away.
+  useEffect(() => {
+    const ids = selection.ids.filter(id => committed.some(layer => layer.id === id));
+    if (ids.length === selection.ids.length) return;
+    setSelection({ active: selection.active && ids.includes(selection.active) ? selection.active : ids[ids.length - 1] ?? null, ids });
+  }, [committed, selection]);
+
+  /** Selects one layer, or none. */
+  function select(id: string | null) {
+    setSelection(id ? { active: id, ids: [id] } : NOTHING);
+    anchor.current = id;
+  }
+  /** Ctrl-click: adds a layer to the selection, or takes it out. */
+  function toggle(id: string) {
+    anchor.current = id;
+    setSelection(current => {
+      if (!current.ids.includes(id)) return { active: id, ids: [...current.ids, id] };
+      const ids = current.ids.filter(item => item !== id);
+      return { active: current.active === id ? ids[ids.length - 1] ?? null : current.active, ids };
+    });
+  }
+  /** Shift-click: the layers from the last one clicked to this one. */
+  function selectRange(id: string) {
+    const ids = rangeIds(currentLayers(), anchor.current ?? selection.active ?? id, id);
+    setSelection({ active: id, ids: ids.length ? ids : [id] });
+  }
 
   function show(next: DocumentRecord) {
     documentRef.current = next;
@@ -100,11 +137,11 @@ export function useLayers(
       const fitted = initialPlacement(asset, { width: start.canvas_width, height: start.canvas_height });
       const layer: LayerRecord = {
         id: newLayerId(), name: layerName(filename, currentLayers().length + 1), image_path: asset.path, image_url: asset.url,
-        mask_path: null, mask_url: null, mask_enabled: true, variant_paths: [], variant_urls: [], width: asset.width, height: asset.height, opacity: 1, visible: true,
+        mask_path: null, mask_url: null, mask_enabled: true, variant_paths: [], variant_urls: [], width: asset.width, height: asset.height, opacity: 1, visible: true, original_id: null,
         ...fitted, ...(placement ? { ...placement, scale_x: 1, scale_y: 1 } : {}),
       };
       commit([...currentLayers(), layer], "Add layer");
-      setActiveId(layer.id);
+      select(layer.id);
       return layer;
     } catch (err) {
       onError(message(err));
@@ -141,6 +178,7 @@ export function useLayers(
         variant_paths: variants.length > 1 ? variants.map(item => item.path) : [], variant_urls: variants.length > 1 ? variants.map(item => item.url) : [],
         mask_path: maskAsset?.path ?? null, mask_url: maskAsset?.url ?? null, mask_enabled: placement.mask_enabled ?? true, width: asset.width, height: asset.height,
         x: placement.x, y: placement.y, scale_x: placement.scale_x ?? 1, scale_y: placement.scale_y ?? 1, rotation: placement.rotation ?? 0, opacity: placement.opacity ?? 1, visible: true,
+        original_id: null,
       };
       const inserted = insertResult(currentLayers(), layer, replaces);
       const split = separate ? splitVariants(inserted, layer.id) : null;
@@ -148,7 +186,7 @@ export function useLayers(
       await settled();
       // Keep the proposal available when saving failed and restored the stack.
       if (!currentLayers().some(item => item.id === layer.id)) return null;
-      setActiveId(layer.id);
+      select(layer.id);
       return layer;
     } finally {
       setUploading(count => count - 1);
@@ -170,9 +208,16 @@ export function useLayers(
     }
   }
 
-  function remove(id: string) {
-    commit(currentLayers().filter(layer => layer.id !== id), "Delete layer");
-    if (activeId === id) setActiveId(null);
+  /** Deletes layers; the originals that deleted AI layers replaced show again. */
+  function remove(ids: string[]) {
+    if (!ids.length) return;
+    commit(removeLayers(currentLayers(), ids), ids.length > 1 ? "Delete layers" : "Delete layer");
+  }
+
+  function setVisible(ids: string[], visible: boolean) {
+    const gone = new Set(ids);
+    const next = currentLayers().map(layer => gone.has(layer.id) ? { ...layer, visible } : layer);
+    commit(next, (visible ? "Show " : "Hide ") + (ids.length > 1 ? "layers" : "layer"));
   }
 
   function duplicate(id: string) {
@@ -180,7 +225,45 @@ export function useLayers(
     const result = duplicateLayer(currentLayers(), id);
     if (!result) return;
     commit(result.layers, "Duplicate layer");
-    setActiveId(result.copy.id);
+    select(result.copy.id);
+  }
+
+  /** What a merge would do with the stack and selection as they are now; null when it has nothing to merge. */
+  function mergeable(kind: MergeKind) {
+    const current = documentRef.current;
+    if (!current) return null;
+    const ids = kind === "down" ? (selection.active ? [selection.active] : []) : selection.ids;
+    return mergePlan(current.layers, kind, ids, { width: current.canvas_width, height: current.canvas_height });
+  }
+
+  /**
+   * Merges layers into one new layer, as one undo step. The merged layer has
+   * no mask and shows exactly what its parts showed. Returns it with how many
+   * hidden layers went too, or null when nothing was merged.
+   */
+  async function merge(kind: MergeKind): Promise<{ id: string; discarded: number } | null> {
+    const start = documentRef.current;
+    const plan = mergeable(kind);
+    if (!start || !plan) return null;
+    const size = { width: start.canvas_width, height: start.canvas_height };
+    setUploading(count => count + 1);
+    try {
+      const box = mergeBounds(plan.parts, size, kind === "flatten");
+      const image = await mergeLayers(await flatLayers(plan.parts), box, MAX_LAYER_SIDE);
+      const asset = await uploadLayerAsset(start.id, image, "image", "merged.png");
+      if (documentRef.current?.id !== start.id) return null;
+      const merged: LayerRecord = {
+        id: newLayerId(), name: plan.name, image_path: asset.path, image_url: asset.url, mask_path: null, mask_url: null, mask_enabled: true,
+        variant_paths: [], variant_urls: [], width: asset.width, height: asset.height, x: box.x + box.width / 2, y: box.y + box.height / 2,
+        // A merge wider than the engine keeps is stored smaller and scaled back up.
+        scale_x: box.width / asset.width, scale_y: box.height / asset.height, rotation: 0, opacity: 1, visible: true, original_id: null,
+      };
+      commit(withMerged(currentLayers(), plan, merged), MERGE_LABELS[kind]);
+      select(merged.id);
+      return { id: merged.id, discarded: plan.removed.length - plan.parts.length };
+    } finally {
+      setUploading(count => count - 1);
+    }
   }
 
   /** Shows the next or previous variant of a generative layer. */
@@ -227,9 +310,9 @@ export function useLayers(
   useEffect(() => () => { if (nudgeTimer.current !== null) window.clearTimeout(nudgeTimer.current); }, []);
 
   return {
-    layers, active, activeId, select: setActiveId, uploading,
+    layers, active, activeId, selectedIds: selection.ids, select, toggle, selectRange, uploading,
     commit, update, preview, cancelPreview, nudge, settled,
-    addImages, addImage, addResult, setMask, remove, duplicate, reorder, switchVariant, separateVariants,
+    addImages, addImage, addResult, setMask, remove, setVisible, duplicate, reorder, switchVariant, separateVariants, mergeable, merge,
   };
 }
 

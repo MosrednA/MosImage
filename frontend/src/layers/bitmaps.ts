@@ -149,6 +149,45 @@ export async function flatten(background: CanvasImageSource, size: ImageSize, la
   return canvasBlob(canvas);
 }
 
+/**
+ * Layers drawn as one, as Merge does: cut to `box` on the canvas and made
+ * smaller when a side would pass `maxSide` px, as PNG.
+ */
+export async function mergeLayers(parts: FlatLayer[], box: ImageBox, maxSide: number): Promise<Blob> {
+  const factor = Math.min(1, maxSide / Math.max(box.width, box.height));
+  const canvas = blankCanvas(box.width * factor, box.height * factor);
+  const context = canvas.getContext("2d")!;
+  context.imageSmoothingQuality = "high";
+  context.scale(canvas.width / box.width, canvas.height / box.height);
+  context.translate(-box.x, -box.y);
+  for (const layer of parts) drawLayer(context, layer, layer.opacity);
+  return canvasBlob(canvas);
+}
+
+/**
+ * Where a layer shows on the canvas, soft edges and all, as a greyscale
+ * selection mask: Ctrl-click on a layer thumbnail in Photoshop. Null when
+ * none of it is on the canvas.
+ */
+export async function layerSelection(size: ImageSize, layer: FlatLayer): Promise<Blob | null> {
+  const drawn = blankCanvas(size.width, size.height);
+  const context = drawn.getContext("2d", { willReadFrequently: true })!;
+  drawLayer(context, layer, 1);
+  const alpha = context.getImageData(0, 0, drawn.width, drawn.height).data;
+  let shows = false;
+  for (let index = 3; index < alpha.length && !shows; index += 4) shows = alpha[index] > 0;
+  if (!shows) return null;
+  context.globalCompositeOperation = "source-in";
+  context.fillStyle = "white";
+  context.fillRect(0, 0, drawn.width, drawn.height);
+  const selection = blankCanvas(size.width, size.height);
+  const output = selection.getContext("2d")!;
+  output.fillStyle = "black";
+  output.fillRect(0, 0, selection.width, selection.height);
+  output.drawImage(drawn, 0, 0);
+  return canvasBlob(selection);
+}
+
 /** Draws a layer through its mask at its place on the canvas. */
 function drawLayer(context: CanvasRenderingContext2D, layer: FlatLayer, opacity: number): void {
   const composed = blankCanvas(layer.width, layer.height);
