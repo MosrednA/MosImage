@@ -14,9 +14,12 @@ describe("isSelectionTool", () => {
 });
 
 describe("toolForKey", () => {
-  it("maps O to the Object tool regardless of case", () => {
-    expect(toolForKey("o")).toBe("object");
-    expect(toolForKey("O")).toBe("object");
+  it("follows Photoshop: W selects objects, V moves layers, H pans, regardless of case", () => {
+    expect(toolForKey("w")).toBe("object");
+    expect(toolForKey("W")).toBe("object");
+    expect(toolForKey("v")).toBe("transform");
+    expect(toolForKey("h")).toBe("move");
+    expect(toolForKey("o")).toBeNull();
   });
 
   it("maps P to the Sketch pencil", () => {

@@ -47,7 +47,7 @@ export function SelectionBar(props: Props) {
     </div>
     <div className="selection-actions">
       <button className="icon-button" aria-pressed={!props.maskVisible} aria-label={props.maskVisible ? "Hide selection overlay" : "Show selection overlay"} title="Show or hide the selection · Q" onClick={props.onToggleMask}><Icon name={props.maskVisible ? "eye" : "eyeOff"} /></button>
-      <button className="icon-button" aria-label="Invert selection" title="Invert selection · Ctrl + I" disabled={disabled} onClick={props.onInvert}><Icon name="invert" /></button>
+      <button className="icon-button" aria-label="Invert selection" title="Invert selection · Ctrl + Shift + I" disabled={disabled} onClick={props.onInvert}><Icon name="invert" /></button>
       <button className="icon-button" aria-label="Undo selection change" title="Undo selection change · Ctrl + Z" disabled={disabled || !props.canUndo} onClick={props.onUndo}><Icon name="undo" /></button>
       <button className="icon-button" aria-label="Redo selection change" title="Redo selection change · Ctrl + Shift + Z" disabled={disabled || !props.canRedo} onClick={props.onRedo}><Icon name="redo" /></button>
       <button className="quiet-button" disabled={disabled} title="Clear the selection · Esc" onClick={props.onClear}>Clear</button>

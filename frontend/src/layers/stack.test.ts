@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { LayerRecord } from "../api";
-import { duplicateLayer, insertResult, layerAt, layerName, moveLayer, patchLayer } from "./stack";
+import { duplicateLayer, insertResult, layerAt, layerName, moveLayer, patchLayer, splitVariants, stepVariant, variantIndex } from "./stack";
 
 function layer(id: string, values: Partial<LayerRecord> = {}): LayerRecord {
-  return { id, name: id, image_path: `images/layers/layer-${id}.png`, mask_path: null, mask_enabled: true, x: 50, y: 50, scale_x: 1, scale_y: 1, rotation: 0, opacity: 1, visible: true, width: 20, height: 20, image_url: `/files/${id}.png`, mask_url: null, ...values };
+  return { id, name: id, image_path: `images/layers/layer-${id}.png`, mask_path: null, mask_enabled: true, variant_paths: [], variant_urls: [], x: 50, y: 50, scale_x: 1, scale_y: 1, rotation: 0, opacity: 1, visible: true, width: 20, height: 20, image_url: `/files/${id}.png`, mask_url: null, ...values };
 }
 
 describe("layer stack", () => {
@@ -41,5 +41,25 @@ describe("layer stack", () => {
     expect(layerAt(stack, { x: 50, y: 50 })?.id).toBe("high");
     expect(layerAt(stack, { x: 50, y: 50 }, item => item.id !== "high")?.id).toBe("low");
     expect(layerAt(stack, { x: 5, y: 5 })).toBeNull();
+  });
+
+  it("steps through a layer's variants and wraps around", () => {
+    const paths = ["v1", "v2", "v3"], urls = ["/u1", "/u2", "/u3"];
+    const shown = layer("g", { image_path: "v3", image_url: "/u3", variant_paths: paths, variant_urls: urls });
+    expect(variantIndex(shown)).toBe(2);
+    expect(stepVariant(shown, 1)).toEqual({ image_path: "v1", image_url: "/u1" });
+    expect(stepVariant(shown, -1)).toEqual({ image_path: "v2", image_url: "/u2" });
+    expect(stepVariant(layer("plain"), 1)).toBeNull();
+    expect(variantIndex(layer("plain"))).toBe(-1);
+  });
+
+  it("splits variants into hidden layers just above, keeping the shown one in place", () => {
+    const generative = layer("g", { image_path: "v2", image_url: "/u2", variant_paths: ["v1", "v2", "v3"], variant_urls: ["/u1", "/u2", "/u3"] });
+    const result = splitVariants([layer("a"), generative, layer("b")], "g")!;
+    expect(result.added).toBe(2);
+    expect(result.layers.map(item => [item.name, item.image_path, item.visible, item.variant_paths.length])).toEqual([
+      ["a", "images/layers/layer-a.png", true, 0], ["g", "v2", true, 0], ["g · 1", "v1", false, 0], ["g · 3", "v3", false, 0], ["b", "images/layers/layer-b.png", true, 0],
+    ]);
+    expect(splitVariants([layer("plain")], "plain")).toBeNull();
   });
 });

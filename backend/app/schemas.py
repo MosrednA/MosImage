@@ -251,6 +251,8 @@ class LayerState(BaseModel):
     mask_path: str | None = None
     # A switched-off mask is kept but not applied, like Shift-clicking a mask in Photoshop.
     mask_enabled: bool = True
+    # AI proposals kept in one layer, like Photoshop's generative variations; image_path is the one shown.
+    variant_paths: list[str] = Field(default_factory=list, max_length=8)
     x: float
     y: float
     scale_x: float = 1.0
@@ -272,6 +274,7 @@ class LayerRecord(LayerState):
     height: int
     image_url: str
     mask_url: str | None = None
+    variant_urls: list[str] = Field(default_factory=list)
 
 
 class LayersUpdate(BaseModel):

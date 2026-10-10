@@ -2,7 +2,7 @@ import { Dispatch, MutableRefObject, SetStateAction, useEffect, useRef, useState
 import { DocumentRecord, LayerRecord, getDocument, saveLayers, uploadLayerAsset } from "../api";
 import { canvasBlob } from "../layers/bitmaps";
 import { initialPlacement } from "../layers/geometry";
-import { MAX_LAYERS, duplicateLayer, insertResult, layerName, moveLayer, newLayerId, patchLayer } from "../layers/stack";
+import { MAX_LAYERS, duplicateLayer, insertResult, layerName, moveLayer, newLayerId, patchLayer, splitVariants, stepVariant } from "../layers/stack";
 
 const ACCEPTED = new Set(["image/png", "image/jpeg", "image/webp"]);
 const NUDGE_SETTLE = 450;
@@ -100,7 +100,7 @@ export function useLayers(
       const fitted = initialPlacement(asset, { width: start.canvas_width, height: start.canvas_height });
       const layer: LayerRecord = {
         id: newLayerId(), name: layerName(filename, currentLayers().length + 1), image_path: asset.path, image_url: asset.url,
-        mask_path: null, mask_url: null, mask_enabled: true, width: asset.width, height: asset.height, opacity: 1, visible: true,
+        mask_path: null, mask_url: null, mask_enabled: true, variant_paths: [], variant_urls: [], width: asset.width, height: asset.height, opacity: 1, visible: true,
         ...fitted, ...(placement ? { ...placement, scale_x: 1, scale_y: 1 } : {}),
       };
       commit([...currentLayers(), layer], "Add layer");
@@ -116,25 +116,35 @@ export function useLayers(
 
   /**
    * Adds a full generation or selected AI patch at its place and scale.
-   * With `replaces`, it goes just above that layer, which is hidden.
+   * Several images become variants of the one layer, showing `shown`, like
+   * Photoshop's generative layers. With `replaces`, it goes just above that
+   * layer, which is hidden. `separate` gives each image a layer of its own
+   * instead, in the same undo step.
    */
-  async function addResult(image: Blob, mask: Blob | null, name: string, placement: { x: number; y: number; scale_x?: number; scale_y?: number; rotation?: number; opacity?: number; mask_enabled?: boolean }, replaces: string | null, label?: string): Promise<LayerRecord | null> {
+  async function addResult(images: Blob[], mask: Blob | null, name: string, placement: { x: number; y: number; scale_x?: number; scale_y?: number; rotation?: number; opacity?: number; mask_enabled?: boolean }, replaces: string | null, label?: string, shown = 0, separate = false): Promise<LayerRecord | null> {
     const start = documentRef.current;
     if (!start) return null;
-    if (currentLayers().length >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one to apply this result.`);
+    const needed = separate ? images.length : 1;
+    if (currentLayers().length + needed > MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete ${needed > 1 ? "some" : "one"} to apply this result.`);
     setUploading(count => count + 1);
     try {
-      const [asset, maskAsset] = await Promise.all([
-        uploadLayerAsset(start.id, image, "image", "result.png"),
+      const [assets, maskAsset] = await Promise.all([
+        Promise.all(images.map(image => uploadLayerAsset(start.id, image, "image", "result.png"))),
         mask ? uploadLayerAsset(start.id, mask, "mask", "mask.png") : Promise.resolve(null),
       ]);
       if (documentRef.current?.id !== start.id) return null;
+      const asset = assets[shown] ?? assets[0];
+      // Variants share the mask and transform, so only same-sized ones can stay.
+      const variants = assets.filter(item => item.width === asset.width && item.height === asset.height);
       const layer: LayerRecord = {
         id: newLayerId(), name: name.slice(0, 80), image_path: asset.path, image_url: asset.url,
+        variant_paths: variants.length > 1 ? variants.map(item => item.path) : [], variant_urls: variants.length > 1 ? variants.map(item => item.url) : [],
         mask_path: maskAsset?.path ?? null, mask_url: maskAsset?.url ?? null, mask_enabled: placement.mask_enabled ?? true, width: asset.width, height: asset.height,
         x: placement.x, y: placement.y, scale_x: placement.scale_x ?? 1, scale_y: placement.scale_y ?? 1, rotation: placement.rotation ?? 0, opacity: placement.opacity ?? 1, visible: true,
       };
-      commit(insertResult(currentLayers(), layer, replaces), label ?? (replaces ? "Blend layer in" : "Add AI result"));
+      const inserted = insertResult(currentLayers(), layer, replaces);
+      const split = separate ? splitVariants(inserted, layer.id) : null;
+      commit(split?.layers ?? inserted, split ? "Add AI results" : label ?? (replaces ? "Blend layer in" : "Add AI result"));
       await settled();
       // Keep the proposal available when saving failed and restored the stack.
       if (!currentLayers().some(item => item.id === layer.id)) return null;
@@ -173,6 +183,21 @@ export function useLayers(
     setActiveId(result.copy.id);
   }
 
+  /** Shows the next or previous variant of a generative layer. */
+  function switchVariant(id: string, step: number) {
+    const layer = currentLayers().find(item => item.id === id);
+    const patch = layer && stepVariant(layer, step);
+    if (patch) update(id, patch, "Switch variant");
+  }
+
+  /** Gives every variant a layer of its own. */
+  function separateVariants(id: string) {
+    const result = splitVariants(currentLayers(), id);
+    if (!result) return;
+    if (currentLayers().length + result.added > MAX_LAYERS) { onError(`A document can have up to ${MAX_LAYERS} layers. Delete some before splitting the variants.`); return; }
+    commit(result.layers, "Variants to layers");
+  }
+
   function reorder(id: string, index: number) {
     const next = moveLayer(currentLayers(), id, index);
     if (next.some((layer, position) => layer.id !== currentLayers()[position]?.id)) commit(next, "Reorder layers");
@@ -204,7 +229,7 @@ export function useLayers(
   return {
     layers, active, activeId, select: setActiveId, uploading,
     commit, update, preview, cancelPreview, nudge, settled,
-    addImages, addImage, addResult, setMask, remove, duplicate, reorder,
+    addImages, addImage, addResult, setMask, remove, duplicate, reorder, switchVariant, separateVariants,
   };
 }
 

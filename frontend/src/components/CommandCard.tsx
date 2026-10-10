@@ -1,9 +1,11 @@
+import { Ref } from "react";
 import { EditScope, Operation, SketchScope, promptPlaceholder, submitLabel } from "../generation/operation";
 import { Icon } from "./Icon";
 
 export interface ActiveReference { id: number; name: string; imageUrl: string }
 
 interface Props {
+  promptRef?: Ref<HTMLTextAreaElement>;
   operation: Operation;
   onOperation: (operation: Exclude<Operation, "expand">) => void;
   hasImage: boolean;
@@ -65,7 +67,7 @@ export function CommandCard(props: Props) {
           <button aria-label={`Stop using ${reference.name}`} title="Stop using this reference" disabled={locked} onClick={() => props.onRemoveReference(reference.id)}><Icon name="close" /></button>
         </div>)}
       </div>}
-      <textarea aria-label="Describe your idea" rows={1} disabled={locked} placeholder={promptPlaceholder(operation, hasImage, props.references.map(reference => reference.name))} value={props.prompt}
+      <textarea ref={props.promptRef} aria-label="Describe your idea" rows={1} disabled={locked} placeholder={promptPlaceholder(operation, hasImage, props.references.map(reference => reference.name))} value={props.prompt}
         onChange={event => props.onPrompt(event.target.value)}
         onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); if (props.canSubmit) props.onSubmit(); } }} />
       {props.jobActive

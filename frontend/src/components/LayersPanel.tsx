@@ -1,6 +1,6 @@
 import { DragEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { LayerRecord, fileUrl } from "../api";
-import { MAX_LAYERS } from "../layers/stack";
+import { MAX_LAYERS, variantIndex } from "../layers/stack";
 import { Icon } from "./Icon";
 
 interface Props {
@@ -33,6 +33,9 @@ interface Props {
   onDeleteMask: (id: string) => void;
   /** From the picture's selection when there is one; `hideAll` starts with the whole layer hidden. */
   onAddMask: (id: string, hideAll: boolean) => void;
+  /** Shows the next (1) or previous (-1) variant of an AI layer. */
+  onVariant: (id: string, step: number) => void;
+  onSeparateVariants: (id: string) => void;
 }
 
 const LAYER_DRAG_TYPE = "application/x-mosimage-layer";
@@ -90,8 +93,9 @@ export function LayersPanel(props: Props) {
         onDragOver={event => { if (event.dataTransfer.types.includes(LAYER_DRAG_TYPE)) { event.preventDefault(); event.stopPropagation(); setDragTarget(index); } }}
         onDrop={event => drop(event, index)}
         onDragEnd={() => setDragTarget(null)}>
-        <span className={"layer-thumb" + (layer.id === activeId && !props.masking ? " targeted" : "")} title="Layer pixels">
+        <span className={"layer-thumb" + (layer.id === activeId && !props.masking ? " targeted" : "")} title={variantIndex(layer) >= 0 ? `Variant ${variantIndex(layer) + 1} of ${layer.variant_paths.length} · , and . switch` : "Layer pixels"}>
           <img crossOrigin="anonymous" src={fileUrl(layer.image_url)} alt="" draggable={false} />
+          {variantIndex(layer) >= 0 && <span className="variant-badge" aria-hidden="true">{variantIndex(layer) + 1}/{layer.variant_paths.length}</span>}
         </span>
         {layer.mask_url && <MaskThumb layer={layer} targeted={layer.id === activeId && props.masking} disabled={disabled}
           onEdit={() => props.onEditMask(layer.id)} onView={() => props.onViewMask(layer.id)} onSwitch={() => props.onSwitchMask(layer.id)} />}
@@ -130,11 +134,34 @@ function MaskThumb({ layer, targeted, disabled, onEdit, onView, onSwitch }: { la
   </button>;
 }
 
+/**
+ * The proposals kept in an AI layer, like the variations of a generative
+ * layer in Photoshop: pick one, step with , and ., or give each its own layer.
+ */
+function LayerVariants({ layer, disabled, onUpdate, onVariant, onSeparateVariants }: Pick<Props, "disabled" | "onUpdate" | "onVariant" | "onSeparateVariants"> & { layer: LayerRecord }) {
+  const shown = variantIndex(layer);
+  return <div className="layer-variants" role="group" aria-label="Variants">
+    <div className="layer-variants-head">
+      <span>Variant {shown + 1} of {layer.variant_paths.length}</span>
+      <button className="icon-button" disabled={disabled} aria-label="Previous variant" title="Previous variant · ," onClick={() => onVariant(layer.id, -1)}><Icon name="chevronLeft" /></button>
+      <button className="icon-button" disabled={disabled} aria-label="Next variant" title="Next variant · ." onClick={() => onVariant(layer.id, 1)}><Icon name="chevronRight" /></button>
+    </div>
+    <div className="layer-variant-list">
+      {layer.variant_urls.map((url, index) => <button key={url} className="layer-thumb" disabled={disabled} aria-pressed={index === shown} aria-label={`Show variant ${index + 1}`}
+        onClick={() => index !== shown && onUpdate(layer.id, { image_path: layer.variant_paths[index], image_url: url }, "Switch variant")}>
+        <img crossOrigin="anonymous" src={fileUrl(url)} alt="" draggable={false} />
+      </button>)}
+      <button className="quiet-button" disabled={disabled} title="Give every variant a layer of its own; the others start hidden" onClick={() => onSeparateVariants(layer.id)}>To layers</button>
+    </div>
+  </div>;
+}
+
 function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDuplicate, onReset, onBlend, onRemoveBackground, masking, ...props }: Props & { layer: LayerRecord }) {
   const [opacity, setOpacity] = useState(Math.round(layer.opacity * 100));
   useEffect(() => setOpacity(Math.round(layer.opacity * 100)), [layer.opacity]);
   const commitOpacity = () => { if (opacity / 100 !== layer.opacity) onUpdate(layer.id, { opacity: opacity / 100 }, "Change opacity"); };
   return <section className="layer-properties" aria-label="Layer settings">
+    {variantIndex(layer) >= 0 && <LayerVariants layer={layer} disabled={disabled} onUpdate={onUpdate} onVariant={props.onVariant} onSeparateVariants={props.onSeparateVariants} />}
     <label className="layer-opacity">
       <span>Opacity</span>
       <input type="range" min={0} max={100} value={opacity} disabled={disabled}

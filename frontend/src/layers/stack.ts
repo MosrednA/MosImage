@@ -38,6 +38,35 @@ export function duplicateLayer(layers: LayerRecord[], id: string): { layers: Lay
   return { layers: [...layers.slice(0, index + 1), copy, ...layers.slice(index + 1)], copy };
 }
 
+/** Which variant a layer shows, or -1 for an ordinary layer. */
+export function variantIndex(layer: LayerRecord): number {
+  return layer.variant_paths.length > 1 ? layer.variant_paths.indexOf(layer.image_path) : -1;
+}
+
+/** The patch that shows the next (or previous) variant, wrapping around; null without variants. */
+export function stepVariant(layer: LayerRecord, step: number): Pick<LayerRecord, "image_path" | "image_url"> | null {
+  const count = layer.variant_paths.length;
+  if (count < 2) return null;
+  const index = ((Math.max(variantIndex(layer), 0) + step) % count + count) % count;
+  return { image_path: layer.variant_paths[index], image_url: layer.variant_urls[index] };
+}
+
+/**
+ * Turns a layer's variants into layers of their own, just above it in order.
+ * The original keeps the variant it shows; the others start hidden.
+ */
+export function splitVariants(layers: LayerRecord[], id: string): { layers: LayerRecord[]; added: number } | null {
+  const index = layers.findIndex(layer => layer.id === id);
+  const original = layers[index];
+  if (!original || original.variant_paths.length < 2) return null;
+  const copies = original.variant_paths.flatMap((path, number) => path === original.image_path ? [] : [{
+    ...original, id: newLayerId(), name: `${original.name} · ${number + 1}`.slice(0, 80),
+    image_path: path, image_url: original.variant_urls[number], variant_paths: [], variant_urls: [], visible: false,
+  }]);
+  const kept = { ...original, variant_paths: [], variant_urls: [] };
+  return { layers: [...layers.slice(0, index), kept, ...copies, ...layers.slice(index + 1)], added: copies.length };
+}
+
 /**
  * Adds an AI result: on top of the stack, or just above the layer it blends
  * in, which is then hidden so the blended version replaces it.

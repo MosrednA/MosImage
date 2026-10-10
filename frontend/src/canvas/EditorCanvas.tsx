@@ -1,10 +1,11 @@
-import { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { SelectionPoint } from "../api";
 import { Icon } from "../components/Icon";
+import { SelectionActionProps, SelectionActions } from "../components/SelectionActions";
 import { isTyping } from "../hooks/useWindowEvents";
 import { HARDNESS_RANGE, OPACITY_RANGE } from "../layers/brush";
 import { DEFAULT_EXPAND, autoSoften } from "../masks/maskRefine";
-import { paddedContextBox } from "./context";
+import { ImageBox, paddedContextBox } from "./context";
 import { ImageSize, viewportPointToImage } from "./coordinates";
 import { BRUSH_RANGE, CanvasToolbar } from "./CanvasToolbar";
 import { SelectionBar } from "./SelectionBar";
@@ -54,6 +55,8 @@ interface EditorCanvasProps {
   layerPointCount: number;
   onUndoLayerPoint: () => void;
   renderLayers: (view: LayerView) => ReactNode;
+  /** Next steps for a selection, shown beside it; invert and deselect come from the canvas. */
+  selectionActions?: Omit<SelectionActionProps, "onInvert" | "onDeselect"> | null;
   /** The sketch shows while Sketch is the operation; Apply clears it. */
   sketchVisible: boolean;
   sketchClearToken: number;
@@ -209,6 +212,10 @@ export function EditorCanvas(props: EditorCanvasProps) {
             />
             <canvas ref={mask.overlayRef} className="mask-overlay" width={imageSize.width} height={imageSize.height} aria-hidden="true"
               style={{ opacity: reviewing || mask.drawing || !maskVisible ? 0 : 1 }} />
+            {editing && !reviewing && !layerActive && !mask.drawing && maskVisible && mask.selectionBounds && props.selectionActions
+              && <div className="selection-actions-anchor" style={actionsPlacement(mask.selectionBounds, zoom, displaySize)}>
+                <SelectionActions {...props.selectionActions} onInvert={mask.invert} onDeselect={props.onClearSelection} />
+              </div>}
             {brushCursor && <div ref={cursorRef} className="brush-cursor" style={{ width: cursorSize * zoom, height: cursorSize * zoom, margin: -cursorSize * zoom / 2 }} />}
             {!reviewing && showContext && contextBox && <div className="context-boundary" aria-label="Protected context boundary" style={{ left: contextBox.x * zoom, top: contextBox.y * zoom, width: contextBox.width * zoom, height: contextBox.height * zoom }}><span>Context · stays unchanged</span></div>}
             {!reviewing && maskVisible && !layerActive && points.map((point, index) => <button key={`${index}-${point.x}-${point.y}`} type="button"
@@ -234,6 +241,16 @@ export function EditorCanvas(props: EditorCanvasProps) {
       </footer>
     </section>
   );
+}
+
+/** Just below the selection, or above it when there is no room; inside it when it fills the picture. */
+function actionsPlacement(bounds: ImageBox, zoom: number, display: { width: number; height: number }): CSSProperties {
+  const room = 52;
+  const left = Math.min(Math.max((bounds.x + bounds.width / 2) * zoom, 0), display.width);
+  const below = (bounds.y + bounds.height) * zoom + 10, above = bounds.y * zoom - 10;
+  if (below + room <= display.height) return { left, top: below };
+  if (above >= room) return { left, top: above, transform: "translate(-50%, -100%)" };
+  return { left, top: display.height - 10, transform: "translate(-50%, -100%)" };
 }
 
 function useImageSize(imageUrl: string | null, onImageSize: (size: ImageSize) => void, onError: (message: string) => void): ImageSize | null {

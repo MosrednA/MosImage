@@ -1,7 +1,7 @@
 import { ControlDialog } from "./ControlDialog";
 
 const GROUPS: [string, [string, string][]][] = [
-  ["Tools", [["O", "Object selection"], ["B", "Brush"], ["E", "Eraser"], ["L", "Lasso"], ["M", "Box"], ["P", "Sketch"], ["T", "Transform layers"], ["V", "Pan"], ["C", "Expand canvas"]]],
+  ["Tools", [["W", "Object selection"], ["B", "Brush"], ["E", "Eraser"], ["L", "Lasso"], ["M", "Box"], ["P", "Sketch"], ["V / Ctrl + T", "Transform layers"], ["H", "Pan"], ["C", "Expand canvas"]]],
   ["Selection", [
     ["Click / right-click", "Include / exclude an object point"],
     ["Click a marker", "Remove that point"],
@@ -9,8 +9,8 @@ const GROUPS: [string, [string, string][]][] = [
     ["Alt + drag", "Subtract from the selection"],
     ["[ and ]", "Smaller / larger brush"],
     ["Q", "Show or hide the selection"],
-    ["Ctrl + I", "Invert the selection"],
-    ["Esc", "Clear the selection"],
+    ["Ctrl + Shift + I", "Invert the selection"],
+    ["Ctrl + D / Esc", "Deselect"],
   ]],
   ["Layers", [
     ["Ctrl + V", "Paste an image as a layer"],
@@ -19,6 +19,7 @@ const GROUPS: [string, [string, string][]][] = [
     ["Shift + click a mask", "Switch the mask off or on"],
     ["Alt + click a mask", "Show the mask alone, in grey"],
     ["\\", "Tint what the mask hides in red"],
+    [", and .", "Previous / next variant of an AI layer"],
     ["Shift + drag a corner", "Stretch freely"],
     ["Shift + rotate", "Snap to 15°"],
     ["Arrows / Shift + arrows", "Nudge 1 px / 10 px"],
@@ -28,6 +29,7 @@ const GROUPS: [string, [string, string][]][] = [
   ["View", [["Space + drag", "Pan with any tool"], ["Ctrl + scroll", "Zoom at the cursor"], ["Ctrl + 0", "Fit to window"], ["Ctrl + 1", "Actual pixels"]]],
   ["Edit", [
     ["Ctrl + Enter", "Generate, or apply a proposal"],
+    ["Shift + Backspace", "Fill the selection by your prompt"],
     ["← →", "Previous / next proposal"],
     ["Ctrl + Z", "Undo the selection, then the image"],
     ["Ctrl + Shift + Z", "Redo"],

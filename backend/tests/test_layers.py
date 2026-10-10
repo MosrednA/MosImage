@@ -132,6 +132,29 @@ class LayerTests(unittest.TestCase):
         self.assertEqual((off["layers"][0]["mask_enabled"], off["layers"][0]["mask_url"]), (False, storage.image_url(mask["path"])))
         self.assertTrue(documents.undo(off["id"])["layers"][0]["mask_enabled"])
 
+    def test_variants_switch_within_one_layer_and_their_files_stay_until_the_document_goes(self) -> None:
+        first, second = (layers.save_asset(image_bytes("RGBA", (20, 10), (value, 0, 0, 255)), "image") for value in (255, 128))
+        variants = [first["path"], second["path"]]
+        saved = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(first, variant_paths=variants)], "Add AI result")
+        self.assertEqual(saved["layers"][0]["variant_urls"], [storage.image_url(path) for path in variants])
+        switched = documents.save_layers(saved["id"], saved["current_revision_id"], [self.layer(second, variant_paths=variants)], "Switch variant")
+        self.assertEqual(documents.undo(switched["id"])["layers"][0]["image_path"], first["path"])
+
+        other_size = layers.save_asset(image_bytes("RGBA", (8, 8), (0, 0, 0, 255)), "image")
+        with self.assertRaisesRegex(ValueError, "same size|match"):
+            documents.save_layers(saved["id"], saved["current_revision_id"], [self.layer(first, variant_paths=[first["path"], other_size["path"]])], "Mixed")
+        with self.assertRaisesRegex(ValueError, "one of its variants"):
+            documents.save_layers(saved["id"], saved["current_revision_id"], [self.layer(other_size, variant_paths=variants)], "Outside")
+
+        # Only the first variant is shown, yet deleting the document removes both files.
+        documents.delete_document(saved["id"])
+        self.assertFalse(any((settings.data_dir / path).exists() for path in variants))
+
+    def test_older_stacks_have_no_variants(self) -> None:
+        asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
+        record = layers.records(f'[{{"id": "anna", "name": "Anna", "image_path": "{asset["path"]}", "x": 1, "y": 2}}]')[0]
+        self.assertEqual((record["variant_paths"], record["variant_urls"]), ([], []))
+
     def test_layer_api_uploads_assets_and_reports_conflicts(self) -> None:
         client = TestClient(main.app)
         url = f"/api/v2/documents/{self.document['id']}"

@@ -1,6 +1,6 @@
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import {
-  DocumentRecord, Expansion, GenerationRecord, JobStatus, RevisionRecord,
+  DocumentRecord, Expansion, GenerationRecord, JobStatus, LayerRecord, RevisionRecord,
   acceptAlternative, copyReferences, createDocument, deleteDocument, deleteGeneration, fileUrl, getDocument, getGeneration,
   importGeneration, listModels, proposeAlternatives, redoDocument, undoDocument, updateDocument,
 } from "./api";
@@ -87,7 +87,13 @@ export default function App() {
   const layerMasking = maskingId !== null && maskingId === layers.activeId;
   const maskView = maskViewId !== null && maskViewId === layers.activeId ? maskViewId : null;
   const upload = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const transaction = useRef(false);
+  // The layer last worked on, which a selection can become the mask of.
+  const [lastLayerId, setLastLayerId] = useState<string | null>(null);
+  // Replace or Remove, to come back to when a selection appears again.
+  const regionalOperation = useRef<"replace" | "remove">("replace");
+  const hadSelection = useRef(false);
   const picture = usePicture(source, size, sourceUrl, documentRef);
   const jobs = useJobRunner({ documentRef, setError, onDisconnected: () => engine.setOnline(false), onCompleted: jobCompleted });
   const { job } = jobs;
@@ -98,7 +104,8 @@ export default function App() {
   const chosen = alternatives[selected];
   const proposalUrls = alternatives.map((item, index) => fileUrl(proposal?.alternatives[index]?.output_image_url ?? item.output_image_url));
   // References place people in a selection (Replace), the whole picture (Edit) or a new image (Generate).
-  const references = ((operation === "replace" || operation === "edit" || operation === "faces") && source) || operation === "generate" ? refs.active : [];
+  const referencesFor = (chosen: Operation) => ((chosen === "replace" || chosen === "edit" || chosen === "faces") && source) || chosen === "generate" ? refs.active : [];
+  const references = referencesFor(operation);
   // Selection tools select on the picture, as in Photoshop, unless the layer is being masked.
   const activeLayer = operation === "expand" || operation === "sketch" || isWholeImage(operation) || (isSelectionTool(tool) && !layerMasking) ? null : layers.active;
   // The layer Edit works on alone; it stays selected without its transform handles.
@@ -113,6 +120,23 @@ export default function App() {
   // Full generations and layer edits preview as Apply places them; regional results already show the whole picture.
   const previewUrl = chosen && !compare ? layerResult && (layerResult.kind === "generation" || layerResult.kind === "layer") && document
     ? generationPreviewUrl : proposalUrls[selected] : null;
+
+  useEffect(() => { if (layers.activeId) setLastLayerId(layers.activeId); }, [layers.activeId]);
+  const maskTarget = layers.layers.find(layer => layer.id === lastLayerId) ?? null;
+
+  // The operation follows the selection, as Generative Fill does in Photoshop:
+  // a selection fills (Replace or Remove), no selection edits the whole picture.
+  useEffect(() => {
+    const has = !!mask;
+    if (has === hadSelection.current) return;
+    hadSelection.current = has;
+    if (!source) return;
+    if (has && isWholeImage(operation)) setOperation(regionalOperation.current);
+    else if (!has && (operation === "replace" || operation === "remove")) {
+      regionalOperation.current = operation;
+      setOperation("edit"); setEditScope("visible");
+    }
+  }, [mask]);
 
   // Picking another layer leaves its mask.
   useEffect(() => {
@@ -165,6 +189,11 @@ export default function App() {
       return;
     }
     if (locked) return;
+    // , and . (or < and >) step through the proposals kept in an AI layer.
+    const variantStep = { ",": -1, "<": -1, ".": 1, ">": 1 }[event.key];
+    if (variantStep && !ctrl && !event.altKey && layers.active && layers.active.variant_paths.length > 1) {
+      event.preventDefault(); layers.switchVariant(layers.active.id, variantStep); return;
+    }
     if (activeLayer && !ctrl && !event.altKey) {
       const arrows: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
       const step = event.shiftKey ? 10 : 1;
@@ -177,6 +206,9 @@ export default function App() {
     }
     if (ctrl && key === "j" && mask && source) { event.preventDefault(); void copySelectionToLayer(); return; }
     if (ctrl && key === "o") { event.preventDefault(); upload.current?.click(); }
+    if (ctrl && key === "t" && source) { event.preventDefault(); chooseTool("transform"); return; }
+    if (ctrl && key === "d" && mask) { event.preventDefault(); selection.clear(); return; }
+    if (event.shiftKey && event.key === "Backspace" && mask) { event.preventDefault(); fillSelection(); return; }
     if (ctrl && key === "z" && document && tool !== "sketch") {
       event.preventDefault();
       if (event.shiftKey ? document.can_redo : document.can_undo) void perform(() => travel(event.shiftKey ? "redo" : "undo"));
@@ -402,12 +434,20 @@ export default function App() {
     });
   }
 
-  async function submit() {
+  /** Fills the selection by a prompt: Replace, with the cursor in the prompt. */
+  function fillSelection() {
+    if (operation !== "replace") setOperation("replace");
+    promptRef.current?.focus();
+  }
+
+  /** Runs the operation, or `chosen` straight from the selection bar. */
+  async function submit(chosen: Operation = operation) {
     if (locked || !online || cudaBlocked) return;
+    if (chosen !== operation) setOperation(chosen);
     await perform(async () => {
       await layers.settled();
       const submission = await submitJob({
-        operation, settings, referenceIds: references.map(item => item.id), source, size, hasDocument: !!document, layerCount: layers.layers.length,
+        operation: chosen, settings, referenceIds: referencesFor(chosen).map(item => item.id), source, size, hasDocument: !!document, layerCount: layers.layers.length,
         mask, sketch, sketchScope, editScope, editLayer, expansion, picture: picture.editImage,
         blendLayer: picture.visibleLayers().find(layer => layer.id === blendTarget) ?? null,
       });
@@ -415,9 +455,9 @@ export default function App() {
       jobs.queued(submission.created, submission.operation, submission.extras);
     });
   }
-  async function apply() {
+  async function apply(separate = false) {
     await perform(async () => {
-      if (layerResult && chosen) await applyAsLayer(layerResult, proposalUrls[selected]);
+      if (layerResult && chosen) await applyAsLayer(layerResult, proposalUrls, selected, separate);
       else if (document && proposal) {
         const result = await acceptAlternative(document.id, proposal.id, proposal.alternatives[selected].id);
         await openSaved(result); await refresh();
@@ -429,28 +469,32 @@ export default function App() {
     });
   }
   function discard() { setAlternatives([]); setProposal(null); setLayerResult(null); setCompare(false); }
-  async function applyAsLayer(result: LayerResult, url: string) {
+  /** Every proposal becomes a variant of one new layer, showing the chosen one; `separate` gives each its own layer. */
+  async function applyAsLayer(result: LayerResult, urls: string[], shown: number, separate = false) {
     if (!size) return;
     await layers.settled();
+    let added: LayerRecord | null;
     if (result.kind === "generation") {
-      const file = await fileFromUrl(url, "generation.png");
-      const image = await loadImage(url);
+      const files = await Promise.all(urls.map(url => fileFromUrl(url, "generation.png")));
+      const image = await loadImage(urls[shown]);
       const placement = generationPlacement({ width: image.naturalWidth, height: image.naturalHeight }, size);
-      if (!await layers.addResult(file, null, result.name, placement, null)) return;
+      added = await layers.addResult(files, null, result.name, placement, null, undefined, shown, separate);
     } else if (result.kind === "layer") {
       const layer = layers.layers.find(item => item.id === result.layerId);
       if (!layer) throw new Error("That layer was deleted, so the edit has nowhere to go.");
-      const image = await canvasBlob(await editedLayer(await loadImage(url), layer));
+      const images = await Promise.all(urls.map(async url => canvasBlob(await editedLayer(await loadImage(url), layer))));
       const layerMask = layer.mask_url ? await fileFromUrl(fileUrl(layer.mask_url), "mask.png") : null;
-      if (!await layers.addResult(image, layerMask, result.name, layer, layer.id, "Edit layer")) return;
+      added = await layers.addResult(images, layerMask, result.name, layer, layer.id, "Edit layer", shown, separate);
     } else {
       // Fixed faces keep their own mask: only the faces become the layer.
       const footprint = result.kind === "faces" ? await facesMask() : result.mask;
-      const patch = await selectionPatch(await loadImage(url), size, footprint);
-      if (!patch) throw new Error("The selection was empty, so there is nothing to add.");
+      const patches = await Promise.all(urls.map(async url => selectionPatch(await loadImage(url), size, footprint)));
+      const patch = patches[shown];
+      if (!patch || patches.some(item => !item)) throw new Error("The selection was empty, so there is nothing to add.");
       const center = { x: patch.box.x + patch.box.width / 2, y: patch.box.y + patch.box.height / 2 };
-      if (!await layers.addResult(patch.image, patch.mask, result.name, center, result.kind === "selection" ? result.replaces : null)) return;
+      added = await layers.addResult(patches.map(item => item!.image), patch.mask, result.name, center, result.kind === "selection" ? result.replaces : null, undefined, shown, separate);
     }
+    if (!added) return;
     await layers.settled();
     discard(); selection.clear(); setSketchClear(value => value + 1); setOperation("replace"); setTool("transform"); setSideTab("layers"); collapsePanel(false);
     await refresh();
@@ -498,6 +542,10 @@ export default function App() {
             layerActive={!!activeLayer} layerPointCount={selection.layerPoints.length} onUndoLayerPoint={() => void selection.removeLayerPoint(selection.layerPoints.length - 1)}
             sketchVisible={operation === "sketch"} sketchClearToken={sketchClear} onSketchChange={setSketch}
             onFind={text => void selection.findByText(text)} onSubject={() => void selection.selectSubject()}
+            selectionActions={operation === "sketch" || blending ? null : {
+              disabled: locked, onFill: fillSelection, onRemove: () => void submit("remove"), onFaces: () => void submit("faces"),
+              onToLayer: () => void copySelectionToLayer(), maskTarget: maskTarget?.name ?? null, onMaskLayer: () => maskTarget && void addLayerMask(maskTarget.id, false),
+            }}
             renderLayers={view => previewUrl ? null : <LayerStage layers={layers.layers} active={activeLayer} zoom={view.zoom} size={view.size} tool={tool} brushSize={view.brushSize} hide={view.hide}
               brushHardness={view.brushHardness} brushOpacity={view.brushOpacity} maskView={maskView} overlay={layerMasking && maskOverlay}
               interactive={view.interactive} disabled={locked} points={selection.layerPoints} onSelect={layers.select}
@@ -509,8 +557,8 @@ export default function App() {
         {dropActive && <div className="drop-overlay">Drop to open your image</div>}
       </div>
       {reviewing
-        ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} />
-        : <CommandCard operation={operation} onOperation={chooseOperation} hasImage={!!source} locked={locked}
+        ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} onApplySeparately={layerResult ? () => void apply(true) : undefined} />
+        : <CommandCard promptRef={promptRef} operation={operation} onOperation={chooseOperation} hasImage={!!source} locked={locked}
           editScope={editScope} onEditScope={document && layers.layers.length ? chooseEditScope : undefined} sketchScope={sketchScope} onSketchScope={setSketchScope}
           settingsLabel={settingsSummary(settings, operation, !!blending)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
           references={references.map(item => ({ id: item.id, name: item.name, imageUrl: fileUrl(item.subject_url ?? item.image_url) }))} onRemoveReference={id => refs.toggle(id)}
@@ -529,7 +577,8 @@ export default function App() {
           onUpdate={layers.update} onPreview={layers.preview} onRemove={layers.remove} onDuplicate={layers.duplicate} onReorder={layers.reorder}
           onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)} onRemoveBackground={id => void selection.removeLayerBackground(id)}
           masking={layerMasking} maskView={maskView !== null} onMask={toggleLayerMask} onEditMask={editLayerMask} onViewMask={viewLayerMask}
-          onSwitchMask={switchLayerMask} onDeleteMask={deleteLayerMask} onAddMask={(id, hideAll) => void addLayerMask(id, hideAll)} />
+          onSwitchMask={switchLayerMask} onDeleteMask={deleteLayerMask} onAddMask={(id, hideAll) => void addLayerMask(id, hideAll)}
+          onVariant={layers.switchVariant} onSeparateVariants={layers.separateVariants} />
         : <ReferencePanel references={refs.references} newImage={!document} activeIds={refs.active.map(item => item.id)} pending={refs.pending} uploading={refs.uploading}
           disabled={locked || operation === "expand"} note={referenceNote}
           onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null) chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}

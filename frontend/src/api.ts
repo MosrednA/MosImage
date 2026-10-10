@@ -134,6 +134,8 @@ export interface LayerState {
   mask_path: string | null;
   /** A switched-off mask is kept but not applied. */
   mask_enabled: boolean;
+  /** AI proposals kept in one layer; `image_path` is the one shown. Empty for ordinary layers. */
+  variant_paths: string[];
   x: number;
   y: number;
   scale_x: number;
@@ -148,6 +150,7 @@ export interface LayerRecord extends LayerState {
   height: number;
   image_url: string;
   mask_url: string | null;
+  variant_urls: string[];
 }
 
 export interface LayerAsset { path: string; url: string; width: number; height: number }
@@ -384,8 +387,8 @@ export async function uploadLayerAsset(documentId: number, image: Blob, kind: "i
 
 /** Saves the layer stack as an undoable revision; fails with 409 when the document moved on. */
 export async function saveLayers(documentId: number, baseRevisionId: number, layers: LayerState[], label: string): Promise<DocumentRecord> {
-  const body = layers.map(({ id, name, image_path, mask_path, mask_enabled, x, y, scale_x, scale_y, rotation, opacity, visible }) =>
-    ({ id, name, image_path, mask_path, mask_enabled, x, y, scale_x, scale_y, rotation, opacity, visible }));
+  const body = layers.map(({ id, name, image_path, mask_path, mask_enabled, variant_paths, x, y, scale_x, scale_y, rotation, opacity, visible }) =>
+    ({ id, name, image_path, mask_path, mask_enabled, variant_paths, x, y, scale_x, scale_y, rotation, opacity, visible }));
   return request(`/api/v2/documents/${documentId}/layers`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

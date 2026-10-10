@@ -393,6 +393,7 @@ def _revision_layer_paths(revisions: list[Row]) -> set[str]:
     for revision in revisions:
         for layer in layer_store.parse(revision["layers"]):
             paths.add(layer["image_path"])
+            paths.update(layer.get("variant_paths", []))
             if layer.get("mask_path"):
                 paths.add(layer["mask_path"])
     return paths

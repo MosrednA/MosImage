@@ -64,6 +64,13 @@ def validate(layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if layer.get("mask_path"):
             if _size(_layer_file(layer["mask_path"], "layer-mask-")) != (width, height):
                 raise ValueError("A layer mask must match its layer size.")
+        variants = layer.get("variant_paths") or []
+        if variants:
+            # Variants share the layer's mask and transform, so they must be the same size.
+            if layer["image_path"] not in variants:
+                raise ValueError("A layer must show one of its variants.")
+            if any(_size(_layer_file(path, "layer-")) != (width, height) for path in variants):
+                raise ValueError("Layer variants must match the layer size.")
         checked.append({**layer, "width": width, "height": height})
     return checked
 
@@ -77,6 +84,8 @@ def records(layers_json: str | None) -> list[dict[str, Any]]:
             "mask_enabled": layer.get("mask_enabled", True),
             "image_url": storage.image_url(layer["image_path"]),
             "mask_url": storage.image_url(layer["mask_path"]) if layer.get("mask_path") else None,
+            "variant_paths": layer.get("variant_paths", []),
+            "variant_urls": [storage.image_url(path) for path in layer.get("variant_paths", [])],
         }
         for layer in parse(layers_json)
     ]

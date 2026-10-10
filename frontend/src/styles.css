@@ -462,3 +462,23 @@ small { color: var(--muted); }
 .layer-rotate { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border: 2px solid #fff; border-radius: 50%; background: var(--accent); box-shadow: 0 1px 4px #0009; cursor: grab; pointer-events: auto; touch-action: none; z-index: 4; }
 .layer-rotate:active { cursor: grabbing; }
 .layer-stage .selection-point { pointer-events: auto; }
+/* AI layers keep every proposal as a variant, like Photoshop's generative layers. */
+.layer-thumb { position: relative; }
+.variant-badge { position: absolute; right: 1px; bottom: 1px; padding: 0 3px; border-radius: 3px; background: rgba(10, 14, 20, .82); color: var(--ink); font-size: 8px; line-height: 12px; }
+.layer-variants { display: grid; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.layer-variants-head { display: flex; align-items: center; gap: 2px; font-size: 11px; color: var(--muted); }
+.layer-variants-head span { flex: 1; }
+.layer-variants-head .icon-button { width: 26px; height: 26px; padding: 5px; }
+.layer-variant-list { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.layer-variant-list .layer-thumb { padding: 0; border: 0; cursor: pointer; }
+.layer-variant-list .layer-thumb:hover:not(:disabled) { box-shadow: 0 0 0 1.5px var(--accent); }
+.layer-variant-list .layer-thumb[aria-pressed="true"] { box-shadow: 0 0 0 1.5px var(--ink); }
+.layer-variant-list .quiet-button { margin-left: auto; font-size: 11px; }
+/* Next steps beside a selection, like Photoshop's contextual task bar. */
+.selection-actions-anchor { position: absolute; z-index: 4; transform: translateX(-50%); pointer-events: none; }
+.selection-actions-bar { pointer-events: auto; display: flex; align-items: center; gap: 4px; padding: 4px; white-space: nowrap; background: #18212cf2; border: 1px solid #2c3a4b; border-radius: 10px; box-shadow: 0 8px 28px #0007; }
+.selection-actions-bar button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; font-size: 11px; border-radius: 7px; }
+.selection-actions-bar button svg { width: 14px; height: 14px; }
+.selection-actions-bar .icon-button { width: 28px; height: 28px; padding: 6px; justify-content: center; }
+.selection-actions-divider { width: 1px; height: 18px; margin: 0 2px; background: #2c3a4b; }
+.selection-actions-target { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }

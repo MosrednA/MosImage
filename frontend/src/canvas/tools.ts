@@ -16,15 +16,16 @@ export function isSelectionTool(tool: CanvasTool): boolean {
 
 interface ToolInfo { label: string; icon: IconName; key: string; status: string }
 
+/** Keys follow Photoshop: W quick selection, V move, H hand, M marquee, L lasso, C crop. */
 export const TOOLS: Record<CanvasTool, ToolInfo> = {
-  object: { label: "Object", icon: "object", key: "O", status: "Click to add · Right-click to exclude · Click a marker to remove it" },
+  object: { label: "Object", icon: "object", key: "W", status: "Click to add · Right-click to exclude · Click a marker to remove it" },
   brush: { label: "Brush", icon: "brush", key: "B", status: "Paint to select · Alt subtracts · [ ] size · Space pans" },
   eraser: { label: "Eraser", icon: "eraser", key: "E", status: "Paint to remove from the selection · [ ] size" },
   lasso: { label: "Lasso", icon: "lasso", key: "L", status: "Draw around an area · Alt subtracts" },
   rectangle: { label: "Box", icon: "rectangle", key: "M", status: "Drag a box · Alt subtracts" },
   sketch: { label: "Sketch", icon: "pencil", key: "P", status: "Paint rough shapes in colour · Alt erases · [ ] size" },
-  transform: { label: "Transform", icon: "transform", key: "T", status: "Click a layer to select it · Drag to move · Handles scale, stretch and rotate" },
-  move: { label: "Pan", icon: "move", key: "V", status: "Drag to pan · Ctrl + scroll zooms" },
+  transform: { label: "Transform", icon: "transform", key: "V", status: "Click a layer to select it · Drag to move · Handles scale, stretch and rotate" },
+  move: { label: "Pan", icon: "move", key: "H", status: "Drag to pan · Ctrl + scroll zooms" },
 };
 
 /** What the tools do while masking a layer: they edit its mask instead of the AI selection. */
