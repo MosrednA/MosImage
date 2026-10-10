@@ -70,7 +70,7 @@ Optional Fine detail sends the contextual selected crop through `provider.edit` 
 
 - `storage.py` runs SQLite with WAL and named migrations, and records generation history.
 - `documents.py` stores documents, revisions, AI alternatives, undo and redo. A stale base revision raises `RevisionConflict`, which the API returns as HTTP 409.
-- `layers.py` stores layer images (RGBA PNG) and masks (greyscale PNG).
+- `layers.py` stores layer images (RGBA PNG) and masks (greyscale PNG). A switched-off mask is kept with `mask_enabled: false`; stacks saved before that flag existed load with their masks on.
 - `references.py` stores reference images and their optional isolated subjects.
 
 All files live under `data/`. Only `data/images/` is served over HTTP.
@@ -85,7 +85,7 @@ All files live under `data/`. Only `data/images/` is served over HTTP.
 | `hooks/` | State and side effects: engine connection and warm-up (`useEngine`), job submission and polling (`useJobRunner`), the visible picture and exports (`usePicture`), selection tools (`useSelectionTools`), layers, references, result preview and keyboard/paste handling |
 | `generation/` | Pure logic: what a command submits (`submission.ts`), when it can run and what the hint says (`commandState.ts`), operations, presets, aspect ratios and progress text |
 | `canvas/` | Editor canvas, viewport, mask and sketch layers, expansion canvas and the selection bar |
-| `layers/` | Layer stack, transform geometry and bitmap helpers |
+| `layers/` | Layer stack, transform geometry, bitmap helpers (mask display, selection to layer mask) and the soft mask brush (`brush.ts`) |
 | `masks/` | Mask operations and refinement. The signed distance field for soft edges runs in a Web Worker (`maskWorker.ts` via `fieldWorker.ts`), with a synchronous fallback |
 | `components/` | Panels, dialogs, top bar, tool rail, proposal tray and library |
 

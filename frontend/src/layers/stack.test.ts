@@ -3,7 +3,7 @@ import { LayerRecord } from "../api";
 import { duplicateLayer, insertResult, layerAt, layerName, moveLayer, patchLayer } from "./stack";
 
 function layer(id: string, values: Partial<LayerRecord> = {}): LayerRecord {
-  return { id, name: id, image_path: `images/layers/layer-${id}.png`, mask_path: null, x: 50, y: 50, scale_x: 1, scale_y: 1, rotation: 0, opacity: 1, visible: true, width: 20, height: 20, image_url: `/files/${id}.png`, mask_url: null, ...values };
+  return { id, name: id, image_path: `images/layers/layer-${id}.png`, mask_path: null, mask_enabled: true, x: 50, y: 50, scale_x: 1, scale_y: 1, rotation: 0, opacity: 1, visible: true, width: 20, height: 20, image_url: `/files/${id}.png`, mask_url: null, ...values };
 }
 
 describe("layer stack", () => {

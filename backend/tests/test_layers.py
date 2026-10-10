@@ -122,6 +122,16 @@ class LayerTests(unittest.TestCase):
         large = layers.save_asset(image_bytes("RGB", (5000, 2500), (0, 0, 0), "JPEG"), "image")
         self.assertEqual((large["width"], large["height"]), (4096, 2048))
 
+    def test_masks_can_be_switched_off_and_older_stacks_keep_them_on(self) -> None:
+        asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
+        mask = layers.save_asset(image_bytes("L", (20, 10), 0), "mask")
+        older = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset, mask_path=mask["path"])], "Add mask")
+        self.assertTrue(older["layers"][0]["mask_enabled"])
+
+        off = documents.save_layers(older["id"], older["current_revision_id"], [self.layer(asset, mask_path=mask["path"], mask_enabled=False)], "Disable layer mask")
+        self.assertEqual((off["layers"][0]["mask_enabled"], off["layers"][0]["mask_url"]), (False, storage.image_url(mask["path"])))
+        self.assertTrue(documents.undo(off["id"])["layers"][0]["mask_enabled"])
+
     def test_layer_api_uploads_assets_and_reports_conflicts(self) -> None:
         client = TestClient(main.app)
         url = f"/api/v2/documents/{self.document['id']}"

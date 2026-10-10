@@ -56,6 +56,7 @@ small { color: var(--muted); }
 .brush-control { display: flex; gap: 8px; align-items: center; font-size: 10px; color: var(--muted); }
 .brush-control input { width: 110px; }
 .brush-control output { min-width: 35px; font-size: 10px; }
+.brush-control.mask-brush input { width: 72px; }
 .segmented.compact { padding: 2px; }
 .segmented.compact button { padding: 3px 9px; font-size: 10px; }
 .point-count { font-size: 10px; color: var(--mint); }
@@ -428,7 +429,19 @@ small { color: var(--muted); }
 .layer-tools { display: flex; justify-content: space-between; gap: 2px; }
 .layer-tools .icon-button { width: 29px; height: 29px; padding: 5px; }
 .layer-tools .icon-button svg { width: 16px; height: 16px; }
-.layer-unmask { padding: 6px 8px; font-size: 11px; }
+.layer-thumb.targeted { box-shadow: 0 0 0 1.5px var(--ink); }
+.mask-thumb { position: relative; padding: 0; border: 0; cursor: pointer; background: #3a4452; }
+.mask-thumb:hover:not(:disabled) { box-shadow: 0 0 0 1.5px var(--accent); }
+.mask-thumb.targeted:hover:not(:disabled) { box-shadow: 0 0 0 1.5px var(--ink); }
+/* A switched-off mask is crossed out in red, as in Photoshop. */
+.mask-thumb.off img { opacity: .55; }
+.mask-thumb.off::after { content: ""; position: absolute; inset: 0; background:
+  linear-gradient(to top right, transparent calc(50% - 1px), #e5484d calc(50% - 1px), #e5484d calc(50% + 1px), transparent calc(50% + 1px)),
+  linear-gradient(to bottom right, transparent calc(50% - 1px), #e5484d calc(50% - 1px), #e5484d calc(50% + 1px), transparent calc(50% + 1px)); }
+.layer-mask-row { display: flex; align-items: center; gap: 2px; }
+.layer-mask-row .layer-mask { flex: 1; }
+.layer-mask-row .icon-button { width: 29px; height: 29px; padding: 5px; }
+.layer-mask-row .icon-button svg { width: 16px; height: 16px; }
 .layer-blend, .layer-mask, .layer-cutout { gap: 6px; padding: 7px 8px; font-size: 11px; }
 .layer-blend svg, .layer-mask svg, .layer-cutout svg { width: 15px; height: 15px; }
 .layer-mask[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }

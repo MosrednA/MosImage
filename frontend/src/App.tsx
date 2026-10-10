@@ -29,7 +29,7 @@ import { ReferencePanel } from "./components/ReferencePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { SidePanel, SideTab } from "./components/SidePanel";
 import { LayerStage } from "./layers/LayerStage";
-import { canvasBlob, cutSelection, fileFromUrl, invertMask, layerFootprint, loadImage, loadMask, selectionPatch, solidMask } from "./layers/bitmaps";
+import { blankCanvas, canvasBlob, cutSelection, fileFromUrl, invertMask, layerFootprint, loadImage, loadMask, selectionPatch, selectionToLayerMask, shownMask, solidMask } from "./layers/bitmaps";
 import { generationPlacement, initialPlacement } from "./layers/geometry";
 import { useLayers } from "./hooks/useLayers";
 import { MAX_ACTIVE_REFERENCES, useReferences } from "./hooks/useReferences";
@@ -54,8 +54,11 @@ export default function App() {
   const [source, setSource] = useState<File | null>(null);
   const [size, setSize] = useState<ImageSize | null>(null);
   const [tool, setTool] = useState<CanvasTool>("object");
-  // Mask layer points the selection tools at the selected layer's mask instead of the picture.
-  const [layerMasking, setLayerMasking] = useState(false);
+  // The layer whose mask the selection tools paint instead of the picture; only while it stays selected.
+  const [maskingId, setMaskingId] = useState<string | null>(null);
+  // The layer shown as its mask alone (Alt-click), and the red tint over what masks hide (\).
+  const [maskViewId, setMaskViewId] = useState<string | null>(null);
+  const [maskOverlay, setMaskOverlay] = useState(false);
   const [operation, setOperation] = useState<Operation>("generate");
   const [expansion, setExpansion] = useState(initialExpansion);
   const [alternatives, setAlternatives] = useState<GenerationRecord[]>([]);
@@ -81,6 +84,8 @@ export default function App() {
   const documentRef = useRef<DocumentRecord | null>(document);
   documentRef.current = document;
   const layers = useLayers(document, setDocument, documentRef, setError);
+  const layerMasking = maskingId !== null && maskingId === layers.activeId;
+  const maskView = maskViewId !== null && maskViewId === layers.activeId ? maskViewId : null;
   const upload = useRef<HTMLInputElement>(null);
   const transaction = useRef(false);
   const picture = usePicture(source, size, sourceUrl, documentRef);
@@ -109,7 +114,11 @@ export default function App() {
   const previewUrl = chosen && !compare ? layerResult && (layerResult.kind === "generation" || layerResult.kind === "layer") && document
     ? generationPreviewUrl : proposalUrls[selected] : null;
 
-  useEffect(() => { setLayerMasking(false); }, [layers.activeId]);
+  // Picking another layer leaves its mask.
+  useEffect(() => {
+    if (maskingId !== layers.activeId) setMaskingId(null);
+    if (maskViewId !== layers.activeId) setMaskViewId(null);
+  }, [layers.activeId]);
 
   useEffect(() => {
     const url = source ? URL.createObjectURL(source) : null;
@@ -163,7 +172,8 @@ export default function App() {
       if (arrows[event.key]) { event.preventDefault(); layers.nudge(activeLayer.id, arrows[event.key][0] * step, arrows[event.key][1] * step); return; }
       if (event.key === "Backspace" && tool === "object" && layerPoints.length) { event.preventDefault(); void selection.removeLayerPoint(layerPoints.length - 1); return; }
       if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); layers.remove(activeLayer.id); return; }
-      if (event.key === "Escape") { if (layerPoints.length) selection.setLayerPoints([]); else if (layerMasking) finishMasking(); else layers.select(null); return; }
+      if (event.key === "\\" && layerMasking) { event.preventDefault(); setMaskOverlay(value => !value); return; }
+      if (event.key === "Escape") { if (layerPoints.length) selection.setLayerPoints([]); else if (maskView) setMaskViewId(null); else if (layerMasking) finishMasking(); else layers.select(null); return; }
     }
     if (ctrl && key === "j" && mask && source) { event.preventDefault(); void copySelectionToLayer(); return; }
     if (ctrl && key === "o") { event.preventDefault(); upload.current?.click(); }
@@ -266,22 +276,52 @@ export default function App() {
     setTool(next);
     if (operation === "sketch" && next !== "move") setOperation("replace");
     if (operation === "expand" || isWholeImage(operation)) { selection.clear(); setOperation("replace"); }
-    if (next === "transform") setLayerMasking(false);
+    if (next === "transform") setMaskingId(null);
     else if (isSelectionTool(next) && !layerMasking) layers.select(null);
   }
   function toggleLayerMask(id: string) {
-    if (layerMasking) { finishMasking(); return; }
-    layers.select(id); setLayerMasking(true);
-    setTool(current => isSelectionTool(current) ? current : "object");
+    if (layerMasking) finishMasking(); else editLayerMask(id);
+  }
+  /** Points the tools at a layer's mask, like clicking its mask thumbnail in Photoshop. */
+  function editLayerMask(id: string) {
+    layers.select(id); setMaskingId(id);
+    setTool(current => isSelectionTool(current) ? current : "brush");
     if (operation === "expand" || operation === "sketch" || isWholeImage(operation)) { selection.clear(); setOperation("replace"); }
   }
-  function finishMasking() { setLayerMasking(false); selection.setLayerPoints([]); setTool("transform"); }
+  function finishMasking() { setMaskingId(null); setMaskViewId(null); selection.setLayerPoints([]); setTool("transform"); }
+  /** Shows a layer's mask alone in grey, ready to paint; again to go back. */
+  function viewLayerMask(id: string) {
+    if (maskView === id) { setMaskViewId(null); return; }
+    editLayerMask(id); setMaskViewId(id);
+  }
+  function switchLayerMask(id: string) {
+    const layer = layers.layers.find(item => item.id === id);
+    if (layer?.mask_url) layers.update(id, { mask_enabled: !layer.mask_enabled }, layer.mask_enabled ? "Disable layer mask" : "Enable layer mask");
+  }
+  function deleteLayerMask(id: string) {
+    if (maskingId === id) finishMasking();
+    layers.update(id, { mask_path: null, mask_url: null, mask_enabled: true }, "Delete layer mask");
+  }
+  /** A new mask from the selection on the picture, or one that shows (or with `hideAll`, hides) the whole layer. */
+  async function addLayerMask(id: string, hideAll: boolean) {
+    const layer = layers.layers.find(item => item.id === id);
+    if (!layer || !size || locked) return;
+    const fromSelection = !hideAll && mask ? mask : null;
+    await perform(async () => {
+      await layers.settled();
+      const layerMask = fromSelection ? await selectionToLayerMask(fromSelection, size, layer)
+        : hideAll ? blankCanvas(layer.width, layer.height) : solidMask(layer.width, layer.height);
+      await layers.setMask(id, layerMask, fromSelection ? "Mask from selection" : hideAll ? "Hide layer with mask" : "Add layer mask");
+      if (fromSelection) selection.clear();
+      editLayerMask(id);
+    });
+  }
   function chooseOperation(next: Exclude<Operation, "expand">) {
     // The pencil belongs to Sketch; other operations go back to selecting.
-    if (next === "sketch") { layers.select(null); setLayerMasking(false); setTool("sketch"); }
+    if (next === "sketch") { layers.select(null); setMaskingId(null); setTool("sketch"); }
     else if (tool === "sketch" || (next === "faces" && tool === "transform")) setTool("object");
     // Faces work on the picture as you see it; a selection may narrow them down.
-    if (next === "faces") { layers.select(null); setLayerMasking(false); }
+    if (next === "faces") { layers.select(null); setMaskingId(null); }
     if (isWholeImage(next)) {
       // With a layer selected, Edit starts on that layer alone.
       if (next === "edit") setEditScope(layers.active ? "layer" : "visible");
@@ -307,6 +347,8 @@ export default function App() {
   }
 
   function selectLayer(id: string | null) {
+    // Clicking the layer itself while painting its mask goes back to its pixels.
+    if (id !== null && layerMasking && id === layers.activeId) { finishMasking(); return; }
     layers.select(id);
     if (operation === "edit") { setEditScope(id ? "layer" : "visible"); return; }
     if (id) { setTool("transform"); if (operation === "expand" || operation === "sketch" || isWholeImage(operation)) setOperation("replace"); }
@@ -350,7 +392,7 @@ export default function App() {
     await perform(async () => {
       await layers.settled();
       const image = await loadImage(fileUrl(layer.image_url));
-      const layerMask = layer.mask_url ? await loadMask(fileUrl(layer.mask_url)) : null;
+      const layerMask = await shownMask(layer);
       const reach = Math.max(layer.width * Math.abs(layer.scale_x), layer.height * Math.abs(layer.scale_y));
       const grow = Math.round(Math.min(48, Math.max(8, reach * 0.06)));
       const footprint = await layerFootprint(size, { ...layer, image, mask: layerMask }, grow, grow / 2);
@@ -457,6 +499,7 @@ export default function App() {
             sketchVisible={operation === "sketch"} sketchClearToken={sketchClear} onSketchChange={setSketch}
             onFind={text => void selection.findByText(text)} onSubject={() => void selection.selectSubject()}
             renderLayers={view => previewUrl ? null : <LayerStage layers={layers.layers} active={activeLayer} zoom={view.zoom} size={view.size} tool={tool} brushSize={view.brushSize} hide={view.hide}
+              brushHardness={view.brushHardness} brushOpacity={view.brushOpacity} maskView={maskView} overlay={layerMasking && maskOverlay}
               interactive={view.interactive} disabled={locked} points={selection.layerPoints} onSelect={layers.select}
               onPreview={layers.preview} onCancelPreview={layers.cancelPreview} onCommit={layers.update} onMask={(id, layerMask, label) => void layers.setMask(id, layerMask, label)}
               onObjectPoint={point => void selection.objectPoint(point)} onRemovePoint={index => void selection.removeLayerPoint(index)} onCursor={view.trackCursor} />} />
@@ -485,7 +528,8 @@ export default function App() {
           canCopySelection={!!mask} onSelect={selectLayer} onAdd={files => void addLayerImages(files)} onCopySelection={() => void copySelectionToLayer()}
           onUpdate={layers.update} onPreview={layers.preview} onRemove={layers.remove} onDuplicate={layers.duplicate} onReorder={layers.reorder}
           onReset={resetLayer} onInvertMask={id => void invertLayerMask(id)} onBlend={id => void blendLayerIn(id)} onRemoveBackground={id => void selection.removeLayerBackground(id)}
-          masking={layerMasking} onMask={toggleLayerMask} />
+          masking={layerMasking} maskView={maskView !== null} onMask={toggleLayerMask} onEditMask={editLayerMask} onViewMask={viewLayerMask}
+          onSwitchMask={switchLayerMask} onDeleteMask={deleteLayerMask} onAddMask={(id, hideAll) => void addLayerMask(id, hideAll)} />
         : <ReferencePanel references={refs.references} newImage={!document} activeIds={refs.active.map(item => item.id)} pending={refs.pending} uploading={refs.uploading}
           disabled={locked || operation === "expand"} note={referenceNote}
           onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null) chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}

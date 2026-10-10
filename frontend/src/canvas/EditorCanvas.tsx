@@ -1,6 +1,8 @@
 import { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
 import { SelectionPoint } from "../api";
 import { Icon } from "../components/Icon";
+import { isTyping } from "../hooks/useWindowEvents";
+import { HARDNESS_RANGE, OPACITY_RANGE } from "../layers/brush";
 import { DEFAULT_EXPAND, autoSoften } from "../masks/maskRefine";
 import { paddedContextBox } from "./context";
 import { ImageSize, viewportPointToImage } from "./coordinates";
@@ -19,6 +21,9 @@ export interface LayerView {
   zoom: number;
   size: ImageSize;
   brushSize: number;
+  /** Mask brush hardness and opacity, 0–1. */
+  brushHardness: number;
+  brushOpacity: number;
   hide: boolean;
   /** Pointer input goes to the layers instead of the AI selection. */
   interactive: boolean;
@@ -71,6 +76,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const [subtract, setSubtract] = useState(false);
   const [spacePan, setSpacePan] = useState(false);
   const [layerHide, setLayerHide] = useState(true);
+  const [hardness, setHardness] = useState<number>(HARDNESS_RANGE.initial);
+  const [brushOpacity, setBrushOpacity] = useState<number>(OPACITY_RANGE.initial);
   const [sketchColour, setSketchColour] = useState<string>(SKETCH_COLOURS[2]);
   const [sketchSize, setSketchSize] = useState<number>(SKETCH_SIZE.initial);
   const [sketchErase, setSketchErase] = useState(false);
@@ -92,9 +99,8 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const sketching = tool === "sketch" && !panning;
 
   useEffect(() => {
-    const typing = (target: EventTarget | null) => target instanceof HTMLElement && !!target.closest("input, textarea, select, [contenteditable], dialog");
     const down = (event: KeyboardEvent) => {
-      if (typing(event.target) || reviewing) return;
+      if (isTyping(event) || reviewing) return;
       const ctrl = event.ctrlKey || event.metaKey;
       if (event.code === "Space" && !ctrl) {
         event.preventDefault();
@@ -167,6 +173,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
         pointCount={layerActive ? props.layerPointCount : points.length} onUndoPoint={layerActive ? props.onUndoLayerPoint : () => props.onRemovePoint(points.length - 1)}
         sketch={{ colour: sketchColour, onColour: setSketchColour, size: sketchSize, onSize: setSketchSize, erase: sketchErase, onErase: setSketchErase,
           canUndo: sketch.canUndo, onUndo: sketch.undo, canClear: sketch.hasStrokes, onClear: sketch.clear }}
+        maskBrush={layerActive ? { hardness, onHardness: setHardness, opacity: brushOpacity, onOpacity: setBrushOpacity } : null}
         onFind={props.onFind} onSubject={props.onSubject}
         zoom={zoom} fitToStage={viewport.fitToStage} atActualSize={!viewport.fitToStage && viewport.manualZoom === 1} onZoom={value => viewport.setZoom(value)} onFit={viewport.fit} />
       {editing && mask.hasSelection && <SelectionBar disabled={disabled}
@@ -180,7 +187,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
         {imageUrl && imageSize && displaySize ? (
           <div ref={surfaceRef} className={"editor-surface" + (brushCursor ? " brush-cursor-active" : "")} style={{ width: displaySize.width, height: displaySize.height }}>
             <img src={previewImageUrl || imageUrl} alt={imageName || "Source image"} draggable={false} />
-            {props.renderLayers({ zoom, size: imageSize, brushSize, hide: layerHide, interactive: layerInput && editing, trackCursor })}
+            {props.renderLayers({ zoom, size: imageSize, brushSize, brushHardness: hardness / 100, brushOpacity: brushOpacity / 100, hide: layerHide, interactive: layerInput && editing, trackCursor })}
             <canvas ref={sketch.canvasRef} className="sketch-draw" width={imageSize.width} height={imageSize.height} data-tool="sketch" aria-label="Sketch canvas"
               style={{ pointerEvents: sketching && editing && !disabled ? undefined : "none", opacity: props.sketchVisible && !reviewing ? 1 : 0 }}
               onPointerDown={event => { if (event.button === 0 && !disabled) sketch.gesture.begin(event); }}

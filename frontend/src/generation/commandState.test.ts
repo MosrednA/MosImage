@@ -38,7 +38,7 @@ describe("canSubmit", () => {
 
 describe("commandHint", () => {
   it("puts the layer being worked on first", () => {
-    expect(commandHint(state({ activeLayerName: "Hat", layerMasking: true }))).toContain("Masking layer “Hat”");
+    expect(commandHint(state({ activeLayerName: "Hat", layerMasking: true }))).toContain("Painting the mask of “Hat”");
     expect(commandHint(state({ activeLayerName: "Hat" }))).toContain("Editing layer “Hat”");
   });
   it("explains blending and that results become layers", () => {

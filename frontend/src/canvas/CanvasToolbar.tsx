@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { Icon } from "../components/Icon";
 import { SKETCH_COLOURS, SKETCH_SIZE } from "./sketch";
 import { CanvasTool, TOOLS } from "./tools";
+import { HARDNESS_RANGE, OPACITY_RANGE } from "../layers/brush";
 
 /** Pencil options: colour, size, drawing or erasing, and the sketch's own undo. */
 export interface SketchControls {
@@ -17,12 +18,22 @@ export interface SketchControls {
   onClear: () => void;
 }
 
+/** Hardness and opacity of the brush while painting a layer mask, in percent. */
+export interface MaskBrushControls {
+  hardness: number;
+  onHardness: (hardness: number) => void;
+  opacity: number;
+  onOpacity: (opacity: number) => void;
+}
+
 interface Props {
   tool: CanvasTool;
   reviewing: boolean;
   disabled: boolean;
   brushSize: number;
   onBrushSize: (size: number) => void;
+  /** Offered while a layer mask is painted. */
+  maskBrush: MaskBrushControls | null;
   subtract: boolean;
   onSubtract: (subtract: boolean) => void;
   /** Names for the two Lasso/Box modes; the second is the subtracting one. */
@@ -57,6 +68,18 @@ export function CanvasToolbar(props: Props) {
       <input type="range" min={BRUSH_RANGE.min} max={BRUSH_RANGE.max} value={props.brushSize} disabled={disabled} onChange={event => props.onBrushSize(Number(event.target.value))} />
       <output>{props.brushSize}px</output>
     </label>}
+    {!reviewing && (tool === "brush" || tool === "eraser") && props.maskBrush && <>
+      <label className="brush-control mask-brush" title="Soft edges blend the layer in; hard edges cut it cleanly">
+        <span>Hardness</span>
+        <input type="range" min={HARDNESS_RANGE.min} max={HARDNESS_RANGE.max} value={props.maskBrush.hardness} disabled={disabled} onChange={event => props.maskBrush?.onHardness(Number(event.target.value))} />
+        <output>{props.maskBrush.hardness}%</output>
+      </label>
+      <label className="brush-control mask-brush" title="How much one stroke hides or restores">
+        <span>Opacity</span>
+        <input type="range" min={OPACITY_RANGE.min} max={OPACITY_RANGE.max} value={props.maskBrush.opacity} disabled={disabled} onChange={event => props.maskBrush?.onOpacity(Number(event.target.value))} />
+        <output>{props.maskBrush.opacity}%</output>
+      </label>
+    </>}
     {!reviewing && (tool === "rectangle" || tool === "lasso") && <div className="segmented compact" aria-label="Selection mode">
       <button aria-pressed={!props.subtract} disabled={disabled} onClick={() => props.onSubtract(false)}>{props.modeLabels?.[0] ?? "Add"}</button>
       <button aria-pressed={props.subtract} disabled={disabled} title="Or hold Alt" onClick={() => props.onSubtract(true)}>{props.modeLabels?.[1] ?? "Subtract"}</button>

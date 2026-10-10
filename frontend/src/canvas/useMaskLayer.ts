@@ -1,4 +1,5 @@
 import { PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
+import { isTyping } from "../hooks/useWindowEvents";
 import { invertMaskPixels } from "../masks/maskOperations";
 import { EdgeSettings, MaskField, alphaBounds, overlayPixels, refineAlpha } from "../masks/maskRefine";
 import { signedDistanceFieldAsync } from "../masks/fieldWorker";
@@ -122,7 +123,7 @@ export function useMaskLayer({ imageUrl, imageSize, disabled, brushSize, edges, 
   useEffect(() => {
     const handleUndo = (event: KeyboardEvent) => {
       if (disabled || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
-      if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select, dialog")) return;
+      if (isTyping(event)) return;
       const stack = event.shiftKey ? redoStackRef.current : undoStackRef.current;
       if (!stack.length) return;
       event.preventDefault();

@@ -249,6 +249,8 @@ class LayerState(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     image_path: str
     mask_path: str | None = None
+    # A switched-off mask is kept but not applied, like Shift-clicking a mask in Photoshop.
+    mask_enabled: bool = True
     x: float
     y: float
     scale_x: float = 1.0

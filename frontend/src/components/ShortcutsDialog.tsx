@@ -15,6 +15,10 @@ const GROUPS: [string, [string, string][]][] = [
   ["Layers", [
     ["Ctrl + V", "Paste an image as a layer"],
     ["Ctrl + J", "Copy the selection to a layer"],
+    ["Click a mask thumbnail", "Paint that layer's mask"],
+    ["Shift + click a mask", "Switch the mask off or on"],
+    ["Alt + click a mask", "Show the mask alone, in grey"],
+    ["\\", "Tint what the mask hides in red"],
     ["Shift + drag a corner", "Stretch freely"],
     ["Shift + rotate", "Snap to 15°"],
     ["Arrows / Shift + arrows", "Nudge 1 px / 10 px"],

@@ -1,7 +1,7 @@
 import { MutableRefObject, useRef } from "react";
 import { DocumentRecord, LayerRecord, fileUrl } from "../api";
 import { ImageSize } from "../canvas/coordinates";
-import { fileFromUrl, flatten, loadImage, loadMask, withTransparencyOf } from "../layers/bitmaps";
+import { fileFromUrl, flatten, loadImage, shownMask, withTransparencyOf } from "../layers/bitmaps";
 
 /** An edited layer image with the original layer's transparency. */
 export async function editedLayer(edited: HTMLImageElement, layer: LayerRecord): Promise<HTMLCanvasElement> {
@@ -22,7 +22,7 @@ export function usePicture(source: File | null, size: ImageSize | null, sourceUr
     const background = await createImageBitmap(source);
     try {
       const parts = await Promise.all(visible.map(async layer => ({
-        ...layer, image: await loadImage(fileUrl(layer.image_url)), mask: layer.mask_url ? await loadMask(fileUrl(layer.mask_url)) : null,
+        ...layer, image: await loadImage(fileUrl(layer.image_url)), mask: await shownMask(layer),
       })));
       return await flatten(background, size, parts);
     } finally { background.close(); }
@@ -32,7 +32,7 @@ export function usePicture(source: File | null, size: ImageSize | null, sourceUr
     if (!source) throw new Error("Open an image first.");
     const visible = visibleLayers();
     if (!visible.length) return source;
-    const key = JSON.stringify([sourceUrl, visible.map(({ image_path, mask_path, x, y, scale_x, scale_y, rotation, opacity }) => [image_path, mask_path, x, y, scale_x, scale_y, rotation, opacity])]);
+    const key = JSON.stringify([sourceUrl, visible.map(({ image_path, mask_path, mask_enabled, x, y, scale_x, scale_y, rotation, opacity }) => [image_path, mask_path, mask_enabled, x, y, scale_x, scale_y, rotation, opacity])]);
     if (composite.current?.key !== key) composite.current = { key, file: new File([await flattenLayers(visible)], "picture.png", { type: "image/png" }) };
     return composite.current.file;
   }

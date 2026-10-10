@@ -3,7 +3,7 @@ import { ImageSize } from "../canvas/coordinates";
 import { validExpansion } from "../canvas/expansion";
 import { sketchMask, sketchedPicture } from "../canvas/sketch";
 import { EditorSettings, qualityOptions } from "../components/EditorSettings";
-import { canvasBlob, loadImage, loadMask, maskedLayer } from "../layers/bitmaps";
+import { canvasBlob, loadImage, maskedLayer, shownMask } from "../layers/bitmaps";
 import { MAX_LAYERS } from "../layers/stack";
 import { EditScope, Operation, SketchScope, taskFor } from "./operation";
 
@@ -132,7 +132,7 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
     if (layer) {
       // Only this layer, through its mask; the result replaces it in place.
       const image = await loadImage(fileUrl(layer.image_url));
-      const layerMask = layer.mask_url ? await loadMask(fileUrl(layer.mask_url)) : null;
+      const layerMask = await shownMask(layer);
       const picture = new File([await canvasBlob(maskedLayer(image, layerMask, layer.width, layer.height))], "layer.png", { type: "image/png" });
       return asLayer(await editWholeImage(picture, withReferences), { kind: "layer", layerId: layer.id, name: `${layer.name} · AI` });
     }

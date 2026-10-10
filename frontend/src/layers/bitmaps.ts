@@ -1,3 +1,4 @@
+import { LayerRecord, fileUrl } from "../api";
 import { ImageBox, maskBounds } from "../canvas/context";
 import { ImageSize } from "../canvas/coordinates";
 import { Placement } from "./geometry";
@@ -39,6 +40,11 @@ export function loadMask(url: string): Promise<HTMLCanvasElement> {
   return loading.then(copyCanvas);
 }
 
+/** A layer's mask as it applies now: none while it is switched off. */
+export function shownMask(layer: Pick<LayerRecord, "mask_url" | "mask_enabled">): Promise<HTMLCanvasElement | null> {
+  return layer.mask_enabled && layer.mask_url ? loadMask(fileUrl(layer.mask_url)) : Promise.resolve(null);
+}
+
 /** Moves greyscale coverage into alpha over white, the way the editor stores masks. */
 export function luminanceToAlpha(data: Uint8ClampedArray): void {
   for (let index = 0; index < data.length; index += 4) {
@@ -68,6 +74,54 @@ export function composeLayer(target: HTMLCanvasElement, image: CanvasImageSource
     context.drawImage(mask, 0, 0, target.width, target.height);
   }
   context.restore();
+}
+
+/** How a layer is drawn: as it shows, its mask alone in grey (Alt-click), or with hidden parts tinted red (\). */
+export type LayerLook = "layer" | "mask" | "overlay";
+const HIDDEN_TINT = "rgba(255, 40, 40, 0.5)";
+
+/** Draws a layer in one of its looks; `mask` is its mask whether or not it is switched on. */
+export function renderLayer(target: HTMLCanvasElement, image: CanvasImageSource, mask: CanvasImageSource | null, look: LayerLook): void {
+  if (look === "layer") { composeLayer(target, image, mask); return; }
+  const context = target.getContext("2d");
+  if (!context) return;
+  const { width, height } = target;
+  context.save();
+  if (look === "mask") {
+    // White shows, black hides, like a Photoshop mask on its own.
+    context.globalCompositeOperation = "copy";
+    context.fillStyle = mask ? "black" : "white";
+    context.fillRect(0, 0, width, height);
+    context.globalCompositeOperation = "source-over";
+    if (mask) context.drawImage(mask, 0, 0, width, height);
+  } else {
+    composeLayer(target, image, mask);
+    if (mask) {
+      const tint = blankCanvas(width, height);
+      const tinted = tint.getContext("2d")!;
+      tinted.fillStyle = HIDDEN_TINT;
+      tinted.fillRect(0, 0, width, height);
+      tinted.globalCompositeOperation = "destination-out";
+      tinted.drawImage(mask, 0, 0, width, height);
+      context.drawImage(tint, 0, 0);
+    }
+  }
+  context.restore();
+}
+
+/** A selection on the picture (coverage in alpha) as a mask in a layer's own pixels. */
+export async function selectionToLayerMask(selection: Blob, size: ImageSize, layer: Placement): Promise<HTMLCanvasElement> {
+  const bitmap = await createImageBitmap(selection);
+  const mask = blankCanvas(layer.width, layer.height);
+  const context = mask.getContext("2d")!;
+  // The inverse of the layer's placement: canvas pixels into layer pixels.
+  context.translate(layer.width / 2, layer.height / 2);
+  context.scale(1 / layer.scale_x, 1 / layer.scale_y);
+  context.rotate((-layer.rotation * Math.PI) / 180);
+  context.translate(-layer.x, -layer.y);
+  context.drawImage(bitmap, 0, 0, size.width, size.height);
+  bitmap.close();
+  return mask;
 }
 
 /** A layer's image through its mask, at its own size: what an edit of that layer alone sees. */

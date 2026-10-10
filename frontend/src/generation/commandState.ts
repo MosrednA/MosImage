@@ -33,7 +33,7 @@ export function canSubmit(state: CommandState): boolean {
 
 export function commandHint(state: CommandState): string {
   const { operation, referenceNames } = state;
-  if (state.activeLayerName !== null && state.layerMasking) return `Masking layer “${state.activeLayerName}”: the tools hide or restore parts of it. Press Esc when done.`;
+  if (state.activeLayerName !== null && state.layerMasking) return `Painting the mask of “${state.activeLayerName}”: Brush shows, Eraser hides, \\ tints hidden parts red. Click the layer thumbnail or press Esc when done.`;
   if (state.activeLayerName !== null) return `Editing layer “${state.activeLayerName}”. Pick a selection tool or press Esc for AI edits; they see every visible layer.`;
   if (operation === "edit" && state.editScope === "layer") return layerEditHint(state.editLayerName, referenceNames);
   if (operation === "sketch") return sketchHint(state.sketchScope, state.hasSketch);

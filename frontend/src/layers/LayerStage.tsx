@@ -2,7 +2,8 @@ import { PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent, useEf
 import { LayerRecord, SelectionPoint, fileUrl } from "../api";
 import { ImageSize, Point } from "../canvas/coordinates";
 import { CanvasTool } from "../canvas/tools";
-import { composeLayer, copyCanvas, loadImage, loadMask, solidAt, solidMask } from "./bitmaps";
+import { LayerLook, blankCanvas, copyCanvas, loadImage, loadMask, renderLayer, solidAt, solidMask } from "./bitmaps";
+import { BrushTip, applyStroke, stampSegment } from "./brush";
 import { HANDLES, Handle, canvasToLayer, containsPoint, corners, cssTransform, handlePoint, layerToCanvas, moved, resized, rotated } from "./geometry";
 import { layerAt } from "./stack";
 
@@ -13,6 +14,13 @@ interface Props {
   size: ImageSize;
   tool: CanvasTool;
   brushSize: number;
+  /** Mask brush hardness and opacity, 0–1. */
+  brushHardness: number;
+  brushOpacity: number;
+  /** The layer shown as its mask alone, in grey. */
+  maskView: string | null;
+  /** Tint what the selected layer's mask hides in red. */
+  overlay: boolean;
   /** Lasso and Box hide parts of the layer; Alt restores instead. */
   hide: boolean;
   /** Pointer input goes to the layers instead of the AI selection. */
@@ -35,7 +43,8 @@ type Gesture =
   | { kind: "move"; layer: LayerRecord; from: Point; patch: Patch | null }
   | { kind: "resize"; layer: LayerRecord; handle: Handle; patch: Patch | null }
   | { kind: "rotate"; layer: LayerRecord; from: Point; patch: Patch | null }
-  | { kind: "paint"; layer: LayerRecord; erase: boolean; mask: HTMLCanvasElement; image: HTMLImageElement; last: Point; painted: boolean }
+  // `base` is the mask before the stroke, `stroke` how strongly each pixel is painted.
+  | { kind: "paint"; layer: LayerRecord; erase: boolean; tip: BrushTip; opacity: number; base: HTMLCanvasElement; stroke: HTMLCanvasElement; mask: HTMLCanvasElement; image: HTMLImageElement; last: Point }
   | { kind: "shape"; layer: LayerRecord; rectangle: boolean; hide: boolean; points: Point[] };
 
 interface ActiveAssets { imageUrl: string; image: HTMLImageElement; mask: HTMLCanvasElement | null }
@@ -106,7 +115,13 @@ export function LayerStage(props: Props) {
     if (tool === "brush" || tool === "eraser") {
       const loaded = assets.current;
       if (!loaded || loaded.imageUrl !== active.image_url) return;
-      const paint: Gesture = { kind: "paint", layer: active, erase: (tool === "eraser") !== event.altKey, mask: loaded.mask ? copyCanvas(loaded.mask) : solidMask(active.width, active.height), image: loaded.image, last: local, painted: false };
+      const base = loaded.mask ? copyCanvas(loaded.mask) : solidMask(active.width, active.height);
+      // Brush size is in canvas pixels; the tip works in the layer's own pixels.
+      const radius = Math.max(0.5, props.brushSize / 2 / Math.sqrt(Math.abs(active.scale_x * active.scale_y)));
+      const paint: Gesture = {
+        kind: "paint", layer: active, erase: (tool === "eraser") !== event.altKey, tip: { radius, hardness: props.brushHardness }, opacity: props.brushOpacity,
+        base, stroke: blankCanvas(active.width, active.height), mask: copyCanvas(base), image: loaded.image, last: local,
+      };
       start(event, paint);
       paintTo(paint, local);
       return;
@@ -184,25 +199,11 @@ export function LayerStage(props: Props) {
   }
 
   function paintTo(paint: Extract<Gesture, { kind: "paint" }>, point: Point) {
-    const context = paint.mask.getContext("2d");
+    const context = paint.stroke.getContext("2d");
     if (!context) return;
-    // Brush size is in canvas pixels; convert it to the layer's own pixels.
-    const radius = Math.max(0.5, props.brushSize / 2 / Math.sqrt(Math.abs(paint.layer.scale_x * paint.layer.scale_y)));
-    context.save();
-    context.globalCompositeOperation = paint.erase ? "destination-out" : "source-over";
-    context.strokeStyle = context.fillStyle = "white";
-    context.lineCap = context.lineJoin = "round";
-    context.lineWidth = radius * 2;
-    context.beginPath();
-    context.moveTo(paint.last.x, paint.last.y);
-    context.lineTo(point.x, point.y);
-    context.stroke();
-    context.beginPath();
-    context.arc(point.x, point.y, radius, 0, Math.PI * 2);
-    context.fill();
-    context.restore();
+    const box = stampSegment(context, paint.last, point, paint.tip);
+    applyStroke(paint.mask, paint.base, paint.stroke, box, paint.erase, paint.opacity);
     paint.last = point;
-    paint.painted = true;
     redraw(paint.layer.id, paint.image, paint.mask);
   }
 
@@ -226,9 +227,13 @@ export function LayerStage(props: Props) {
     props.onMask(layer.id, mask, current.hide ? "Hide part of layer" : "Restore part of layer");
   }
 
+  /** Redraws a layer from a mask being edited, which shows even if it was switched off. */
   function redraw(id: string, image: HTMLImageElement, mask: HTMLCanvasElement | null) {
     const canvas = canvases.current.get(id);
-    if (canvas) composeLayer(canvas, image, mask);
+    if (canvas) renderLayer(canvas, image, mask, lookOf(id));
+  }
+  function lookOf(id: string): LayerLook {
+    return id === props.maskView ? "mask" : props.overlay && id === active?.id ? "overlay" : "layer";
   }
 
   const handlers = { onPointerMove: update, onPointerUp: finish, onPointerCancel: cancel };
@@ -238,7 +243,7 @@ export function LayerStage(props: Props) {
 
   return <div className="layer-stage" {...handlers}>
     <div className="layer-stack" aria-hidden="true">
-      {layers.map(layer => <LayerView key={layer.id} layer={layer} zoom={zoom} register={register} />)}
+      {layers.map(layer => <LayerView key={layer.id} layer={layer} look={lookOf(layer.id)} zoom={zoom} register={register} />)}
     </div>
     {interactive && <div ref={hitRef} className="layer-hit" data-tool={tool} onPointerDown={beginStage} onContextMenu={excludePoint} />}
     {!interactive && <div ref={hitRef} className="layer-hit inert" />}
@@ -268,7 +273,7 @@ export function LayerStage(props: Props) {
   </div>;
 }
 
-function LayerView({ layer, zoom, register }: { layer: LayerRecord; zoom: number; register: (id: string, canvas: HTMLCanvasElement | null) => void }) {
+function LayerView({ layer, look, zoom, register }: { layer: LayerRecord; look: LayerLook; zoom: number; register: (id: string, canvas: HTMLCanvasElement | null) => void }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     register(layer.id, ref.current);
@@ -276,13 +281,15 @@ function LayerView({ layer, zoom, register }: { layer: LayerRecord; zoom: number
   }, [layer.id]);
   useEffect(() => {
     let alive = true;
-    Promise.all([loadImage(fileUrl(layer.image_url)), layer.mask_url ? loadMask(fileUrl(layer.mask_url)) : Promise.resolve(null)])
-      .then(([image, mask]) => { if (alive && ref.current) composeLayer(ref.current, image, mask); })
+    // The grey and red looks show the mask even while it is switched off.
+    const useMask = !!layer.mask_url && (layer.mask_enabled || look !== "layer");
+    Promise.all([loadImage(fileUrl(layer.image_url)), useMask ? loadMask(fileUrl(layer.mask_url!)) : Promise.resolve(null)])
+      .then(([image, mask]) => { if (alive && ref.current) renderLayer(ref.current, image, mask, look); })
       .catch(() => undefined);
     return () => { alive = false; };
-  }, [layer.image_url, layer.mask_url, layer.width, layer.height]);
+  }, [layer.image_url, layer.mask_url, layer.mask_enabled, layer.width, layer.height, look]);
   return <canvas ref={ref} width={layer.width} height={layer.height}
-    style={{ width: layer.width, height: layer.height, transform: cssTransform(layer, zoom), opacity: layer.opacity, visibility: layer.visible ? undefined : "hidden" }} />;
+    style={{ width: layer.width, height: layer.height, transform: cssTransform(layer, zoom), opacity: look === "mask" ? 1 : layer.opacity, visibility: layer.visible || look === "mask" ? undefined : "hidden" }} />;
 }
 
 /** The rotate knob sits just outside the top edge, at a fixed distance on screen. */

@@ -17,7 +17,14 @@ export function useWindowEvents(handlers: Handlers) {
   }, []);
 }
 
+/** Keys a focused slider uses itself; every other key stays a shortcut, as in Photoshop. */
+const SLIDER_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
+
 /** Typing in a field keeps its keys to itself. */
 export function isTyping(event: KeyboardEvent): boolean {
-  return event.target instanceof HTMLElement && !!event.target.closest("input, textarea, select, [contenteditable], dialog");
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.closest("dialog")) return true;
+  if (target instanceof HTMLInputElement && target.type === "range") return SLIDER_KEYS.has(event.key);
+  return !!target.closest("input, textarea, select, [contenteditable]");
 }

@@ -73,6 +73,8 @@ def records(layers_json: str | None) -> list[dict[str, Any]]:
     return [
         {
             **layer,
+            # Stacks saved before masks could be switched off have them on.
+            "mask_enabled": layer.get("mask_enabled", True),
             "image_url": storage.image_url(layer["image_path"]),
             "mask_url": storage.image_url(layer["mask_path"]) if layer.get("mask_path") else None,
         }

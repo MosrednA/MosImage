@@ -100,7 +100,7 @@ export function useLayers(
       const fitted = initialPlacement(asset, { width: start.canvas_width, height: start.canvas_height });
       const layer: LayerRecord = {
         id: newLayerId(), name: layerName(filename, currentLayers().length + 1), image_path: asset.path, image_url: asset.url,
-        mask_path: null, mask_url: null, width: asset.width, height: asset.height, opacity: 1, visible: true,
+        mask_path: null, mask_url: null, mask_enabled: true, width: asset.width, height: asset.height, opacity: 1, visible: true,
         ...fitted, ...(placement ? { ...placement, scale_x: 1, scale_y: 1 } : {}),
       };
       commit([...currentLayers(), layer], "Add layer");
@@ -118,7 +118,7 @@ export function useLayers(
    * Adds a full generation or selected AI patch at its place and scale.
    * With `replaces`, it goes just above that layer, which is hidden.
    */
-  async function addResult(image: Blob, mask: Blob | null, name: string, placement: { x: number; y: number; scale_x?: number; scale_y?: number; rotation?: number; opacity?: number }, replaces: string | null, label?: string): Promise<LayerRecord | null> {
+  async function addResult(image: Blob, mask: Blob | null, name: string, placement: { x: number; y: number; scale_x?: number; scale_y?: number; rotation?: number; opacity?: number; mask_enabled?: boolean }, replaces: string | null, label?: string): Promise<LayerRecord | null> {
     const start = documentRef.current;
     if (!start) return null;
     if (currentLayers().length >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one to apply this result.`);
@@ -131,7 +131,7 @@ export function useLayers(
       if (documentRef.current?.id !== start.id) return null;
       const layer: LayerRecord = {
         id: newLayerId(), name: name.slice(0, 80), image_path: asset.path, image_url: asset.url,
-        mask_path: maskAsset?.path ?? null, mask_url: maskAsset?.url ?? null, width: asset.width, height: asset.height,
+        mask_path: maskAsset?.path ?? null, mask_url: maskAsset?.url ?? null, mask_enabled: placement.mask_enabled ?? true, width: asset.width, height: asset.height,
         x: placement.x, y: placement.y, scale_x: placement.scale_x ?? 1, scale_y: placement.scale_y ?? 1, rotation: placement.rotation ?? 0, opacity: placement.opacity ?? 1, visible: true,
       };
       commit(insertResult(currentLayers(), layer, replaces), label ?? (replaces ? "Blend layer in" : "Add AI result"));
@@ -145,16 +145,16 @@ export function useLayers(
     }
   }
 
-  /** Stores a new mask (coverage in alpha) for a layer. */
+  /** Stores a new mask (coverage in alpha) for a layer and switches it on. */
   async function setMask(id: string, mask: HTMLCanvasElement | Blob | null, label: string) {
     const start = documentRef.current;
     if (!start) return;
     try {
-      if (!mask) { update(id, { mask_path: null, mask_url: null }, label); return; }
+      if (!mask) { update(id, { mask_path: null, mask_url: null, mask_enabled: true }, label); return; }
       const blob = mask instanceof Blob ? mask : await canvasBlob(mask);
       const asset = await uploadLayerAsset(start.id, blob, "mask", "mask.png");
       if (documentRef.current?.id !== start.id) return;
-      update(id, { mask_path: asset.path, mask_url: asset.url }, label);
+      update(id, { mask_path: asset.path, mask_url: asset.url, mask_enabled: true }, label);
     } catch (err) {
       onError(message(err));
     }

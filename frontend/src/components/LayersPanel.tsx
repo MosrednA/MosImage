@@ -22,8 +22,17 @@ interface Props {
   onInvertMask: (id: string) => void;
   onBlend: (id: string) => void;
   onRemoveBackground: (id: string) => void;
+  /** The selected layer's mask is what the tools paint. */
   masking: boolean;
+  /** The selected layer shows as its mask alone. */
+  maskView: boolean;
   onMask: (id: string) => void;
+  onEditMask: (id: string) => void;
+  onViewMask: (id: string) => void;
+  onSwitchMask: (id: string) => void;
+  onDeleteMask: (id: string) => void;
+  /** From the picture's selection when there is one; `hideAll` starts with the whole layer hidden. */
+  onAddMask: (id: string, hideAll: boolean) => void;
 }
 
 const LAYER_DRAG_TYPE = "application/x-mosimage-layer";
@@ -81,10 +90,14 @@ export function LayersPanel(props: Props) {
         onDragOver={event => { if (event.dataTransfer.types.includes(LAYER_DRAG_TYPE)) { event.preventDefault(); event.stopPropagation(); setDragTarget(index); } }}
         onDrop={event => drop(event, index)}
         onDragEnd={() => setDragTarget(null)}>
-        <span className="layer-thumb"><img crossOrigin="anonymous" src={fileUrl(layer.image_url)} alt="" draggable={false} /></span>
+        <span className={"layer-thumb" + (layer.id === activeId && !props.masking ? " targeted" : "")} title="Layer pixels">
+          <img crossOrigin="anonymous" src={fileUrl(layer.image_url)} alt="" draggable={false} />
+        </span>
+        {layer.mask_url && <MaskThumb layer={layer} targeted={layer.id === activeId && props.masking} disabled={disabled}
+          onEdit={() => props.onEditMask(layer.id)} onView={() => props.onViewMask(layer.id)} onSwitch={() => props.onSwitchMask(layer.id)} />}
         {renaming === layer.id
           ? <RenameField name={layer.name} onDone={name => { setRenaming(null); if (name && name !== layer.name) props.onUpdate(layer.id, { name }, "Rename layer"); }} />
-          : <span className="layer-name" title={`${layer.name} · Double-click to rename`} onDoubleClick={() => !disabled && setRenaming(layer.id)}>{layer.name}{layer.mask_url && <small> · cut</small>}</span>}
+          : <span className="layer-name" title={`${layer.name} · Double-click to rename`} onDoubleClick={() => !disabled && setRenaming(layer.id)}>{layer.name}</span>}
         <button className="icon-button" disabled={disabled} aria-pressed={!layer.visible} title={layer.visible ? "Hide layer" : "Show layer"} aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
           onClick={event => { event.stopPropagation(); props.onUpdate(layer.id, { visible: !layer.visible }, layer.visible ? "Hide layer" : "Show layer"); }}>
           <Icon name={layer.visible ? "eye" : "eyeOff"} />
@@ -101,7 +114,23 @@ export function LayersPanel(props: Props) {
   </div>;
 }
 
-function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDuplicate, onReset, onInvertMask, onBlend, onRemoveBackground, masking, onMask }: Props & { layer: LayerRecord }) {
+/**
+ * A layer's mask beside its thumbnail, as in Photoshop: click to paint it,
+ * Shift-click to switch it off, Alt-click to see it alone.
+ */
+function MaskThumb({ layer, targeted, disabled, onEdit, onView, onSwitch }: { layer: LayerRecord; targeted: boolean; disabled: boolean; onEdit: () => void; onView: () => void; onSwitch: () => void }) {
+  return <button type="button" className={"layer-thumb mask-thumb" + (targeted ? " targeted" : "") + (layer.mask_enabled ? "" : " off")} disabled={disabled}
+    aria-pressed={targeted} aria-label={`Mask of ${layer.name}${layer.mask_enabled ? "" : ", switched off"}`}
+    title={`Layer mask: white shows, black hides\nClick to paint it · Shift-click switches it ${layer.mask_enabled ? "off" : "on"} · Alt-click shows it alone`}
+    onClick={event => {
+      event.stopPropagation();
+      if (event.shiftKey) onSwitch(); else if (event.altKey) onView(); else onEdit();
+    }}>
+    <img crossOrigin="anonymous" src={fileUrl(layer.mask_url!)} alt="" draggable={false} />
+  </button>;
+}
+
+function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDuplicate, onReset, onBlend, onRemoveBackground, masking, ...props }: Props & { layer: LayerRecord }) {
   const [opacity, setOpacity] = useState(Math.round(layer.opacity * 100));
   useEffect(() => setOpacity(Math.round(layer.opacity * 100)), [layer.opacity]);
   const commitOpacity = () => { if (opacity / 100 !== layer.opacity) onUpdate(layer.id, { opacity: opacity / 100 }, "Change opacity"); };
@@ -118,18 +147,28 @@ function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDup
       <button className="icon-button" disabled={disabled} title="Flip vertically" aria-label="Flip vertically" onClick={() => onUpdate(layer.id, { scale_y: -layer.scale_y }, "Flip layer")}><Icon name="flipV" /></button>
       <button className="icon-button" disabled={disabled} title="Rotate 90°" aria-label="Rotate 90 degrees" onClick={() => onUpdate(layer.id, { rotation: turnedQuarter(layer.rotation) }, "Rotate layer")}><Icon name="rotate" /></button>
       <button className="icon-button" disabled={disabled} title="Reset position, size and rotation" aria-label="Reset transform" onClick={() => onReset(layer.id)}><Icon name="reset" /></button>
-      <button className="icon-button" disabled={disabled} title="Swap what is hidden and shown" aria-label="Invert layer mask" onClick={() => onInvertMask(layer.id)}><Icon name="invert" /></button>
       <button className="icon-button" disabled={disabled} title="Duplicate layer" aria-label="Duplicate layer" onClick={() => onDuplicate(layer.id)}><Icon name="duplicate" /></button>
       <button className="icon-button" disabled={disabled} title="Delete layer · Delete" aria-label="Delete layer" onClick={() => onRemove(layer.id)}><Icon name="trash" /></button>
     </div>
-    <button className="layer-mask" aria-pressed={masking} disabled={disabled}
-      title={masking ? "Stop masking · Esc" : "Hide or restore parts of this layer with Object, Brush, Eraser, Lasso and Box"}
-      onClick={() => onMask(layer.id)}><Icon name="eraser" />{masking ? "Done masking" : "Mask layer"}</button>
+    {layer.mask_url
+      ? <div className="layer-mask-row" role="group" aria-label="Layer mask">
+        <button className="layer-mask" aria-pressed={masking} disabled={disabled}
+          title={masking ? "Back to the layer's pixels · Esc" : "Paint the mask: Brush shows, Eraser hides. Object, Lasso and Box work too"}
+          onClick={() => props.onMask(layer.id)}><Icon name="brush" />{masking ? "Done" : "Paint mask"}</button>
+        <button className="icon-button" disabled={disabled} aria-pressed={!layer.mask_enabled} aria-label={layer.mask_enabled ? "Switch the mask off" : "Switch the mask on"}
+          title={(layer.mask_enabled ? "Switch the mask off" : "Switch the mask on") + " · Shift-click its thumbnail"} onClick={() => props.onSwitchMask(layer.id)}><Icon name={layer.mask_enabled ? "eye" : "eyeOff"} /></button>
+        <button className="icon-button" disabled={disabled} aria-pressed={props.maskView} aria-label="Show the mask alone"
+          title="Show the mask alone, in grey · Alt-click its thumbnail" onClick={() => props.onViewMask(layer.id)}><Icon name="image" /></button>
+        <button className="icon-button" disabled={disabled} aria-label="Invert layer mask" title="Swap what is hidden and shown" onClick={() => props.onInvertMask(layer.id)}><Icon name="invert" /></button>
+        <button className="icon-button" disabled={disabled} aria-label="Delete layer mask" title="Delete the mask and show the whole layer" onClick={() => props.onDeleteMask(layer.id)}><Icon name="trash" /></button>
+      </div>
+      : <button className="layer-mask" disabled={disabled}
+        title={props.canCopySelection ? "Show only the part of this layer inside your selection · Alt: start with everything hidden instead" : "Add a mask that shows the whole layer, then paint parts away · Alt: start with everything hidden"}
+        onClick={event => props.onAddMask(layer.id, event.altKey)}><Icon name="plus" />{props.canCopySelection ? "Mask from selection" : "Add mask"}</button>}
     <button className="layer-cutout" disabled={disabled} title="Keep the main subject with soft edges for hair and fur; the background is hidden by the layer mask"
       onClick={() => onRemoveBackground(layer.id)}><Icon name="scissors" />Remove background</button>
     <button className="layer-blend" disabled={disabled || !layer.visible} title={layer.visible ? "Let the AI match its light, colours, shadows and edges to the picture" : "Show the layer to blend it in"}
       onClick={() => onBlend(layer.id)}><Icon name="spark" />Blend in</button>
-    {layer.mask_url && <button className="layer-unmask" disabled={disabled} onClick={() => onUpdate(layer.id, { mask_path: null, mask_url: null }, "Show whole layer")}>Show the whole layer again</button>}
   </section>;
 }
 
