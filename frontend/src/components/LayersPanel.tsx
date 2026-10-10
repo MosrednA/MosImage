@@ -93,6 +93,10 @@ export function LayersPanel(props: Props) {
         onDragOver={event => { if (event.dataTransfer.types.includes(LAYER_DRAG_TYPE)) { event.preventDefault(); event.stopPropagation(); setDragTarget(index); } }}
         onDrop={event => drop(event, index)}
         onDragEnd={() => setDragTarget(null)}>
+        <button className="icon-button" disabled={disabled} aria-pressed={!layer.visible} title={layer.visible ? "Hide layer" : "Show layer"} aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
+          onClick={event => { event.stopPropagation(); props.onUpdate(layer.id, { visible: !layer.visible }, layer.visible ? "Hide layer" : "Show layer"); }}>
+          <Icon name={layer.visible ? "eye" : "eyeOff"} />
+        </button>
         <span className={"layer-thumb" + (layer.id === activeId && !props.masking ? " targeted" : "")} title={variantIndex(layer) >= 0 ? `Variant ${variantIndex(layer) + 1} of ${layer.variant_paths.length} · , and . switch` : "Layer pixels"}>
           <img crossOrigin="anonymous" src={fileUrl(layer.image_url)} alt="" draggable={false} />
           {variantIndex(layer) >= 0 && <span className="variant-badge" aria-hidden="true">{variantIndex(layer) + 1}/{layer.variant_paths.length}</span>}
@@ -102,10 +106,6 @@ export function LayersPanel(props: Props) {
         {renaming === layer.id
           ? <RenameField name={layer.name} onDone={name => { setRenaming(null); if (name && name !== layer.name) props.onUpdate(layer.id, { name }, "Rename layer"); }} />
           : <span className="layer-name" title={`${layer.name} · Double-click to rename`} onDoubleClick={() => !disabled && setRenaming(layer.id)}>{layer.name}</span>}
-        <button className="icon-button" disabled={disabled} aria-pressed={!layer.visible} title={layer.visible ? "Hide layer" : "Show layer"} aria-label={layer.visible ? `Hide ${layer.name}` : `Show ${layer.name}`}
-          onClick={event => { event.stopPropagation(); props.onUpdate(layer.id, { visible: !layer.visible }, layer.visible ? "Hide layer" : "Show layer"); }}>
-          <Icon name={layer.visible ? "eye" : "eyeOff"} />
-        </button>
       </div>)}
       <div role="option" aria-selected={activeId === null} tabIndex={0} className={"layer-row background" + (activeId === null ? " active" : "")}
         onClick={() => props.onSelect(null)} onKeyDown={event => { if (event.key === "Enter") props.onSelect(null); }}>
