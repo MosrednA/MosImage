@@ -1,8 +1,42 @@
+<div align="center">
+
+<img src="frontend/src-tauri/icons/128x128@2x.png" width="96" alt="MosImage logo">
+
 # MosImage
 
-A local AI image editor. Generate pictures, edit them with plain-language instructions, select objects with a click, and keep every result as a layer you can move, mask or undo. Everything runs on your own GPU: no cloud and no account.
+**A local AI image editor. Your GPU, your pictures, no cloud.**
 
-Built for one NVIDIA RTX 5070 Ti (16 GB), with FLUX.2 Klein 9B in NVFP4 as the default model.
+Generate pictures, edit them with plain-language instructions, select objects with a click,<br>
+and keep every result as a layer you can move, mask or undo.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-3b82f6)](LICENSE)
+![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)
+![NVIDIA RTX](https://img.shields.io/badge/NVIDIA-RTX%2050%20series-76B900?logo=nvidia&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-3776AB?logo=python&logoColor=white)
+![React](https://img.shields.io/badge/React-Vite-61DAFB?logo=react&logoColor=black)
+![FLUX.2 Klein](https://img.shields.io/badge/model-FLUX.2%20Klein-111827)
+
+<img src="docs/images/editor.jpg" alt="The MosImage editor with the cat selected by a single click" width="100%">
+
+<sub>One click on the cat selects it with SAM 2.1. Type what should appear instead and press Generate.</sub>
+
+</div>
+
+## See it work
+
+Three steps on one picture, each about 3–10 seconds on an RTX 5070 Ti, straight from the app:
+
+| 1 · Generate | 2 · Replace a selection | 3 · Edit with an instruction |
+|:---:|:---:|:---:|
+| <img src="docs/images/generate.jpg" alt="Generated greenhouse reading nook with a sleeping cat" width="260"> | <img src="docs/images/replace.jpg" alt="The cat replaced by a sleeping puppy" width="260"> | <img src="docs/images/edit.jpg" alt="The same scene turned into a snowy winter night" width="260"> |
+| *"A cosy reading nook in a glass greenhouse at golden hour, an orange cat asleep on a velvet armchair"* | Click the cat, then *"A fluffy golden retriever puppy curled up asleep"*. Everything outside the selection stays pixel-exact. | *"Make it a snowy winter night … a warm glowing floor lamp beside the armchair"* |
+
+## Why MosImage
+
+- 🔒 **Private by design.** Images, prompts and history stay on your disk. No account and no uploads; the only network traffic is the one-time model download from Hugging Face.
+- ⚡ **Fast.** FLUX.2 Klein in NVFP4 runs a 1024 × 1024 image in about 3 seconds on a 16 GB card.
+- 🎯 **Precise.** Edits stay inside your selection, and every result lands as a layer you can mask, move or undo.
+- 🧩 **A real editor.** Layers, revision history, proposals to compare, and brush, lasso, box and click selection.
 
 ## Features
 
@@ -128,3 +162,11 @@ Contributor conventions live in [AGENTS.md](AGENTS.md). For how the pieces fit t
 | [Roadmap](docs/roadmap.md) | Implementation status and next steps |
 | [Benchmarks](benchmarks/README.md) | Fixtures, protocol and results |
 | [All docs](docs/README.md) | Index, including the dated research notes |
+
+## License
+
+The MosImage source code is released under the [MIT License](LICENSE).
+
+Model weights are not part of this repository. They download from Hugging Face under their own licences: FLUX.2 Klein 9B is non-commercial, while FLUX.2 Klein 4B, SAM 2.1, Grounding DINO and ViTMatte permit commercial use. Check each model card before you use results commercially.
+
+The screenshots and example images in [docs/images](docs/images) were generated with MosImage itself.
