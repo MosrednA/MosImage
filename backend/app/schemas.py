@@ -55,24 +55,54 @@ class TextToImageRequest(PromptRequest):
 class EditRequest(PromptRequest):
     """Edits the whole picture by instruction; the result keeps its size.
 
-    Sketch mode turns rough coloured strokes into what the prompt names, and
-    face mode restores one face crop for Fix faces.
+    Sketch mode turns rough coloured strokes into what the prompt names, face
+    mode restores one face crop for Fix faces, and enhance mode adds fine
+    detail to a picture or one tile of it.
     """
 
-    mode: Literal["edit", "sketch", "face"] = "edit"
+    mode: Literal["edit", "sketch", "face", "enhance"] = "edit"
     consistency_lora: bool = False
+    # Scale of the detail-enhancer LoRA; zero leaves it off.
+    detail: float = Field(default=0, ge=0, le=1, allow_inf_nan=False)
+    # Below one the picture is partly redrawn: noise is added to it and only
+    # the later steps run, which keeps its expression, pose and lighting.
+    strength: float = Field(default=1.0, gt=0, le=1, allow_inf_nan=False)
 
     @model_validator(mode="after")
-    def compatible_consistency(self) -> "EditRequest":
+    def compatible_options(self) -> "EditRequest":
         if self.consistency_lora and (self.model_name != "flux2-klein-9b-nvfp4" or self.mode != "edit"):
             raise ValueError("Consistency is available for Quality image edits only.")
+        if self.detail and (self.model_name != "flux2-klein-9b-nvfp4" or self.mode not in ("face", "enhance")):
+            raise ValueError("The detail enhancer is available for Quality Enhance and Fix faces only.")
+        if self.strength < 1 and self.mode not in ("face", "enhance"):
+            raise ValueError("Partial redraws are available for Enhance and Fix faces only.")
         return self
 
 
 class FaceFixRequest(PromptRequest):
-    """Redraws every face (or those in the selection) sharper; the prompt is optional."""
+    """Redraws every face (or those in the selection) sharper; the prompt is optional.
+
+    Faithful redraws only the later steps from the face itself, so expression
+    and lighting stay; otherwise the face is drawn anew from its crop.
+    """
 
     prompt: str = Field(default="", max_length=500)
+    faithful: bool = True
+
+
+class EnhanceRequest(PromptRequest):
+    """Adds fine detail to the picture or the selection with the detail-enhancer LoRA."""
+
+    prompt: str = Field(default="", max_length=500)
+    # The LoRA scale: 0.4 adds believable texture, 0.7 and up starts to reinvent.
+    detail: float = Field(default=0.4, ge=0.1, le=1, allow_inf_nan=False)
+    reference_ids: list[int] = Field(default_factory=list, max_length=0)
+
+    @model_validator(mode="after")
+    def quality_model(self) -> "EnhanceRequest":
+        if self.model_name != "flux2-klein-9b-nvfp4":
+            raise ValueError("Enhance requires the Quality model.")
+        return self
 
 
 class InpaintForm(BaseModel):
@@ -198,7 +228,7 @@ class GenerationRecord(BaseModel):
     width: int | None = None
     height: int | None = None
     strength: float | None = None
-    edit_operation: Literal["replace", "remove", "sketch", "faces"] | None = None
+    edit_operation: Literal["replace", "remove", "sketch", "faces", "enhance"] | None = None
     blend_feather: float | None = None
     context_padding: int | None = None
     scene_context: str | None = None

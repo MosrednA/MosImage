@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alphaBounds, autoSoften, cropSelection, distanceField, edgeAlpha, refineAlpha, signedDistanceField } from "./maskRefine";
+import { alphaBounds, autoExpand, autoSoften, cropSelection, distanceField, edgeAlpha, refineAlpha, signedDistanceField } from "./maskRefine";
 import { signedDistanceFieldAsync } from "./fieldWorker";
 
 /** A width × height RGBA mask with a selected axis-aligned square. */
@@ -55,10 +55,15 @@ describe("non-destructive mask edges", () => {
     expect(edgeAlpha(-5, 10)).toBe(128);
   });
 
-  it("scales the automatic soften with the image", () => {
-    expect(autoSoften(1024, 768)).toBe(26);
-    expect(autoSoften(200, 200)).toBe(8);
-    expect(autoSoften(8000, 4000)).toBe(64);
+  it("scales the automatic edges with the image", () => {
+    expect(autoSoften(1024, 768)).toBe(7);
+    expect(autoSoften(200, 200)).toBe(6);
+    expect(autoSoften(4000, 3000)).toBe(27);
+    expect(autoSoften(8000, 4000)).toBe(32);
+    expect(autoExpand(1024, 768)).toBe(5);
+    expect(autoExpand(200, 200)).toBe(4);
+    expect(autoExpand(4000, 3000)).toBe(20);
+    expect(autoExpand(8000, 4000)).toBe(24);
   });
 });
 

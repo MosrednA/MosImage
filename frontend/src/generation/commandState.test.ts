@@ -21,6 +21,10 @@ describe("canSubmit", () => {
     expect(canSubmit(state({ operation: "sketch", hasSketch: false }))).toBe(false);
     expect(canSubmit(state({ operation: "faces", prompt: "", hasMask: false }))).toBe(true);
     expect(canSubmit(state({ operation: "faces", hasImage: false }))).toBe(false);
+    expect(canSubmit(state({ operation: "enhance", prompt: "", hasMask: false }))).toBe(true);
+    expect(canSubmit(state({ operation: "enhance", hasImage: false }))).toBe(false);
+    expect(commandHint(state({ operation: "faces", faceMode: "redraw" }))).toContain("drawn anew");
+    expect(commandHint(state({ operation: "enhance", hasMask: false }))).toContain("the whole picture");
   });
   it("edits the visible picture, or a picked layer", () => {
     expect(canSubmit(state({ operation: "edit", hasMask: false }))).toBe(true);

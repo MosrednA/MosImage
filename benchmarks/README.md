@@ -1,5 +1,9 @@
 # Inpainting benchmark fixtures
 
+The [10 October SAM 3 refinement follow-up](SAM3_REFINEMENT_2026-10-10.md) completes six real-photo calibration cases, twelve evaluation cases with official person masks, correction clicks/boxes, negative controls and the original seven-image prompt diagnostics. Refined point masks reach similar annotation agreement; SAM 3 improves GPU speed and rejects the absent astronaut concept. All 593 masks were verified and 276 evaluation repetitions were identical. Annotation limits and broader object/Klein acceptance remain explicit; app providers are unchanged.
+
+The [10 October SAM 3 selection comparison](SAM3_SELECTION_2026-10-10.md) completes seven frozen point/text cases on CPU FP32 and GPU BF16 against the existing SAM 2.1 Tiny/Grounding DINO routes. GPU SAM 3 takes about 0.15 s for new-image points and 0.20 s for text, but default masks show no general quality improvement. CPU SAM 3 is much slower on new images; integration and loaded-Klein validation remain open.
+
 The [10 October official Qwen Turbo quantization evaluation](QWEN_TURBO_QUANTS_2026-10-10.md) compares native NVFP4 and Unsloth Q4_K_M against Klein 9B, with frozen prompts/seeds, alpha/protected-pixel checks and a separate prompt-to-file lifecycle. It retains memory and loader failures. The user prefers FLUX overall; Qwen is not selected for integration.
 
 The [10 October SeedVR2 3B test](SEEDVR2_3B_2026-10-10.md) adds 27 retained generative-restoration outputs on the same six sources, including two seeds/repeats and colour-correction ablations on three faces. Warm native 2x processing takes about 9 seconds on the one-megapixel man and 3.5–3.7 seconds on 512² portraits. It adds skin/beard texture but redraws faces, cloth and text. Standalone memory fits the 16GB card; Klein coexistence and user visual acceptance remain open.

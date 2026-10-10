@@ -13,6 +13,8 @@
 
 ## Implementation status
 
+**SAM 3 selection and refinement evaluation completed, 10 October 2026:** [seven frozen default point/text cases](../benchmarks/SAM3_SELECTION_2026-10-10.md) compare the existing SAM 2.1 Tiny/Grounding DINO CPU routes against official SAM 3 on CPU FP32 and GPU BF16. The [real-photo follow-up](../benchmarks/SAM3_REFINEMENT_2026-10-10.md) adds six calibration and twelve separate pedestrian evaluation cases, equal correction clicks/boxes, mask feedback and absent-concept controls. Feedback mean annotation IoU is 0.929 for SAM 3 versus 0.925 for current selection; incomplete/ambiguous annotations limit ranking. SAM 3 rejects absent `astronaut` on all twelve street photos, where current default text selection returns ordinary people. Warmed GPU new-image selection takes about 0.12 s for points and 0.16 s for text in the follow-up, after a 16–18 s first load/inference; CUDA tensor peaks are 1.20/2.12 GiB per separately loaded route. Targeted prompts or positive boxes recover original poster/brooch misses. All 593 follow-up masks were verified and 276 repetitions were identical. Retain the CPU default pending broader annotation-complete object, soft-cutout and loaded-Klein acceptance; no provider switch is integrated.
+
 **Second-model evaluation completed, 10 October 2026:** [official Qwen 2.1 Turbo NVFP4/GGUF](../benchmarks/QWEN_TURBO_QUANTS_2026-10-10.md) has isolated GPU and complete prompt-to-file evidence on the 16 GB Blackwell card. Native NVFP4 with 512 conditioning fits, but full-resolution reference caching can exhaust VRAM, the streamed two-reference case has RAM pressure, and local edits show blending/reference-scale limitations. **The user prefers FLUX overall; Qwen is not selected for provider/UI integration.** Klein 9B remains the Quality model; all benchmark evidence is retained.
 
 **Upscaling experiment, 10 October 2026:** x2plus and compact x4v3 run natively with optional isolated dependencies. Warm processing takes about 0.18–0.34 seconds on 1024² inputs at the tested 32-pixel tile halo; larger PNG saves dominate export time. Both coexist with Quality 9B without reload and preserve deterministic Klein outputs. **The user rejected all three displayed face variants as too smooth, including x2plus; the photo-export recommendation is withdrawn.** Preserve pores, small wrinkles and individual beard hairs before accepting another recipe. AI Export and post-render crop integration remain proposed, pending visual acceptance. See the [upscaling evidence](../benchmarks/UPSCALING_2026-10-10.md), including cold starts, tile overlap and remaining acceptance work.
@@ -38,7 +40,7 @@ Latest editing-mask evidence: [9 October paired implementation comparison](../be
 |---|---|---|
 | 2 — Real canvas | Complete | Native-resolution masks; open, paste, drag/drop, save/export; move/pan, zoom, fit, actual size; brush, erase, rectangle, lasso, grow, shrink, feather, invert, clear; mask undo/redo. |
 | 3 — Documents and revisions | Complete | Persistent v2 documents, revisions, alternatives, metadata autosave, document undo/redo, close/reopen, and non-destructive v1-generation import. |
-| 4 — Object selection | Partial | SAM 2.1 Tiny point selection and positive/negative refinement, cached CPU image embeddings, and manual mask correction. SAM 3 text/box/hover selection remains future work. |
+| 4 — Object selection | Partial | SAM 2.1 Tiny point selection and positive/negative refinement, cached CPU image embeddings, and manual mask correction. SAM 3 CPU/GPU, real-photo refinement, threshold and negative-control evaluation are complete; integration awaits broader object, soft-cutout and loaded-Klein validation. |
 | 5 — Inpainting | Core implemented; quality validation open | Native mask-conditioned Klein default, visible padded context rectangles, soft latent masks, inward edge blending, scene notes, sequential alternatives, in-place preview, explicit accept, and protected-pixel regression coverage. An eight-seed check found missing subjects and weak integrations. A fixed four-scene suite and 24-output BF16/NVFP4 comparison now exist: NVFP4 reduced median edit time by 36%, with similar visual limitations. NVFP4 app integration is complete, including generation, masked edits and the BF16 comparison option. Broad editing-quality validation remains open; see the [experiment](../benchmarks/NVFP4_RESULTS_2026-10-07.md). |
 | 6 — Generation and presets | Complete | FLUX.2 Klein 9B NVFP4 Quality, 4B NVFP4 Fast and selectable 4B BF16, product-first controls, Advanced technical settings, aspect presets, and one-to-four sequential alternatives. Krea 2 Turbo was evaluated but remains disabled pending a measured 16 GB quantized path and the license-required safety controls. |
 | 7 — Outpainting | Complete for standard edge expansion | Draggable edges, format presets, exact margins, native masked Klein expansion with seam matching, protected RGBA compositing, sequential proposals and revision dimension undo/redo. Arbitrary interior transparent regions and a broad quality benchmark remain follow-up work. |
@@ -173,7 +175,7 @@ These parts should be retained and extended unless a milestone explicitly replac
 
 ### Segmentation
 
-**Current:** Meta SAM 2.1 Tiny for point selection on CPU. **Future target:** Meta SAM 3 for concept, box and text selection.
+**Current:** Meta SAM 2.1 Tiny for point selection on CPU. **Evaluated candidate:** Meta SAM 3 for concept, box and text selection. The [default comparison](../benchmarks/SAM3_SELECTION_2026-10-10.md) shows GPU speed gains with mixed quality. The [refinement follow-up](../benchmarks/SAM3_REFINEMENT_2026-10-10.md) finds similar refined person-mask agreement and better rejection of an absent astronaut concept; annotation limits and broader object/runtime acceptance prevent a default provider decision.
 
 - Support point, box, mask, example, and text prompts.
 - Cache image embeddings by document revision and image content hash.
@@ -440,7 +442,7 @@ Do not introduce concurrent heavy GPU jobs on the 16 GB target profile.
 
 ### Phase 4 — Add SAM 3 segmentation
 
-- Add the SAM 3 provider and model lifecycle.
+- Extend the completed person/refinement benchmark to broader annotation-complete objects, meaningful negative concepts and soft cutouts; prove loaded-Klein memory/scheduling before adding a SAM 3 provider and model lifecycle. Retain the current CPU selector meanwhile.
 - Implement point, box, and text segmentation routes.
 - Cache embeddings by revision content hash.
 - Add hover preview, click selection, add, subtract, and text concept selection.

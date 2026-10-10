@@ -9,18 +9,23 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
 from . import storage
+from .compositing import FAST_PNG
 from .config import settings
 from .detection import Box, Detection, detector, strongest
 from .jobs import JobControl
 from .models.registry import registry
 from .schemas import EditRequest, FaceFixRequest
-from .services import _alternative_seed, _model_references, _new_image_path, _save_bytes
+from .services import _alternative_seed, _model_references, _new_image_path, _save_bytes, release_after_failure
 
 FACE_QUERY = "human face."
 MIN_FACE_SIDE = 16
 MAX_FACES = 8
 # The crop shows hair, chin and some background, so the face sits in context.
 CROP_FACTOR = 2.2
+# Faithful redraws only the later steps: twice the steps at this strength is
+# five model passes from noise level 0.93, which keeps expression and light.
+FAITHFUL_STRENGTH = 0.625
+FAITHFUL_DETAIL = 0.4
 
 
 def face_crop_box(face: Box, width: int, height: int) -> tuple[int, int, int, int]:
@@ -70,6 +75,9 @@ def faces_to_fix(detections: list[Detection], selection: np.ndarray | None) -> l
 def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | None, mask_bytes: bytes | None, control: JobControl) -> list[int]:
     """Redraws each face sharper at Klein's resolution and pastes it back at the picture's own."""
     provider = registry.activate(request.model_name)
+    # The detail LoRA exists for the Quality model only; Fast redraws faithfully without it.
+    faithful = {"steps": min(request.steps * 2, 100), "strength": FAITHFUL_STRENGTH,
+                "detail": FAITHFUL_DETAIL if request.model_name == "flux2-klein-9b-nvfp4" else 0} if request.faithful else {}
     input_path = _save_bytes(image_bytes, settings.input_dir, "input", image_name)
     mask_path: Path | None = None
     output_paths: list[Path] = []
@@ -108,8 +116,9 @@ def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | 
                     original.save(crop_in)
                     # The face prompt is built in; the user's words only add to it, so they may be empty.
                     face_request = EditRequest(prompt="restore the face", model_name=request.model_name, runtime_mode=request.runtime_mode,
-                                               steps=request.steps, guidance=request.guidance, seed=None if seed is None else (seed + number) % (2**32),
-                                               reference_ids=request.reference_ids, mode="face").model_copy(update={"prompt": request.prompt})
+                                               guidance=request.guidance, seed=None if seed is None else (seed + number) % (2**32),
+                                               reference_ids=request.reference_ids, mode="face", **({"steps": request.steps} | faithful),
+                                               ).model_copy(update={"prompt": request.prompt})
                     face_seed, _ = provider.edit(face_request, crop_in, crop_out, step, **extra)
                     used_seed = used_seed or face_seed
                     with Image.open(crop_out) as restored:
@@ -117,7 +126,7 @@ def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | 
                     result.paste(fixed, crop, face_blend_mask(face.box, crop))
                 output_path = _new_image_path(settings.output_dir, "output")
                 output_paths.append(output_path)
-                result.save(output_path)
+                result.save(output_path, **FAST_PNG)
                 control.raise_if_cancelled()
                 values.append({
                     "task": "edit",
@@ -126,11 +135,11 @@ def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | 
                     "model_name": request.model_name,
                     "runtime_mode": request.runtime_mode,
                     "seed": used_seed,
-                    "steps": request.steps,
+                    "steps": faithful.get("steps", request.steps),
                     "guidance": request.guidance,
                     "width": picture.width,
                     "height": picture.height,
-                    "strength": None,
+                    "strength": faithful.get("strength"),
                     "edit_operation": "faces",
                     "input_image_path": storage.to_relative(input_path),
                     "mask_image_path": storage.to_relative(mask_path),
@@ -139,8 +148,8 @@ def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | 
                 })
         control.raise_if_cancelled()
         return storage.create_generations(values)
-    except BaseException:
-        provider.unload()
+    except BaseException as error:
+        release_after_failure(provider, error)
         for path in (input_path, mask_path, *output_paths):
             if path is not None:
                 path.unlink(missing_ok=True)

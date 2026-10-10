@@ -13,7 +13,8 @@ interface Options {
   onDisconnected: () => void;
 }
 
-const POLL_INTERVAL = 800;
+// A local status read is cheap; a short interval shows a result up to half a second sooner.
+const POLL_INTERVAL = 250;
 const CANCEL_RECONNECT_WINDOW = 30_000;
 
 export function isActiveJob(job: JobStatus | null): boolean {
@@ -63,7 +64,7 @@ export function useJobPolling({ job, setJob, cancellation, onCompleted, onError,
       }
     }
 
-    timer = window.setTimeout(poll, 400);
+    timer = window.setTimeout(poll, POLL_INTERVAL);
     return () => { disposed = true; window.clearTimeout(timer); };
   }, [job?.id]);
 }

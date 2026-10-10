@@ -8,6 +8,10 @@
 
 ## Benchmarks
 
+- [SAM 3 prompt refinement and real-photo evaluation, 10 October 2026](../benchmarks/SAM3_REFINEMENT_2026-10-10.md): completed threshold calibration, equal-input correction clicks/boxes, official pedestrian masks and exploratory fixture recovery; 593 verified masks, 276 identical evaluation repetitions, similar refined point quality, GPU speed and absent-concept rejection gains, with annotation limits.
+
+- [SAM 3 selection comparison, 10 October 2026](../benchmarks/SAM3_SELECTION_2026-10-10.md): seven frozen point/text cases, CPU/GPU timing and memory, repeatability and all paired masks; GPU speed improves, while quality remains mixed and the current CPU default is unchanged.
+
 - [Official Qwen 2.1 Turbo NVFP4 and GGUF, 10 October 2026](../benchmarks/QWEN_TURBO_QUANTS_2026-10-10.md): native Blackwell kernels, controlled eight-step renders, memory/loader failures and prompt-to-file lifecycle; the user prefers FLUX overall and Qwen is not selected for integration.
 
 - [SeedVR2 3B detail, speed and face changes, 10 October 2026](../benchmarks/SEEDVR2_3B_2026-10-10.md): 27 retained outputs, native/reconstruction cases, two seeds, exact repeatability, colour ablation and standalone VRAM; more inferred texture with identity/text/fabric changes, not an accepted default or implemented feature.
@@ -24,6 +28,7 @@
 
 These notes are dated snapshots. They record what was tried, measured and decided at the time. Where they disagree with the guide, the guide describes the current behaviour.
 
+- [Quality, speed and UX sweep, 10 October 2026](notes/2026-10-10-quality-speed-sweep.md): hidden token growth, tolerant ring seam matching, grain matching, area-based model size, automatic edges, unload policy and faster polling, with before/after timings and a ComfyUI community check.
 - [Image quality across generation, inpaint and outpaint, 9 October 2026](notes/2026-10-09-image-quality-research.md): pre-change pipeline findings, CPU overlap/resolution probe, LoRA candidates and proposed evaluation stages, with a link to the implemented first slice.
 - [Focus implementation and validation](notes/2026-10-07-focus-implementation.md): delivery log and regression evidence, updated through 9 October.
 - [Inpainting, context crops and blending](notes/2026-10-07-inpainting.md): the inpainting route, with controlled experiments on:

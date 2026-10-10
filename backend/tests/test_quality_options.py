@@ -21,7 +21,7 @@ from app.main import app
 from app.models.base import ModelReference
 from app.models.flux2_klein_nvfp4 import Flux2Klein9bNvfp4Provider, Flux2KleinNvfp4Provider
 from app.models.klein_lora import AdapterCheckpoint, resolve_checkpoint
-from app.schemas import EditRequest, InpaintForm, OutpaintForm
+from app.schemas import EditRequest, EnhanceRequest, InpaintForm, OutpaintForm
 from app.services import run_inpaint, run_outpaint
 
 
@@ -36,6 +36,15 @@ class QualityOptionTests(unittest.TestCase):
         for schema, options in (
             (EditRequest, {"consistency_lora": True, "model_name": "flux2-klein-4b-nvfp4"}),
             (EditRequest, {"consistency_lora": True, "mode": "sketch"}),
+            (EditRequest, {"detail": .4}),
+            (EditRequest, {"detail": .4, "mode": "enhance", "model_name": "flux2-klein-4b-nvfp4"}),
+            (EditRequest, {"strength": .6}),
+            (EditRequest, {"strength": .6, "mode": "sketch"}),
+            (EditRequest, {"strength": 0, "mode": "face"}),
+            (EnhanceRequest, {"model_name": "flux2-klein-4b-nvfp4"}),
+            (EnhanceRequest, {"reference_ids": [1]}),
+            (EnhanceRequest, {"detail": 0}),
+            (EnhanceRequest, {"detail": 1.5}),
             (InpaintForm, {"consistency_lora": True, "edit_operation": "remove"}),
             (InpaintForm, {"detail_crop": True, "edit_operation": "sketch"}),
             (InpaintForm, {"detail_crop": True, "strength": .6}),
@@ -80,6 +89,34 @@ class QualityOptionTests(unittest.TestCase):
             attach.assert_called_once_with(pipe.transformer, Path("v2"), control.raise_if_cancelled)
             provider.unload()
             self.assertIsNone(provider._consistency_adapter)
+
+    def test_consistency_and_detail_take_turns_on_the_shared_layers(self) -> None:
+        provider = Flux2Klein9bNvfp4Provider()
+        consistency, detail, pipe, control = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+        with patch("app.models.klein_lora.resolve_checkpoint", side_effect=lambda checkpoint, _: Path(checkpoint.filename)) as resolve,                 patch("app.models.klein_lora.KleinLora.attach", side_effect=[detail, consistency]) as attach,                 patch.object(provider, "_collect"):
+            provider._configure_edit_adapters(pipe, False, control, .4)
+            self.assertIs(provider._detail_adapter, detail)
+            provider._configure_edit_adapters(pipe, False, control, .7)
+            provider._configure_edit_adapters(pipe, False, control)
+            self.assertEqual([call.args[0] for call in detail.set_scale.call_args_list], [.4, .7, 0])
+            # Consistency needs the same layers, so the detail LoRA goes first.
+            provider._configure_edit_adapters(pipe, True, control)
+            detail.detach.assert_called_once_with()
+            self.assertIsNone(provider._detail_adapter)
+            self.assertIs(provider._consistency_adapter, consistency)
+            consistency.set_scale.assert_called_with(.6)
+            self.assertEqual([call.args[0].name for call in resolve.call_args_list], ["Detail enhancer", "Consistency V2"])
+            self.assertEqual(attach.call_count, 2)
+            with self.assertRaisesRegex(ValueError, "cannot be combined"):
+                provider._configure_edit_adapters(pipe, True, control, .4)
+            provider.unload()
+            self.assertIsNone(provider._detail_adapter)
+
+    def test_detail_requires_the_quality_model(self) -> None:
+        with patch("app.models.klein_lora.resolve_checkpoint") as resolve:
+            with self.assertRaisesRegex(ValueError, "Quality 9B"):
+                Flux2KleinNvfp4Provider()._configure_edit_adapters(MagicMock(), False, MagicMock(), .4)
+            resolve.assert_not_called()
 
     def test_regular_fast_operations_disable_fal_and_unload_releases_it(self) -> None:
         provider = Flux2KleinNvfp4Provider()
@@ -147,7 +184,7 @@ class QualityOptionTests(unittest.TestCase):
     def test_detail_routes_crop_edit_and_preserves_protected_rgba(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch.object(settings, "data_dir", root), patch.object(settings, "image_dir", root / "images"), patch.object(settings, "db_path", root / "app.db"):
+            with patch.object(settings, "data_dir", root), patch.object(settings, "image_dir", root / "images"), patch.object(settings, "db_path", root / "app.db"), patch.object(settings, "inpaint_minimum_dimension", 0):
                 storage.ensure_storage()
                 source = Image.new("RGBA", (192, 160), (5, 30, 70, 119))
                 mask = Image.new("L", source.size, 0)

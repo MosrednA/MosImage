@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { facesHint, isWholeImage, joinNames, layerEditHint, operationHint, promptPlaceholder, sketchHint, submitLabel, taskFor } from "./operation";
+import { ENHANCE_DETAIL, enhanceHint, facesHint, isWholeImage, joinNames, layerEditHint, operationHint, promptPlaceholder, sketchHint, submitLabel, taskFor } from "./operation";
 
-describe("sketch and faces", () => {
+describe("sketch, faces and enhance", () => {
   it("run on FLUX.2 Klein's edit pipeline", () => {
     expect(taskFor("sketch")).toBe("edit");
     expect(taskFor("faces")).toBe("edit");
-    expect(isWholeImage("sketch") || isWholeImage("faces")).toBe(false);
+    expect(taskFor("enhance")).toBe("edit");
+    expect(isWholeImage("sketch") || isWholeImage("faces") || isWholeImage("enhance")).toBe(false);
+    expect(submitLabel("enhance")).toBe("Enhance");
     expect(submitLabel("sketch")).toBe("Render");
     expect(submitLabel("faces")).toBe("Fix faces");
   });
@@ -13,8 +15,14 @@ describe("sketch and faces", () => {
     expect(sketchHint("strokes", false)).toContain("Paint rough shapes");
     expect(sketchHint("strokes", true)).toContain("the rest of the picture stays");
     expect(sketchHint("whole", true)).toContain("redraws the whole picture");
-    expect(facesHint(false)).toContain("Every face in the picture is redrawn");
-    expect(facesHint(true, ["Anna"])).toBe("Faces inside your selection are redrawn sharper and pasted back. Anna keeps the look of their reference. Apply adds the faces as a new layer.");
+    expect(facesHint(false)).toBe("Every face in the picture is sharpened from the face itself and pasted back. Expression and lighting stay the same. Apply adds the faces as a new layer.");
+    expect(facesHint(false, [], "redraw")).toContain("The expression can change.");
+    expect(facesHint(true, ["Anna"], "redraw")).toBe("Faces inside your selection are drawn anew and pasted back, for faces too blurry to sharpen. Anna keeps the look of their reference. Apply adds the faces as a new layer.");
+    expect(enhanceHint(true)).toContain("to your selection;");
+    expect(enhanceHint(false)).toContain("to the whole picture;");
+    expect(promptPlaceholder("enhance", true)).toContain("Optional");
+    // Subtle is the scale the A/B test found most natural; strong starts to reinvent.
+    expect(ENHANCE_DETAIL).toEqual({ subtle: 0.4, strong: 0.7 });
     expect(promptPlaceholder("faces", true)).toContain("Optional");
   });
 });
@@ -35,6 +43,9 @@ describe("reference guidance", () => {
     expect(promptPlaceholder("edit", true, ["Anna"])).toContain("put Anna next to the fountain");
     expect(operationHint("edit", true, false, "object")).toContain("Faces and everything you don't mention stay as they are.");
     expect(operationHint("edit", true, true, "object", ["Anna", "Tom"])).toContain("Anna and Tom keep the look of their reference.");
+    // A freshly opened picture starts in Edit with the Object tool, so the hint points at selecting.
+    expect(operationHint("edit", true, false, "object")).toContain("To change one part, select it first.");
+    expect(operationHint("edit", true, false, "transform")).not.toContain("select it first");
   });
   it("explains editing one layer alone", () => {
     expect(layerEditHint(null)).toBe("Pick the layer to edit in the Layers panel.");

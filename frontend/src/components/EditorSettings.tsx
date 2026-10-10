@@ -18,7 +18,9 @@ export const defaultSettings: EditorSettings = {
 };
 export function qualityOptions(settings: EditorSettings, operation: Operation, blending: boolean) {
   const specialized_outpaint = operation === "expand" && settings.specialized_outpaint;
-  const model_name = specialized_outpaint ? GENERATION_PRESETS.fast.modelName : settings.model_name;
+  // Specialized outpaint is a Fast LoRA; the detail enhancer exists for Quality only.
+  const model_name = specialized_outpaint ? GENERATION_PRESETS.fast.modelName
+    : operation === "enhance" ? GENERATION_PRESETS.quality.modelName : settings.model_name;
   const consistency_lora = ["edit", "replace", "expand"].includes(operation)
     && model_name === GENERATION_PRESETS.quality.modelName && settings.consistency_lora;
   const detail_crop = operation === "replace" && !blending && settings.detail_crop;
@@ -42,13 +44,14 @@ export function SettingsControls({ settings, onChange, models, operation, blendi
   const showConsistency = ["edit", "replace", "expand"].includes(operation);
   const showDetail = operation === "replace" && !blending;
   const consistencyAvailable = options.model_name === GENERATION_PRESETS.quality.modelName;
+  const presetLocked = options.specialized_outpaint || operation === "enhance";
   function preset(value: GenerationPreset) {
     const config = GENERATION_PRESETS[value];
     onChange({ ...settings, preset: value, model_name: config.modelName, steps: config.steps, guidance: config.guidance });
   }
   return <fieldset className="settings-controls" disabled={disabled}>
     <div className="prompt-options">
-      <div className="segmented" aria-label="Quality">{(["quality", "fast"] as const).map(value => <button key={value} disabled={options.specialized_outpaint} aria-pressed={options.model_name === GENERATION_PRESETS[value].modelName} title={GENERATION_PRESETS[value].description} onClick={() => preset(value)}>{GENERATION_PRESETS[value].label}</button>)}</div>
+      <div className="segmented" aria-label="Quality">{(["quality", "fast"] as const).map(value => <button key={value} disabled={presetLocked} aria-pressed={options.model_name === GENERATION_PRESETS[value].modelName} title={operation === "enhance" ? "Enhance always uses Quality" : GENERATION_PRESETS[value].description} onClick={() => preset(value)}>{GENERATION_PRESETS[value].label}</button>)}</div>
       {task === "text-to-image" && <select aria-label="Image format" value={aspectPresetFor(settings.width, settings.height) ?? "custom"} onChange={event => { const config = ASPECT_PRESETS[event.target.value as AspectPreset]; if (config) onChange({ ...settings, width: config.width, height: config.height }); }}><option value="square">Square · 1:1</option><option value="landscape">Landscape · 4:3</option><option value="portrait">Portrait · 3:4</option><option value="wide">Wide · 16:9</option><option value="custom" disabled>Custom</option></select>}
       <select aria-label="Number of proposals" value={settings.count} onChange={event => onChange({ ...settings, count: Number(event.target.value) })}>{[1, 2, 3, 4].map(count => <option key={count} value={count}>{count} {count === 1 ? "proposal" : "proposals"}</option>)}</select>
     </div>
@@ -63,7 +66,7 @@ export function SettingsControls({ settings, onChange, models, operation, blendi
         {showDetail && <label className="quality-switch"><span>Fine detail<small>Regenerate selected texture. May invent small details.</small></span><input type="checkbox" role="switch" aria-label="Fine detail" checked={options.detail_crop} onChange={event => onChange({ ...settings, detail_crop: event.target.checked })} /></label>}
       </div>}
       <details className="advanced"><summary>Advanced controls</summary><div className="advanced-content">
-        <label>Model<select aria-label="Model" value={options.model_name} disabled={options.specialized_outpaint} onChange={event => { const name = event.target.value; const value = presetForModel(name); const config = GENERATION_PRESETS[value]; onChange({ ...settings, preset: value, model_name: name, steps: config.steps, guidance: config.guidance }); }}>{models.filter(model => model.capabilities.includes(task)).map(model => <option key={model.name} value={model.name}>{model.display_name}</option>)}</select></label>
+        <label>Model<select aria-label="Model" value={options.model_name} disabled={presetLocked} onChange={event => { const name = event.target.value; const value = presetForModel(name); const config = GENERATION_PRESETS[value]; onChange({ ...settings, preset: value, model_name: name, steps: config.steps, guidance: config.guidance }); }}>{models.filter(model => model.capabilities.includes(task)).map(model => <option key={model.name} value={model.name}>{model.display_name}</option>)}</select></label>
         {options.model_name === "flux2-klein-9b-nvfp4" && <p>Native NVFP4 for RTX 50 series. The larger model keeps identities and scenes more faithful; its weights are licensed for non-commercial use only.</p>}
         {options.model_name === "flux2-klein-4b-nvfp4" && <p>Native NVFP4 for RTX 50 series. Smaller and faster than 9B, under a commercial-friendly licence; BF16 remains available for comparison.</p>}
         {options.model_name === "flux2-klein-4b" && <p>The original BF16 weights of 4B, for GPUs without NVFP4 support. Slower and larger than NVFP4.</p>}

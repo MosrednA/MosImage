@@ -31,7 +31,10 @@ class Settings(BaseSettings):
     attention_backend: str = "sdpa"
     supervised: bool = False
     cancel_grace_seconds: float = 8.0
+    # Inference area budget of a masked edit, as the side of a square.
     inpaint_max_dimension: int = 1024
+    # Smaller crops are rendered at least this large and scaled back down.
+    inpaint_minimum_dimension: int = 768
     inpaint_context_ratio: float = 0.5
     inpaint_minimum_context: int = 128
     # Uploads are read into memory, so cap them before they reach the job queue.

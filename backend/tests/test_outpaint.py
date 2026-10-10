@@ -111,12 +111,13 @@ class OutpaintTests(unittest.TestCase):
             (root / "mask.png").write_bytes(mask)
             workspace = prepare_outpaint_workspace(root / "canvas.png", root / "mask.png", root, 256, .5, 128)
             with Image.open(workspace.model_mask_path) as model_mask:
-                self.assertEqual(model_mask.size, (256, 128))
-                # Twenty model pixels inside the old border (60 native px)
-                # remain fully editable even after a 3x downscale.
-                for point in ((52, 64), (204, 64), (128, 36), (128, 92)):
+                # An area budget of 256 x 256 keeps more of a wide canvas than a 256 px long side.
+                self.assertEqual(model_mask.size, (352, 176))
+                # Twenty model pixels inside the old border (44 native px)
+                # remain fully editable even after a 2.2x downscale.
+                for point in ((64, 88), (288, 88), (176, 42), (176, 134)):
                     self.assertEqual(model_mask.getpixel(point), 255)
-                self.assertEqual(model_mask.getpixel((128, 64)), 0)
+                self.assertEqual(model_mask.getpixel((176, 88)), 0)
                 Image.new("RGB", model_mask.size, (240, 120, 10)).save(workspace.model_output_path)
             self.assertEqual(workspace.composite_mask.getpixel((156, 192)), 0)
             self.assertIsNotNone(workspace.color_reference_mask)
@@ -145,6 +146,8 @@ class OutpaintTests(unittest.TestCase):
             reduced = prepare_outpaint_workspace(root / "canvas.png", root / "mask.png", root / "reduced", 256, .5, 128)
             self.assertEqual(native.composite_mask.tobytes(), reduced.composite_mask.tobytes())
             self.assertTrue(np.all(np.asarray(reduced.composite_mask)[:, 128 + OUTPAINT_BLEND_BAND:] == 0))
+            # The overlap redraws the original, so its whole offset is carried.
+            self.assertEqual((native.seam_band, native.seam_tolerance), (OUTPAINT_BLEND_BAND, None))
 
     def test_selection_requires_bounded_finite_positive_points(self) -> None:
         for payload in ({"points": [{"x": 1, "y": 2, "label": 0}]}, {"points": [{"x": float("inf"), "y": 1, "label": 1}]}, {"points": []}):

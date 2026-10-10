@@ -39,6 +39,10 @@ CONSISTENCY_V2 = AdapterCheckpoint("Consistency V2", "dx8152/Flux2-Klein-9B-Cons
 FAL_OUTPAINT = AdapterCheckpoint("Specialized outpaint", "fal/flux-2-klein-4B-outpaint-lora",
     "b11770ac6a3cf9325dcf81742c12b1c4e257880f", "flux-outpaint-lora.safetensors",
     "9623927f2471613e0c9d7810da3c39f0b277a448193b223ea3cee67d5750974a")
+# Elusarca's Detail Enhancer v2, the same file as on Civitai (FLUX.1 [dev] non-commercial licence).
+DETAIL_ENHANCER = AdapterCheckpoint("Detail enhancer", "reverentelusarca/detail-enhancer-flux-klein-9b",
+    "82dd21d7b206572f1a110f31b4b4295e9c57f43b", "klein_9b_enhancer_v2.safetensors",
+    "520832b426ef976ba81aeb7ad235ac920642c189b55120c51e540541d27f9072")
 
 
 def resolve_checkpoint(checkpoint: AdapterCheckpoint, control: "JobControl") -> Path:

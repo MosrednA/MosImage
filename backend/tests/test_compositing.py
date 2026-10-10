@@ -6,9 +6,14 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from math import ceil
 
-from app.compositing import DRIFT_LIMIT, _grow_mask, _inner_feather, correct_color_drift, prepare_inpaint_workspace
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
+
+from app.compositing import (
+    DRIFT_LIMIT, GRAIN_LIMIT, INPAINT_GENERATION_OVERLAP, INPAINT_SEAM_TOLERANCE, _grow_mask, _inner_feather,
+    _model_size, correct_color_drift, match_grain, match_seam, prepare_inpaint_workspace,
+)
 
 
 class InpaintCompositingTests(unittest.TestCase):
@@ -300,6 +305,187 @@ class InpaintCompositingTests(unittest.TestCase):
                 self.assertEqual(result.getpixel((48, 128)), (0, 200, 0))
                 self.assertEqual(result.getpixel((4, 128)), (200, 10, 10))
                 self.assertEqual(result.getpixel((100, 128)), (40, 50, 60))
+
+
+class MaskMorphologyTests(unittest.TestCase):
+    """The array versions must match the repeated 3 x 3 Pillow filters they replace, pixel for pixel."""
+
+    @staticmethod
+    def _pillow_grow(mask: Image.Image, radius: int) -> Image.Image:
+        for _ in range(radius):
+            mask = mask.filter(ImageFilter.MaxFilter(3))
+        return mask
+
+    @staticmethod
+    def _pillow_feather(mask: Image.Image, radius: float) -> Image.Image:
+        steps = min(64, ceil(radius))
+        remaining = mask.point(lambda value: 255 if value else 0)
+        distance = Image.new("L", mask.size, 0)
+        for _ in range(steps):
+            remaining = remaining.filter(ImageFilter.MinFilter(3))
+            distance = ImageChops.add(distance, remaining.point(lambda value: 1 if value else 0))
+        peak = distance.getextrema()[1]
+        if peak == 0:
+            return mask.copy()
+        denominator = min(steps, peak)
+        falloff = distance.point(lambda value: round(255 * (min(value, denominator) / denominator) ** 2 * (3 - 2 * min(value, denominator) / denominator)))
+        return ImageChops.darker(mask, falloff)
+
+    @staticmethod
+    def _masks() -> list[Image.Image]:
+        rng = np.random.default_rng(3)
+        masks = [Image.fromarray(((rng.random((37, 53)) > .7) * 255).astype(np.uint8)),
+                 Image.fromarray(rng.integers(0, 256, (41, 29), dtype=np.uint8)),
+                 Image.new("L", (1, 9), 255), Image.new("L", (30, 20), 255)]
+        shapes = Image.new("L", (64, 48), 0)
+        draw = ImageDraw.Draw(shapes)
+        draw.ellipse((-10, -6, 30, 40), fill=255)  # Crosses the picture's edge.
+        draw.rectangle((36, 10, 70, 30), fill=140)
+        masks.append(shapes)
+        hole = Image.new("L", (40, 40), 255)
+        hole.putpixel((25, 12), 0)
+        masks.append(hole)
+        return masks
+
+    def test_growth_matches_repeated_pillow_dilation(self) -> None:
+        for index, mask in enumerate(self._masks()):
+            for radius in (1, 2, 5, 16, 32):
+                with self.subTest(mask=index, radius=radius):
+                    self.assertEqual(_grow_mask(mask, radius).tobytes(), self._pillow_grow(mask, radius).tobytes())
+
+    def test_inner_feather_matches_repeated_pillow_erosion(self) -> None:
+        for index, mask in enumerate(self._masks()):
+            for radius in (.5, 3, 8, 16, 40, 100):
+                with self.subTest(mask=index, radius=radius):
+                    self.assertEqual(_inner_feather(mask, radius).tobytes(), self._pillow_feather(mask, radius).tobytes())
+
+
+class ModelSizeTests(unittest.TestCase):
+    def test_area_budget_keeps_wide_crops_as_detailed_as_square_ones(self) -> None:
+        self.assertEqual(_model_size((2048, 2048), 1024), (1024, 1024))
+        width, height = _model_size((3000, 1000), 1024)
+        self.assertGreater(width * height, 0.9 * 1024 * 1024)
+        self.assertLessEqual(width * height, 1024 * 1024)
+        self.assertAlmostEqual(width / height, 3, delta=.1)
+
+    def test_sizes_are_whole_tokens_and_never_enlarged_by_default(self) -> None:
+        for native in ((448, 448), (1000, 700), (130, 4000), (17, 17)):
+            with self.subTest(native=native):
+                width, height = _model_size(native, 1024)
+                self.assertEqual((width % 16, height % 16), (0, 0))
+                self.assertLessEqual(width, max(16, native[0]))
+                self.assertLessEqual(height, max(16, native[1]))
+        # A strip stays within twice the budget's side instead of becoming 4096 px long.
+        self.assertLessEqual(max(_model_size((8000, 200), 1024)), 2048)
+
+    def test_small_crops_are_enlarged_to_the_minimum(self) -> None:
+        self.assertEqual(_model_size((448, 448), 1024, 768), (768, 768))
+        width, height = _model_size((600, 300), 1024, 768)
+        self.assertGreaterEqual(width * height, 0.95 * 768 * 768)
+        # The minimum never exceeds the budget, and large crops are unaffected.
+        self.assertEqual(_model_size((448, 448), 512, 768), (512, 512))
+        self.assertEqual(_model_size((2048, 2048), 1024, 768), (1024, 1024))
+
+
+class GenerationGrowthTests(unittest.TestCase):
+    def test_generation_covers_partial_tokens_while_the_blend_keeps_the_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = Image.new("RGB", (512, 512), (60, 90, 120))
+            source.save(root / "source.png")
+            mask = Image.new("L", source.size, 0)
+            mask.paste(255, (200, 200, 296, 296))
+            mask.save(root / "mask.png")
+            workspace = prepare_inpaint_workspace(
+                root / "source.png", root / "mask.png", root, 1024, 0, 80,
+                composite_feather=0, center_selection=True, generation_growth=INPAINT_GENERATION_OVERLAP,
+            )
+            assert workspace.model_box is not None
+            self.assertEqual(workspace.model_box, (120, 120, 376, 376))
+            with Image.open(workspace.model_mask_path) as model_mask:
+                # Selection at 80..176 in the 256 px model crop, grown by one token.
+                self.assertEqual(model_mask.getbbox(), (64, 64, 192, 192))
+                generated = Image.new("RGB", model_mask.size, (60, 90, 120))
+                # The model redraws the grown ring differently, as a wider subject would.
+                generated.paste((200, 30, 30), (64, 64, 192, 192))
+                generated.paste((10, 200, 10), (80, 80, 176, 176))
+                generated.save(workspace.model_output_path)
+            self.assertEqual(workspace.composite_mask.tobytes(), mask.tobytes())
+            # The seam is matched over the regenerated ring: one token in native pixels.
+            self.assertEqual((workspace.seam_band, workspace.seam_tolerance), (16, INPAINT_SEAM_TOLERANCE))
+            reference = workspace.color_reference_mask
+            assert reference is not None
+            self.assertEqual(reference.getpixel((190, 250)), 255)  # The regenerated ring is no reference.
+            self.assertEqual(reference.getpixel((150, 250)), 0)
+            workspace.composite_to(root / "result.png")
+            with Image.open(root / "result.png") as result:
+                protected = np.asarray(mask) == 0
+                np.testing.assert_array_equal(np.asarray(result)[protected], np.asarray(source)[protected])
+                # The red ring neither shows nor tints the new content through drift correction.
+                self.assertEqual(result.getpixel((250, 250)), (10, 200, 10))
+
+
+class InpaintSeamTests(unittest.TestCase):
+    @staticmethod
+    def _scene() -> tuple[Image.Image, Image.Image]:
+        source = Image.new("RGB", (400, 400), (120, 120, 120))
+        mask = Image.new("L", source.size, 0)
+        mask.paste(255, (60, 60, 340, 340))
+        return source, mask
+
+    def test_a_tone_offset_at_the_edge_fades_into_the_fill(self) -> None:
+        source, mask = self._scene()
+        # The fill and the regenerated ring came out lighter, as a removed shadow does.
+        generated = Image.new("RGB", source.size, (140, 140, 140))
+        matched = match_seam(generated, source, mask, 16, INPAINT_SEAM_TOLERANCE)
+        edge, centre = matched.getpixel((62, 200))[0], matched.getpixel((200, 200))[0]
+        self.assertLess(edge, 128)
+        self.assertEqual(centre, 140)  # Far from the edge the fill keeps its own tone.
+
+    def test_different_content_in_the_ring_is_not_smeared_inward(self) -> None:
+        source, mask = self._scene()
+        generated = Image.new("RGB", source.size, (20, 40, 200))  # Remains of another object.
+        generated.paste((140, 140, 140), (60, 60, 340, 340))
+        tolerant = match_seam(generated, source, mask, 16, INPAINT_SEAM_TOLERANCE).getpixel((62, 200))
+        self.assertLessEqual(max(abs(value - 140) for value in tolerant), 2)
+        # Without the tolerance the full clipped offset would tint the edge.
+        plain = match_seam(generated, source, mask, 16).getpixel((62, 200))
+        self.assertGreater(max(abs(value - 140) for value in plain), DRIFT_LIMIT / 2)
+
+
+class GrainMatchingTests(unittest.TestCase):
+    @staticmethod
+    def _grainy(size: int, level: float, seed: int) -> Image.Image:
+        noise = np.random.default_rng(seed).normal(0, level, (size, size, 1))
+        return Image.fromarray(np.clip(np.rint(110 + noise), 0, 255).astype(np.uint8).repeat(3, axis=2))
+
+    @staticmethod
+    def _reference(size: int, start: int, end: int) -> tuple[Image.Image, Image.Image]:
+        mask = Image.new("L", (size, size), 0)
+        mask.paste(255, (start, start, end, end))
+        reference = Image.new("L", mask.size, 255)
+        reference.paste(0, (start - 16, start - 16, end + 16, end + 16))
+        return mask, reference
+
+    def test_smoothed_content_gets_the_photos_grain_back(self) -> None:
+        source = self._grainy(256, 4, seed=1)
+        generated = self._grainy(256, 1, seed=2)  # The model's output is smoother.
+        mask, reference = self._reference(256, 64, 192)
+        matched = match_grain(generated, source, mask, reference, seed=(1, 2, 3, 4))
+        inside = np.asarray(matched, dtype=np.float32)[80:176, 80:176, 0]
+        self.assertAlmostEqual(float(inside.std()), 4, delta=.5)
+        outside = np.asarray(matched)[:48, :48]
+        np.testing.assert_array_equal(outside, np.asarray(generated)[:48, :48])
+        again = match_grain(generated, source, mask, reference, seed=(1, 2, 3, 4))
+        self.assertEqual(matched.tobytes(), again.tobytes())
+
+    def test_clean_pictures_and_strong_texture_are_capped(self) -> None:
+        mask, reference = self._reference(256, 64, 192)
+        clean = Image.new("RGB", (256, 256), (110, 110, 110))
+        self.assertIs(match_grain(clean, clean, mask, reference, seed=(0,)), clean)
+        busy = self._grainy(256, 40, seed=3)
+        matched = match_grain(clean, busy, mask, reference, seed=(0,))
+        self.assertLessEqual(float(np.asarray(matched, dtype=np.float32)[80:176, 80:176, 0].std()), GRAIN_LIMIT + .3)
 
 
 class ColorDriftCorrectionTests(unittest.TestCase):

@@ -17,7 +17,7 @@ from app.detection import Detection, detection_query, iou, strongest
 from app.faces import face_blend_mask, face_crop_box, faces_to_fix, matched_colours, run_face_fix
 from app.main import app
 from app.matting import UNKNOWN, edge_radius, mask_box, trimap
-from app.models.flux2_klein import FACE_AREA, Flux2KleinProvider, _face_prompt, _inpaint_prompt, _sketch_prompt
+from app.models.flux2_klein import ENHANCE_TRIGGER, FACE_AREA, Flux2KleinProvider, _face_prompt, _inpaint_prompt, _mode_prompt, _sketch_prompt
 from app.schemas import EditRequest, FaceFixRequest, InpaintForm
 from app.selection import main_subjects
 from tests.test_references import isolated_data, png
@@ -122,6 +122,28 @@ class FaceFixServiceTests(unittest.TestCase):
                 run_face_fix(FaceFixRequest(), png(picture), "photo.png", png(selection), MagicMock())
                 self.assertEqual(provider.edit.call_count, 1)
 
+    def test_faithful_is_a_partial_redraw_with_the_detail_lora_on_quality_only(self) -> None:
+        with isolated_data():
+            requests = []
+
+            def fake_edit(request, input_path, output_path, _control, **kwargs):
+                requests.append(request)
+                with Image.open(input_path) as crop:
+                    crop.save(output_path)
+                return 5, 0
+
+            provider = MagicMock()
+            provider.edit.side_effect = fake_edit
+            picture = png(Image.new("RGB", (120, 120), (90, 60, 40)))
+            faces = [Detection("human face", 0.7, (40, 40, 80, 80))]
+            with patch("app.faces.registry.activate", return_value=provider), patch("app.faces.detector.detect", return_value=faces):
+                [faithful] = run_face_fix(FaceFixRequest(), picture, "photo.png", None, MagicMock())
+                run_face_fix(FaceFixRequest(faithful=False), picture, "photo.png", None, MagicMock())
+                run_face_fix(FaceFixRequest(model_name="flux2-klein-4b-nvfp4"), picture, "photo.png", None, MagicMock())
+            self.assertEqual([(r.steps, r.strength, r.detail) for r in requests], [(8, .625, .4), (4, 1, 0), (8, .625, 0)])
+            record = storage.get_generation(faithful)
+            self.assertEqual((record["steps"], record["strength"]), (8, .625))
+
     def test_no_faces_is_an_error_that_leaves_no_files(self) -> None:
         with isolated_data():
             with patch("app.faces.registry.activate", return_value=MagicMock()), patch("app.faces.detector.detect", return_value=[]):
@@ -142,6 +164,41 @@ class SketchAndFacePromptTests(unittest.TestCase):
         self.assertIn("Also: smiling.", _face_prompt("smiling"))
         self.assertIn("Anna is the person in image 2", _face_prompt("", ["Anna"]))
         self.assertIn("This person is the person in image 2", _face_prompt("", ["Reference 1"]))
+        # Naming teeth turned neutral and closed-mouth faces into grins.
+        self.assertNotIn("teeth", _face_prompt(""))
+
+    def test_detail_and_enhance_prompts_lead_with_the_lora_trigger(self) -> None:
+        face = EditRequest(prompt="x", mode="face", detail=.4)
+        self.assertTrue(_mode_prompt(face, []).startswith(ENHANCE_TRIGGER + " Restore image 1"))
+        self.assertTrue(_mode_prompt(face.model_copy(update={"detail": 0}), []).startswith("Restore image 1"))
+        enhance = EditRequest(prompt="sharper bark", mode="enhance", detail=.4)
+        self.assertTrue(_mode_prompt(enhance, []).startswith(ENHANCE_TRIGGER))
+        self.assertTrue(_mode_prompt(enhance, []).endswith(" Also: sharper bark."))
+        self.assertNotIn("Also:", _mode_prompt(enhance.model_copy(update={"prompt": " "}), []))
+
+    def test_partial_redraw_noises_the_picture_and_keeps_references_after_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (120, 120), "tan").save(root / "face.png")
+            Image.new("RGB", (40, 40), "orange").save(root / "anna.png")
+            pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (768, 768))]))
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"),                     patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe) as load:
+                from app.models.base import ModelReference
+                anna = [ModelReference("Anna", root / "anna.png")]
+                self.provider.edit(EditRequest(prompt="x", mode="face", steps=8, strength=.625), root / "face.png", root / "out.png", MagicMock(), references=anna)
+                self.assertEqual(load.call_args.args[1], "inpaint")
+                arguments = pipe.call_args.kwargs
+                self.assertEqual((arguments["strength"], arguments["num_inference_steps"]), (.625, 8))
+                self.assertEqual(arguments["mask_image"].getextrema(), (255, 255))
+                self.assertEqual(arguments["mask_image"].size, arguments["image"].size)
+                self.assertEqual(arguments["image_reference"].size, (40, 40))
+                self.assertIn("Anna is the person in image 2", pipe.encode_prompt.call_args.kwargs["prompt"])
+                # Enhance looks at the picture only.
+                self.provider.edit(EditRequest(prompt="x", mode="enhance", strength=.625), root / "face.png", root / "out.png", MagicMock(), references=anna)
+                self.assertNotIn("image_reference", pipe.call_args.kwargs)
+                self.provider.edit(EditRequest(prompt="x", mode="face"), root / "face.png", root / "out.png", MagicMock())
+                self.assertEqual(load.call_args.args[1], "text-to-image")
+                self.assertNotIn("strength", pipe.call_args.kwargs)
 
     def test_sketch_inpaint_uses_its_own_crop_as_reference_and_ignores_people(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

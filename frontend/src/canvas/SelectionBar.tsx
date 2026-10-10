@@ -4,7 +4,8 @@ import { EXPAND_RANGE, SOFTEN_RANGE } from "../masks/maskRefine";
 interface Props {
   disabled: boolean;
   expand: number;
-  onExpand: (value: number) => void;
+  /** A number fixes the edge; null scales it with the image again. */
+  onExpand: (value: number | null) => void;
   soften: number;
   softenAuto: boolean;
   onSoften: (value: number | null) => void;
@@ -29,9 +30,9 @@ interface Props {
 export function SelectionBar(props: Props) {
   const { disabled } = props;
   return <div className="selection-bar" role="toolbar" aria-label="Selection edges">
-    <div className="edge-slider" title="Grow or shrink the selection edge">
+    <div className="edge-slider" title="Grow or shrink the selection edge · double-click for automatic">
       <span>Expand</span>
-      <input aria-label="Expand selection" type="range" min={EXPAND_RANGE.min} max={EXPAND_RANGE.max} value={props.expand} disabled={disabled} onChange={event => props.onExpand(Number(event.target.value))} onDoubleClick={() => props.onExpand(0)} />
+      <input aria-label="Expand selection" type="range" min={EXPAND_RANGE.min} max={EXPAND_RANGE.max} value={props.expand} disabled={disabled} onChange={event => props.onExpand(Number(event.target.value))} onDoubleClick={() => props.onExpand(null)} />
       <output>{props.expand > 0 ? "+" : ""}{props.expand}px</output>
     </div>
     <div className="edge-slider" title="Width of the soft transition into the original image">

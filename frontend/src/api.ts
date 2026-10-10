@@ -25,7 +25,7 @@ export interface GenerationRecord {
   width: number | null;
   height: number | null;
   strength: number | null;
-  edit_operation: "replace" | "remove" | "sketch" | "faces" | null;
+  edit_operation: "replace" | "remove" | "sketch" | "faces" | "enhance" | null;
   blend_feather: number | null;
   context_padding: number | null;
   scene_context: string | null;
@@ -295,13 +295,25 @@ export async function cutoutSubject(image: File, text = ""): Promise<JobResponse
   return request("/api/cutout", { method: "POST", body: form });
 }
 
-/** Redraws the faces sharper; a selection limits which faces. */
-export async function fixFaces(image: File, parameters: EditParameters, selection: Blob | null): Promise<JobResponse> {
+/** Sharpens the faces, faithfully or by redrawing them; a selection limits which faces. */
+export async function fixFaces(image: File, parameters: EditParameters & { faithful?: boolean }, selection: Blob | null): Promise<JobResponse> {
   const form = new FormData();
   form.set("image", image);
   form.set("parameters", JSON.stringify(parameters));
   if (selection) form.set("mask", selection, "mask.png");
   return request("/api/faces", { method: "POST", body: form });
+}
+
+/** The detail-enhancer LoRA's scale, from 0.1 to 1. Quality only; references are not used. */
+export type EnhanceParameters = Omit<EditParameters, "reference_ids" | "consistency_lora"> & { detail: number };
+
+/** Adds fine detail to the picture, or only to the selection. */
+export async function enhanceImage(image: File, parameters: EnhanceParameters, selection: Blob | null): Promise<JobResponse> {
+  const form = new FormData();
+  form.set("image", image);
+  form.set("parameters", JSON.stringify(parameters));
+  if (selection) form.set("mask", selection, "mask.png");
+  return request("/api/enhance", { method: "POST", body: form });
 }
 
 export async function getDocument(id: number): Promise<DocumentRecord> {

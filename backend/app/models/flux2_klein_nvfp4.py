@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING, Any
 
 from PIL import Image
 
+from app.compositing import FAST_PNG
 from app.config import settings
-from app.jobs import JobCancelled, JobControl
+from app.jobs import JobControl
 from app.models.flux2_klein import SHARED_COMPONENTS, Flux2KleinProvider, Placement, PipelineTask, _fit_area
 from app.runtime import require_generation_device, selected_device, selected_dtype
 from app.schemas import OutpaintForm, RuntimeMode
@@ -50,8 +51,8 @@ class Flux2KleinNvfp4Provider(Flux2KleinProvider):
         self._want_outpaint_adapter = False
         super().unload()
 
-    def _configure_edit_adapters(self, pipe: Any, enabled: bool, control: JobControl) -> None:
-        super()._configure_edit_adapters(pipe, enabled, control)
+    def _configure_edit_adapters(self, pipe: Any, enabled: bool, control: JobControl, detail: float = 0.0) -> None:
+        super()._configure_edit_adapters(pipe, enabled, control, detail)
         if self._outpaint_adapter is not None:
             self._outpaint_adapter.set_scale(0)
 
@@ -59,35 +60,31 @@ class Flux2KleinNvfp4Provider(Flux2KleinProvider):
                  control: JobControl) -> tuple[int, int]:
         if self.name != "flux2-klein-4b-nvfp4" or not request.specialized_outpaint:
             raise ValueError("Specialized outpaint requires Fast NVFP4.")
-        try:
-            control.raise_if_cancelled()
-            require_generation_device()
-            # Attach before Accelerate installs its offload hooks. This costs
-            # one reload the first time it is enabled on an already loaded 4B.
-            placement = self._placement_for(request.runtime_mode)
-            if self._outpaint_adapter is None or (self._pipes and self._placement != placement):
-                self.unload()
-                self._want_outpaint_adapter = True
-            pipe = self._load_pipe(placement, "text-to-image", control)
-            assert self._outpaint_adapter is not None
-            self._outpaint_adapter.set_scale(1.1)
-            torch = self._load_torch()
-            seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
-            with Image.open(input_path) as source:
-                size = source.size
-                canvas = _fit_area(source.convert("RGB"))
-            embeds = self._encode_prompt(pipe, "Fill the green spaces according to the image", control)
-            control.set_phase("generating")
-            image = pipe(image=canvas, prompt_embeds=embeds, height=canvas.height, width=canvas.width,
-                num_inference_steps=4, guidance_scale=1,
-                generator=torch.Generator("cuda").manual_seed(seed),
-                callback_on_step_end=control.diffusion_callback(4)).images[0]
-            control.raise_if_cancelled()
-            image.resize(size, Image.Resampling.LANCZOS).save(output_path)
-            return seed, size[0]
-        except JobCancelled:
+        control.raise_if_cancelled()
+        require_generation_device()
+        # Attach before Accelerate installs its offload hooks. This costs
+        # one reload the first time it is enabled on an already loaded 4B.
+        placement = self._placement_for(request.runtime_mode)
+        if self._outpaint_adapter is None or (self._pipes and self._placement != placement):
             self.unload()
-            raise
+            self._want_outpaint_adapter = True
+        pipe = self._load_pipe(placement, "text-to-image", control)
+        assert self._outpaint_adapter is not None
+        self._outpaint_adapter.set_scale(1.1)
+        torch = self._load_torch()
+        seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
+        with Image.open(input_path) as source:
+            size = source.size
+            canvas = _fit_area(source.convert("RGB"))
+        embeds = self._encode_prompt(pipe, "Fill the green spaces according to the image", control)
+        control.set_phase("generating")
+        image = pipe(image=canvas, prompt_embeds=embeds, height=canvas.height, width=canvas.width,
+            num_inference_steps=4, guidance_scale=1,
+            generator=torch.Generator("cuda").manual_seed(seed),
+            callback_on_step_end=control.diffusion_callback(4)).images[0]
+        control.raise_if_cancelled()
+        image.resize(size, Image.Resampling.LANCZOS).save(output_path, **FAST_PNG)
+        return seed, size[0]
 
     def _validate_runtime(self) -> None:
         torch = self._load_torch()

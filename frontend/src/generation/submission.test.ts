@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { editWholeImage, fixFaces, generateImage, inpaintImage, outpaintImage } from "../api";
-import { defaultSettings } from "../components/EditorSettings";
+import { editWholeImage, enhanceImage, fixFaces, generateImage, inpaintImage, outpaintImage } from "../api";
+import { defaultSettings, qualityOptions } from "../components/EditorSettings";
 import { MAX_LAYERS } from "../layers/stack";
 import { BLEND_STRENGTH, SubmissionInput, requestPrompt, resultName, submitJob } from "./submission";
 
@@ -8,7 +8,7 @@ vi.mock("../api", async original => {
   const created = { id: "job", status: "queued" };
   return {
     ...await original<typeof import("../api")>(),
-    editWholeImage: vi.fn(async () => created), fixFaces: vi.fn(async () => created), generateImage: vi.fn(async () => created),
+    editWholeImage: vi.fn(async () => created), enhanceImage: vi.fn(async () => created), fixFaces: vi.fn(async () => created), generateImage: vi.fn(async () => created),
     inpaintImage: vi.fn(async () => created), outpaintImage: vi.fn(async () => created),
   };
 });
@@ -23,7 +23,7 @@ const layer = { id: "l1", name: "Hat", visible: true, opacity: 1 } as Submission
 function input(overrides: Partial<SubmissionInput>): SubmissionInput {
   return {
     operation: "replace", settings: { ...defaultSettings, prompt: "a red hat" }, referenceIds: [], source: picture, size: { width: 100, height: 80 },
-    hasDocument: true, layerCount: 0, mask: new Blob(["mask"]), sketch: null, sketchScope: "strokes", editScope: "visible", editLayer: null, blendLayer: null,
+    hasDocument: true, layerCount: 0, mask: new Blob(["mask"]), sketch: null, sketchScope: "strokes", editScope: "visible", faceMode: "faithful", enhanceLevel: "subtle", editLayer: null, blendLayer: null,
     expansion: { left: 128, top: 0, right: 128, bottom: 0 }, picture: async () => picture, ...overrides,
   };
 }
@@ -78,6 +78,27 @@ describe("submitJob", () => {
     expect(vi.mocked(fixFaces).mock.calls[0][1].reference_ids).toEqual([7]);
     expect(vi.mocked(fixFaces).mock.calls[0][2]).toBe(mask);
     expect(submission.extras.result).toEqual({ kind: "faces", name: "Fixed faces" });
+    expect(vi.mocked(fixFaces).mock.calls[0][1].faithful).toBe(true);
+    await submitJob(input({ operation: "faces", faceMode: "redraw" }));
+    expect(vi.mocked(fixFaces).mock.calls[1][1].faithful).toBe(false);
+  });
+  it("enhances the selection or the whole picture on Quality, without references", async () => {
+    const mask = new Blob(["detail"]);
+    const selected = await submitJob(input({ operation: "enhance", mask, referenceIds: [7], settings: { ...defaultSettings, model_name: "flux2-klein-4b-nvfp4", prompt: "" } }));
+    const [, parameters, selection] = vi.mocked(enhanceImage).mock.calls[0];
+    expect(parameters).toMatchObject({ model_name: "flux2-klein-9b-nvfp4", detail: 0.4, prompt: "" });
+    expect(parameters).not.toHaveProperty("reference_ids");
+    expect(selection).toBe(mask);
+    expect(selected.extras.result).toEqual({ kind: "selection", mask, name: "Enhanced", replaces: null });
+    const whole = await submitJob(input({ operation: "enhance", mask: null, enhanceLevel: "strong" }));
+    expect(vi.mocked(enhanceImage).mock.calls[1][1].detail).toBe(0.7);
+    expect(vi.mocked(enhanceImage).mock.calls[1][2]).toBeNull();
+    expect(whole.extras.result).toEqual({ kind: "generation", name: "Enhanced" });
+  });
+  it("forces Quality for Enhance and keeps the chosen model elsewhere", () => {
+    const fast = { ...defaultSettings, model_name: "flux2-klein-4b-nvfp4", consistency_lora: true };
+    expect(qualityOptions(fast, "enhance", false)).toMatchObject({ model_name: "flux2-klein-9b-nvfp4", consistency_lora: false });
+    expect(qualityOptions(fast, "faces", false).model_name).toBe("flux2-klein-4b-nvfp4");
   });
   it("opens a new image from the start screen and adds a layer in a document", async () => {
     const start = await submitJob(input({ operation: "generate", hasDocument: false, source: null, referenceIds: [5] }));

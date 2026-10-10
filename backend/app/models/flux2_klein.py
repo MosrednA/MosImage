@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 from PIL import Image, ImageOps
 
+from app.compositing import FAST_PNG
 from app.config import settings
 from app.jobs import JobCancelled, JobControl
 from app.models.base import ModelReference
@@ -34,6 +35,10 @@ GENERIC_REFERENCE_NAME = re.compile(r"^Reference \d+$")
 EDIT_AREA = 1024 * 1024
 # A face crop needs less: Fix faces scales the result back to the crop anyway.
 FACE_AREA = 768 * 768
+# The detail-enhancer LoRA's trigger, and its author's full prompt.
+ENHANCE_TRIGGER = "Enhance this image to high resolution with rich fine details."
+ENHANCE_PROMPT = (ENHANCE_TRIGGER + " Sharpen textures, add realistic micro-details, improve clarity and definition."
+                  " Keep the same composition, subjects, colours and lighting.")
 MATCH_SURROUNDINGS = " Match the surrounding lighting, color palette, perspective, texture and depth of field."
 
 
@@ -110,8 +115,9 @@ def _sketch_prompt(prompt: str) -> str:
 
 def _face_prompt(prompt: str, references: Sequence[str] = ()) -> str:
     """Image 1 is a close crop around one face; references follow as images 2 and up."""
+    # Naming teeth made Klein open closed mouths into a grin, so the list leaves them out.
     instruction = ("Restore image 1, a close-up of a face, as a sharp and detailed photograph: clear eyes, natural skin texture,"
-                   " crisp hair, eyebrows and teeth. Keep the same identity, age, expression, head pose, gaze, lighting,"
+                   " crisp hair and eyebrows. Keep the same identity, age, expression, head pose, gaze, lighting,"
                    " colours, framing and background exactly.")
     if prompt.strip():
         instruction += " Also: " + prompt.strip().rstrip(".") + "."
@@ -123,11 +129,22 @@ def _face_prompt(prompt: str, references: Sequence[str] = ()) -> str:
     return instruction
 
 
+def _enhance_prompt(prompt: str) -> str:
+    """The detail-enhancer LoRA's own prompt; the user's words only add to it."""
+    instruction = ENHANCE_PROMPT
+    if prompt.strip():
+        instruction += " Also: " + prompt.strip().rstrip(".") + "."
+    return instruction
+
+
 def _mode_prompt(request: EditRequest, references: Sequence[str]) -> str:
     if request.mode == "sketch":
         return _sketch_prompt(request.prompt)
+    if request.mode == "enhance":
+        return _enhance_prompt(request.prompt)
     if request.mode == "face":
-        return _face_prompt(request.prompt, references)
+        # The LoRA was trained on its trigger sentence, so it leads.
+        return (ENHANCE_TRIGGER + " " if request.detail else "") + _face_prompt(request.prompt, references)
     return _edit_prompt(request.prompt, references)
 
 
@@ -189,6 +206,7 @@ class Flux2KleinProvider:
         self._torch: Any | None = None
         self._prompt_cache: OrderedDict[str, Any] = OrderedDict()
         self._consistency_adapter: KleinLora | None = None
+        self._detail_adapter: KleinLora | None = None
 
     def info(self) -> ModelInfo:
         return ModelInfo(
@@ -207,35 +225,31 @@ class Flux2KleinProvider:
         control: JobControl,
         references: Sequence[ModelReference] = (),
     ) -> tuple[int, int]:
-        try:
-            control.raise_if_cancelled()
-            require_generation_device()
-            torch = self._load_torch()
-            pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
-            self._configure_edit_adapters(pipe, False, control)
-            reference_images = _reference_images([reference.path for reference in references])
-            control.set_progress(0.15)
-            seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
-            generator = torch.Generator(selected_device(torch)).manual_seed(seed)
-            prompt_embeds = self._encode_prompt(pipe, _generation_prompt(request.prompt, [reference.name for reference in references]), control)
-            control.set_phase("generating")
-            image = pipe(
-                # Each reference becomes its own block of image tokens.
-                **({"image": reference_images} if reference_images else {}),
-                prompt_embeds=prompt_embeds,
-                height=request.height,
-                width=request.width,
-                num_inference_steps=request.steps,
-                guidance_scale=request.guidance,
-                generator=generator,
-                callback_on_step_end=control.diffusion_callback(request.steps),
-            ).images[0]
-            control.set_progress(0.95)
-            image.save(output_path)
-            return seed, image.width
-        except JobCancelled:
-            self.unload()
-            raise
+        control.raise_if_cancelled()
+        require_generation_device()
+        torch = self._load_torch()
+        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
+        self._configure_edit_adapters(pipe, False, control)
+        reference_images = _reference_images([reference.path for reference in references])
+        control.set_progress(0.15)
+        seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
+        generator = torch.Generator(selected_device(torch)).manual_seed(seed)
+        prompt_embeds = self._encode_prompt(pipe, _generation_prompt(request.prompt, [reference.name for reference in references]), control)
+        control.set_phase("generating")
+        image = pipe(
+            # Each reference becomes its own block of image tokens.
+            **({"image": reference_images} if reference_images else {}),
+            prompt_embeds=prompt_embeds,
+            height=request.height,
+            width=request.width,
+            num_inference_steps=request.steps,
+            guidance_scale=request.guidance,
+            generator=generator,
+            callback_on_step_end=control.diffusion_callback(request.steps),
+        ).images[0]
+        control.set_progress(0.95)
+        image.save(output_path, **FAST_PNG)
+        return seed, image.width
 
     def edit(
         self,
@@ -246,23 +260,42 @@ class Flux2KleinProvider:
         references: Sequence[ModelReference] = (),
     ) -> tuple[int, int]:
         """Redraws the whole picture by instruction and saves it at the picture's own size."""
-        try:
-            control.raise_if_cancelled()
-            require_generation_device()
-            torch = self._load_torch()
-            pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
-            self._configure_edit_adapters(pipe, request.consistency_lora, control)
-            with Image.open(input_path) as picture:
-                source = _opaque(picture)
-            fitted = _fit_area(source, FACE_AREA if request.mode == "face" else EDIT_AREA)
-            if request.mode == "sketch":
-                references = ()
-            reference_images = _reference_images([reference.path for reference in references])
-            control.set_progress(0.15)
-            seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
-            generator = torch.Generator(selected_device(torch)).manual_seed(seed)
-            prompt_embeds = self._encode_prompt(pipe, _mode_prompt(request, [reference.name for reference in references]), control)
-            control.set_phase("generating")
+        control.raise_if_cancelled()
+        require_generation_device()
+        torch = self._load_torch()
+        partial = request.strength < 1
+        # A partial redraw needs the source latent, which only the inpaint pipeline noises.
+        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint" if partial else "text-to-image", control)
+        self._configure_edit_adapters(pipe, request.consistency_lora, control, request.detail)
+        with Image.open(input_path) as picture:
+            source = _opaque(picture)
+        fitted = _fit_area(source, FACE_AREA if request.mode == "face" else EDIT_AREA)
+        if request.mode in ("sketch", "enhance"):
+            references = ()
+        reference_images = _reference_images([reference.path for reference in references])
+        control.set_progress(0.15)
+        seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
+        generator = torch.Generator(selected_device(torch)).manual_seed(seed)
+        prompt_embeds = self._encode_prompt(pipe, _mode_prompt(request, [reference.name for reference in references]), control)
+        control.set_phase("generating")
+        if partial:
+            # A full mask repaints everything. The pipeline still passes the
+            # picture as the first reference, so references stay images 2 and up.
+            reference: Any = reference_images if len(reference_images) > 1 else reference_images[0] if reference_images else None
+            image = pipe(
+                image=fitted,
+                mask_image=Image.new("L", fitted.size, 255),
+                **({"image_reference": reference} if reference is not None else {}),
+                prompt_embeds=prompt_embeds,
+                height=fitted.height,
+                width=fitted.width,
+                num_inference_steps=request.steps,
+                guidance_scale=request.guidance,
+                strength=request.strength,
+                generator=generator,
+                callback_on_step_end=control.diffusion_callback(request.steps),
+            ).images[0]
+        else:
             image = pipe(
                 # The picture leads, so the output follows its layout; references follow it.
                 image=[fitted, *reference_images],
@@ -274,14 +307,11 @@ class Flux2KleinProvider:
                 generator=generator,
                 callback_on_step_end=control.diffusion_callback(request.steps),
             ).images[0]
-            control.set_progress(0.95)
-            if image.size != source.size:
-                image = image.resize(source.size, Image.Resampling.LANCZOS)
-            image.save(output_path)
-            return seed, image.width
-        except JobCancelled:
-            self.unload()
-            raise
+        control.set_progress(0.95)
+        if image.size != source.size:
+            image = image.resize(source.size, Image.Resampling.LANCZOS)
+        image.save(output_path, **FAST_PNG)
+        return seed, image.width
 
     def inpaint(
         self,
@@ -292,47 +322,43 @@ class Flux2KleinProvider:
         control: JobControl,
         references: Sequence[ModelReference] = (),
     ) -> tuple[int, int]:
-        try:
-            control.raise_if_cancelled()
-            require_generation_device()
-            torch = self._load_torch()
-            pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control)
-            self._configure_edit_adapters(pipe, request.consistency_lora, control)
-            if request.edit_operation in ("remove", "sketch"):
-                references = ()
-            reference_images = _reference_images([reference.path for reference in references])
-            seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
-            generator = torch.Generator(selected_device(torch)).manual_seed(seed)
-            with Image.open(input_path) as source:
-                init_image = source.convert("RGB")
-            with Image.open(mask_path) as selection:
-                mask_image = selection.convert("L")
-            control.set_progress(0.15)
-            prompt_embeds = self._encode_prompt(pipe, _inpaint_prompt(request, [reference.name for reference in references]), control)
-            control.set_phase("generating")
-            # The sketched crop doubles as the reference, so no stroke survives the edit.
-            reference: Any = init_image if request.edit_operation == "sketch" else (
-                reference_images if len(reference_images) > 1 else reference_images[0] if reference_images else None)
-            image = pipe(
-                image=init_image,
-                mask_image=mask_image,
-                # A list of equally sized images becomes one reference token block each.
-                **({"image_reference": reference} if reference is not None else {}),
-                prompt_embeds=prompt_embeds,
-                height=init_image.height,
-                width=init_image.width,
-                num_inference_steps=request.steps,
-                guidance_scale=request.guidance,
-                strength=request.strength,
-                generator=generator,
-                callback_on_step_end=control.diffusion_callback(request.steps),
-            ).images[0]
-            control.set_progress(0.95)
-            image.save(output_path)
-            return seed, image.width
-        except JobCancelled:
-            self.unload()
-            raise
+        control.raise_if_cancelled()
+        require_generation_device()
+        torch = self._load_torch()
+        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control)
+        self._configure_edit_adapters(pipe, request.consistency_lora, control)
+        if request.edit_operation in ("remove", "sketch"):
+            references = ()
+        reference_images = _reference_images([reference.path for reference in references])
+        seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
+        generator = torch.Generator(selected_device(torch)).manual_seed(seed)
+        with Image.open(input_path) as source:
+            init_image = source.convert("RGB")
+        with Image.open(mask_path) as selection:
+            mask_image = selection.convert("L")
+        control.set_progress(0.15)
+        prompt_embeds = self._encode_prompt(pipe, _inpaint_prompt(request, [reference.name for reference in references]), control)
+        control.set_phase("generating")
+        # The sketched crop doubles as the reference, so no stroke survives the edit.
+        reference: Any = init_image if request.edit_operation == "sketch" else (
+            reference_images if len(reference_images) > 1 else reference_images[0] if reference_images else None)
+        image = pipe(
+            image=init_image,
+            mask_image=mask_image,
+            # A list of equally sized images becomes one reference token block each.
+            **({"image_reference": reference} if reference is not None else {}),
+            prompt_embeds=prompt_embeds,
+            height=init_image.height,
+            width=init_image.width,
+            num_inference_steps=request.steps,
+            guidance_scale=request.guidance,
+            strength=request.strength,
+            generator=generator,
+            callback_on_step_end=control.diffusion_callback(request.steps),
+        ).images[0]
+        control.set_progress(0.95)
+        image.save(output_path, **FAST_PNG)
+        return seed, image.width
 
     def preload(self, request: LoadModelRequest, control: JobControl) -> None:
         try:
@@ -353,20 +379,38 @@ class Flux2KleinProvider:
 
     def unload(self) -> None:
         self._consistency_adapter = None
+        self._detail_adapter = None
         self._pipes = {}
         self._placement = None
         self._prompt_cache.clear()
         self._collect()
 
-    def _configure_edit_adapters(self, pipe: Any, enabled: bool, control: JobControl) -> None:
-        if enabled and self.name != "flux2-klein-9b-nvfp4":
-            raise ValueError("Consistency requires the distilled Quality 9B NVFP4 model.")
-        if enabled and self._consistency_adapter is None:
-            from app.models.klein_lora import CONSISTENCY_V2, KleinLora, resolve_checkpoint
-            path = resolve_checkpoint(CONSISTENCY_V2, control)
-            self._consistency_adapter = KleinLora.attach(pipe.transformer, path, control.raise_if_cancelled)
+    def _configure_edit_adapters(self, pipe: Any, enabled: bool, control: JobControl, detail: float = 0.0) -> None:
+        """Consistency and the detail enhancer patch the same layers, so one is attached at a time.
+
+        Each loads on first use and stays attached at scale zero until the other one is needed.
+        """
+        if (enabled or detail) and self.name != "flux2-klein-9b-nvfp4":
+            raise ValueError("Consistency and Enhance require the distilled Quality 9B NVFP4 model.")
+        if enabled and detail:
+            raise ValueError("Consistency and the detail enhancer cannot be combined.")
+        if (enabled and self._consistency_adapter is None) or (detail and self._detail_adapter is None):
+            from app.models.klein_lora import CONSISTENCY_V2, DETAIL_ENHANCER, KleinLora, resolve_checkpoint
+            path = resolve_checkpoint(CONSISTENCY_V2 if enabled else DETAIL_ENHANCER, control)
+            other = self._detail_adapter if enabled else self._consistency_adapter
+            if other is not None:
+                other.detach()
+                self._consistency_adapter = self._detail_adapter = None
+                self._collect()
+            adapter = KleinLora.attach(pipe.transformer, path, control.raise_if_cancelled)
+            if enabled:
+                self._consistency_adapter = adapter
+            else:
+                self._detail_adapter = adapter
         if self._consistency_adapter is not None:
             self._consistency_adapter.set_scale(0.6 if enabled else 0)
+        if self._detail_adapter is not None:
+            self._detail_adapter.set_scale(detail)
 
     def outpaint(self, request: OutpaintForm, input_path: Path, output_path: Path,
                  control: JobControl) -> tuple[int, int]:
@@ -387,6 +431,11 @@ class Flux2KleinProvider:
             # and can push subsequent edits into shared GPU memory on Windows.
             with self._load_torch().inference_mode():
                 embeds = pipe.encode_prompt(prompt=prompt, device=pipe._execution_device)[0]
+            # The encoder's weights pass through the GPU (about 5 GiB for 9B).
+            # PyTorch keeps those freed blocks reserved, and Windows does not
+            # refuse the denoiser's next allocations but moves them to system
+            # RAM, so an edit then runs 20 times slower. Hand them back now.
+            self._collect()
             self._prompt_cache[prompt] = embeds
             while len(self._prompt_cache) > PROMPT_CACHE_SIZE:
                 self._prompt_cache.popitem(last=False)

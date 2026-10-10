@@ -26,9 +26,22 @@ export const EXPAND_RANGE = { min: -32, max: 64 } as const;
 export const SOFTEN_RANGE = { min: 0, max: 96 } as const;
 export const DEFAULT_EXPAND = 4;
 
-/** Roughly image width / 40: wide enough to hide VAE drift, small enough for detail. */
+/**
+ * Roughly the long side / 200. A selection drawn or found by SAM often stops a
+ * few pixels inside the object; the old outline then stays, like a blue rim
+ * around a recoloured shirt. The error grows with the picture.
+ */
+export function autoExpand(width: number, height: number): number {
+  return Math.round(Math.min(Math.max(Math.max(width, height) / 200, DEFAULT_EXPAND), 24));
+}
+
+/**
+ * Roughly the long side / 150. The engine already matches colour and grain at
+ * the edge; a wider ramp half-blends new shapes over the original, such as a
+ * new neckline smeared over skin.
+ */
 export function autoSoften(width: number, height: number): number {
-  return Math.round(Math.min(Math.max(Math.max(width, height) / 40, 8), 64));
+  return Math.round(Math.min(Math.max(Math.max(width, height) / 150, 6), 32));
 }
 
 /** Region of the image that any edge setting can affect. */

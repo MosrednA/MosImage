@@ -1,11 +1,11 @@
-import { EditParameters, Expansion, JobResponse, LayerRecord, editWholeImage, fileUrl, fixFaces, generateImage, inpaintImage, outpaintImage } from "../api";
+import { EditParameters, Expansion, JobResponse, LayerRecord, editWholeImage, enhanceImage, fileUrl, fixFaces, generateImage, inpaintImage, outpaintImage } from "../api";
 import { ImageSize } from "../canvas/coordinates";
 import { validExpansion } from "../canvas/expansion";
 import { sketchMask, sketchedPicture } from "../canvas/sketch";
 import { EditorSettings, qualityOptions } from "../components/EditorSettings";
 import { canvasBlob, loadImage, maskedLayer, shownMask } from "../layers/bitmaps";
 import { MAX_LAYERS } from "../layers/stack";
-import { EditScope, Operation, SketchScope, taskFor } from "./operation";
+import { ENHANCE_DETAIL, EditScope, EnhanceLevel, FaceMode, Operation, SketchScope, taskFor } from "./operation";
 
 /** A full generation, the selected footprint of a regional AI edit, an edit of one layer, or the fixed faces. */
 export type LayerResult = { kind: "selection"; mask: Blob; name: string; replaces: string | null }
@@ -44,6 +44,8 @@ export interface SubmissionInput {
   sketch: Blob | null;
   sketchScope: SketchScope;
   editScope: EditScope;
+  faceMode: FaceMode;
+  enhanceLevel: EnhanceLevel;
   /** The layer Edit works on alone. */
   editLayer: LayerRecord | null;
   /** The layer a regional edit blends into the scene. */
@@ -116,7 +118,13 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
   if (operation === "faces") {
     if (!source || !input.hasDocument) throw new Error("Open an image first.");
     // A selection limits which faces are fixed.
-    return asLayer(await fixFaces(await input.picture(), withReferences, mask), { kind: "faces", name: "Fixed faces" });
+    return asLayer(await fixFaces(await input.picture(), { ...withReferences, faithful: input.faceMode === "faithful" }, mask), { kind: "faces", name: "Fixed faces" });
+  }
+  if (operation === "enhance") {
+    if (!source || !input.hasDocument) throw new Error("Open an image first.");
+    // Without a selection the whole picture is enhanced and covers the canvas.
+    const created = await enhanceImage(await input.picture(), { ...parameters, model_name: refinements.model_name, detail: ENHANCE_DETAIL[input.enhanceLevel] }, mask);
+    return asLayer(created, mask ? { kind: "selection", mask, name: "Enhanced", replaces: null } : { kind: "generation", name: "Enhanced" });
   }
   if (task === "text-to-image") {
     const created = await generateImage({ ...withReferences, width: settings.width, height: settings.height });

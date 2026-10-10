@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from app import storage
 from app.config import settings
+from app.jobs import JobCancelled
 from app.main import app
 from app.schemas import InpaintForm
 from app.services import run_inpaint
@@ -64,10 +65,28 @@ class InpaintControlTests(unittest.TestCase):
                 for path in (settings.input_dir, settings.mask_dir, settings.output_dir):
                     self.assertEqual(list(path.iterdir()), [])
 
+    def test_cancelled_or_rejected_edits_keep_the_model_loaded(self) -> None:
+        for error in (JobCancelled(), ValueError("No faces found")):
+            with self.subTest(error=type(error).__name__), TemporaryDirectory() as directory:
+                root = Path(directory)
+                with patch.object(settings, "data_dir", root), patch.object(settings, "image_dir", root / "images"), patch.object(settings, "db_path", root / "app.db"):
+                    storage.ensure_storage()
+                    provider = MagicMock()
+                    provider.inpaint.side_effect = error
+                    source = Image.new("RGB", (64, 64), "purple")
+                    mask = Image.new("L", source.size, 0)
+                    mask.paste(255, (16, 16, 48, 48))
+                    with patch("app.services.registry.activate", return_value=provider), self.assertRaises(type(error)):
+                        run_inpaint(InpaintForm(prompt="mushroom"), image_bytes(source), "source.png", image_bytes(mask), "mask.png", MagicMock())
+                    # The next edit starts without a full model load.
+                    provider.unload.assert_not_called()
+                    for path in (settings.input_dir, settings.mask_dir, settings.output_dir):
+                        self.assertEqual(list(path.iterdir()), [])
+
     def test_service_generates_fully_inside_a_soft_selection(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            with patch.object(settings, "data_dir", root), patch.object(settings, "image_dir", root / "images"), patch.object(settings, "db_path", root / "app.db"):
+            with patch.object(settings, "data_dir", root), patch.object(settings, "image_dir", root / "images"), patch.object(settings, "db_path", root / "app.db"), patch.object(settings, "inpaint_minimum_dimension", 0):
                 storage.ensure_storage()
                 provider = MagicMock()
 

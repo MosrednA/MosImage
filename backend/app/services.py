@@ -11,10 +11,10 @@ from typing import Literal
 from PIL import Image
 
 from . import references, storage
-from .compositing import prepare_inpaint_workspace, prepare_outpaint_workspace
+from .compositing import FAST_PNG, INPAINT_GENERATION_OVERLAP, prepare_inpaint_workspace, prepare_outpaint_workspace
 from .config import settings
-from .jobs import JobControl
-from .models.base import ModelReference
+from .jobs import JobCancelled, JobControl
+from .models.base import ImageModelProvider, ModelReference
 from .models.registry import registry
 from .schemas import EditRequest, InpaintForm, OutpaintForm, TextToImageRequest
 
@@ -56,8 +56,8 @@ def run_text_to_image(request: TextToImageRequest, control: JobControl) -> list[
             )
         control.raise_if_cancelled()
         return storage.create_generations(generation_values)
-    except BaseException:
-        provider.unload()
+    except BaseException as error:
+        release_after_failure(provider, error)
         for output_path in output_paths:
             output_path.unlink(missing_ok=True)
         raise
@@ -102,8 +102,8 @@ def run_image_edit(request: EditRequest, image_bytes: bytes, image_name: str | N
             )
         control.raise_if_cancelled()
         return storage.create_generations(generation_values)
-    except BaseException:
-        provider.unload()
+    except BaseException as error:
+        release_after_failure(provider, error)
         for path in (input_path, *output_paths):
             path.unlink(missing_ok=True)
         raise
@@ -139,8 +139,8 @@ def prepare_outpaint_images(content: bytes, request: OutpaintForm) -> tuple[byte
     mask = Image.new("L", size, 255)
     mask.paste(0, (request.left, request.top, request.left + source.width, request.top + source.height))
     image_buffer, mask_buffer = BytesIO(), BytesIO()
-    canvas.save(image_buffer, "PNG")
-    mask.save(mask_buffer, "PNG")
+    canvas.save(image_buffer, "PNG", **FAST_PNG)
+    mask.save(mask_buffer, "PNG", **FAST_PNG)
     return image_buffer.getvalue(), mask_buffer.getvalue()
 
 
@@ -171,15 +171,18 @@ def _run_masked_edit(
                 workspace = prepare_outpaint_workspace(
                     input_path, mask_path, Path(temporary_dir), settings.inpaint_max_dimension,
                     settings.inpaint_context_ratio, settings.inpaint_minimum_context,
+                    minimum_dimension=settings.inpaint_minimum_dimension,
                 )
             else:
-                # Generate throughout the selected footprint; the soft mask
-                # belongs to final compositing, not to retaining old content
-                # during denoising. Pixels beyond that footprint stay exact.
+                # Generate throughout the selected footprint, one token past
+                # it; the soft mask belongs to final compositing, not to
+                # retaining old content during denoising. Pixels beyond that
+                # footprint stay exact.
                 workspace = prepare_inpaint_workspace(
                     input_path, mask_path, Path(temporary_dir), settings.inpaint_max_dimension,
                     0, request.context_padding, composite_feather=request.blend_feather,
-                    center_selection=True,
+                    center_selection=True, generation_growth=INPAINT_GENERATION_OVERLAP,
+                    minimum_dimension=settings.inpaint_minimum_dimension,
                 )
             for index in range(request.count):
                 output_path = _new_image_path(settings.output_dir, "output")
@@ -197,11 +200,11 @@ def _run_masked_edit(
                     green = workspace.source.convert("RGB")
                     with Image.open(mask_path) as border:
                         green.paste((0, 255, 0), mask=border.convert("L"))
-                    green.save(green_path)
+                    green.save(green_path, **FAST_PNG)
                     full_output = Path(temporary_dir) / f"full-output-{index}.png"
                     seed, _model_width = provider.outpaint(iteration, green_path, full_output, iteration_control)
                     with Image.open(full_output) as result:
-                        result.resize(workspace.source.size, Image.Resampling.LANCZOS).crop(workspace.crop_box).save(model_output_path)
+                        result.resize(workspace.source.size, Image.Resampling.LANCZOS).crop(workspace.crop_box).save(model_output_path, **FAST_PNG)
                     iteration_workspace = replace(iteration_workspace, model_box=None)
                 elif iteration.detail_crop:
                     detail_request = EditRequest(prompt=iteration.prompt + (
@@ -247,11 +250,21 @@ def _run_masked_edit(
                 )
         control.raise_if_cancelled()
         return storage.create_generations(generation_values)
-    except BaseException:
-        provider.unload()
+    except BaseException as error:
+        release_after_failure(provider, error)
         for path in (input_path, mask_path, *output_paths):
             path.unlink(missing_ok=True)
         raise
+
+
+def release_after_failure(provider: ImageModelProvider, error: BaseException) -> None:
+    """Unload after a failure, which may leave GPU memory in an unknown state.
+
+    A cancelled run or a rejected input leaves the weights intact, and keeping
+    them loaded spares the next edit a full model load.
+    """
+    if not isinstance(error, (JobCancelled, ValueError)):
+        provider.unload()
 
 
 def _alternative_seed(seed: int | None, index: int) -> int | None:

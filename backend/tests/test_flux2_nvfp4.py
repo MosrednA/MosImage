@@ -122,7 +122,8 @@ class KleinMaskRoutingTests(unittest.TestCase):
                     return 42, 64
 
                 provider.inpaint.side_effect = render
-                with patch.object(settings, "data_dir", root), patch("app.services.registry.activate", return_value=provider), patch("app.services.storage.to_relative", side_effect=str), patch("app.services.storage.create_generations", return_value=[1]) as save:
+                # Native model size, so the mask stays binary; enlargement is tested in test_compositing.
+                with patch.object(settings, "data_dir", root), patch.object(settings, "inpaint_minimum_dimension", 0), patch("app.services.registry.activate", return_value=provider), patch("app.services.storage.to_relative", side_effect=str), patch("app.services.storage.create_generations", return_value=[1]) as save:
                     run_inpaint(InpaintForm(prompt="scene", model_name=model), image_buffer.getvalue(), "source.png", mask_buffer.getvalue(), "mask.png", MagicMock())
                 self.assertEqual(set(masks[0]), {0, 255})
                 record = save.call_args.args[0][0]

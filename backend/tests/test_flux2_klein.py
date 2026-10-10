@@ -90,6 +90,23 @@ class Flux2KleinPlacementTests(unittest.TestCase):
                 self.provider._load_pipe("offload", "inpaint", control)
         self.assertFalse(self.provider.info().loaded)
 
+    def test_cancelling_during_denoising_keeps_the_model_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (64, 64), "purple").save(root / "source.png")
+            Image.new("L", (64, 64), 255).save(root / "mask.png")
+            pipe = MagicMock(side_effect=JobCancelled())
+            self.provider._pipes = {"inpaint": pipe, "text-to-image": pipe}
+            self.provider._placement = "cuda"
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), \
+                    patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_placement_for", return_value="cuda"):
+                with self.assertRaises(JobCancelled):
+                    self.provider.inpaint(InpaintForm(prompt="moss"), root / "source.png", root / "mask.png", root / "output.png", MagicMock())
+                with self.assertRaises(JobCancelled):
+                    self.provider.generate(TextToImageRequest(prompt="moss"), root / "output.png", MagicMock())
+        # The loop holds no state between calls, so the next edit reuses the weights and prompt cache.
+        self.assertEqual(self.provider.info().loaded_pipelines, ["inpaint:cuda", "text-to-image:cuda"])
+
     def test_inpaint_passes_mask_and_strength_to_the_model(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -224,8 +241,12 @@ class Flux2KleinPlacementTests(unittest.TestCase):
     def test_prompt_is_encoded_once_for_repeated_proposals_until_unload(self) -> None:
         pipe = MagicMock()
         pipe.encode_prompt.return_value = ("embeds", "ids")
-        self.assertEqual(self.provider._encode_prompt(pipe, "a cat"), "embeds")
-        self.provider._encode_prompt(pipe, "a cat")
+        with patch.object(self.provider, "_collect") as collect:
+            self.assertEqual(self.provider._encode_prompt(pipe, "a cat"), "embeds")
+            # The encoder's freed GPU blocks go back before the denoiser allocates.
+            collect.assert_called_once()
+            self.provider._encode_prompt(pipe, "a cat")
+            collect.assert_called_once()
         self.assertEqual(pipe.encode_prompt.call_count, 1)
         self.provider._encode_prompt(pipe, "a dog")
         self.assertEqual(pipe.encode_prompt.call_count, 2)

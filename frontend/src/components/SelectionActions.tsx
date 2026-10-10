@@ -6,6 +6,7 @@ export interface SelectionActionProps {
   onFill: () => void;
   onRemove: () => void;
   onFaces: () => void;
+  onEnhance: () => void;
   onToLayer: () => void;
   /** The layer last worked on, which the selection can become the mask of. */
   maskTarget: string | null;
@@ -23,7 +24,8 @@ export function SelectionActions(props: SelectionActionProps) {
   return <div className="selection-actions-bar" role="toolbar" aria-label="Selection actions" onPointerDown={event => event.stopPropagation()}>
     <button className="primary" disabled={disabled} title="Describe what should appear in the selection · Shift + Backspace" onClick={props.onFill}><Icon name="spark" />Generate</button>
     <button disabled={disabled} title="Remove what is selected and fill in the background" onClick={props.onRemove}><Icon name="eraser" />Remove</button>
-    <button disabled={disabled} title="Redraw the faces inside the selection sharper" onClick={props.onFaces}><Icon name="face" />Faces</button>
+    <button disabled={disabled} title="Sharpen the faces inside the selection" onClick={props.onFaces}><Icon name="face" />Faces</button>
+    <button disabled={disabled} title="Add fine detail inside the selection" onClick={props.onEnhance}><Icon name="enhance" />Enhance</button>
     <span className="selection-actions-divider" />
     <button disabled={disabled} title="Copy the selection to a new layer · Ctrl + J" onClick={props.onToLayer}><Icon name="layers" />To layer</button>
     {props.maskTarget && <button disabled={disabled} title={`Show only the part of “${props.maskTarget}” inside the selection`} onClick={props.onMaskLayer}>

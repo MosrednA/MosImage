@@ -1,12 +1,20 @@
 import { ImageTask } from "../api";
-import { CanvasTool } from "../canvas/tools";
+import { CanvasTool, isSelectionTool } from "../canvas/tools";
 
-export type Operation = "generate" | "edit" | "replace" | "remove" | "expand" | "sketch" | "faces";
+export type Operation = "generate" | "edit" | "replace" | "remove" | "expand" | "sketch" | "faces" | "enhance";
 
-/** Sketch and Fix faces run on FLUX.2 Klein's edit pipeline, so they count as edits. */
+/** Sketch, Fix faces and Enhance run on FLUX.2 Klein's edit pipeline, so they count as edits. */
 export function taskFor(operation: Operation): ImageTask {
-  return operation === "generate" ? "text-to-image" : operation === "edit" || operation === "sketch" || operation === "faces" ? "edit" : operation === "expand" ? "outpaint" : "inpaint";
+  return operation === "generate" ? "text-to-image" : operation === "edit" || operation === "sketch" || operation === "faces" || operation === "enhance" ? "edit"
+    : operation === "expand" ? "outpaint" : "inpaint";
 }
+
+/** Faithful sharpens faces from themselves, keeping expression and light; Redraw draws them anew. */
+export type FaceMode = "faithful" | "redraw";
+
+/** How much detail Enhance adds: the detail-enhancer LoRA's scale. */
+export type EnhanceLevel = "subtle" | "strong";
+export const ENHANCE_DETAIL: Record<EnhanceLevel, number> = { subtle: 0.4, strong: 0.7 };
 
 /** Render a sketch on its own patch of the picture, or redraw the whole picture around it. */
 export type SketchScope = "strokes" | "whole";
@@ -27,7 +35,7 @@ export function layerEditHint(layerName: string | null, referenceNames: readonly
 
 export function submitLabel(operation: Operation): string {
   return operation === "remove" ? "Remove" : operation === "expand" ? "Expand" : operation === "edit" ? "Edit"
-    : operation === "sketch" ? "Render" : operation === "faces" ? "Fix faces" : "Generate";
+    : operation === "sketch" ? "Render" : operation === "faces" ? "Fix faces" : operation === "enhance" ? "Enhance" : "Generate";
 }
 
 export function sketchHint(scope: SketchScope, hasSketch: boolean): string {
@@ -37,10 +45,17 @@ export function sketchHint(scope: SketchScope, hasSketch: boolean): string {
     : "Render redraws the whole picture around your sketch, so lighting and style match. Apply adds it as a new layer.";
 }
 
-export function facesHint(hasSelection: boolean, referenceNames: readonly string[] = []): string {
+export function facesHint(hasSelection: boolean, referenceNames: readonly string[] = [], mode: FaceMode = "faithful"): string {
   const which = hasSelection ? "Faces inside your selection" : "Every face in the picture";
-  const likeness = referenceNames.length ? ` ${joinNames(referenceNames)} ${referenceNames.length > 1 ? "keep" : "keeps"} the look of their reference.` : " Identity and expression stay the same.";
-  return `${which} ${hasSelection ? "are" : "is"} redrawn sharper and pasted back.${likeness} Apply adds the faces as a new layer.`;
+  const how = mode === "faithful" ? "sharpened from the face itself and pasted back" : "drawn anew and pasted back, for faces too blurry to sharpen";
+  const likeness = referenceNames.length ? ` ${joinNames(referenceNames)} ${referenceNames.length > 1 ? "keep" : "keeps"} the look of their reference.`
+    : mode === "faithful" ? " Expression and lighting stay the same." : " The expression can change.";
+  return `${which} ${hasSelection ? "are" : "is"} ${how}.${likeness} Apply adds the faces as a new layer.`;
+}
+
+export function enhanceHint(hasSelection: boolean): string {
+  const which = hasSelection ? "your selection" : "the whole picture";
+  return `Adds fine detail such as skin, fabric and foliage to ${which}; colours and composition stay. Large areas render in parts of about ten seconds each. Apply adds the result as a new layer.`;
 }
 
 /** "Anna", "Anna and Tom", "Anna, Tom and Mia". */
@@ -60,6 +75,7 @@ export function promptPlaceholder(operation: Operation, hasImage: boolean, refer
   if (operation === "remove") return "Optional: describe the background to restore…";
   if (operation === "sketch") return "What did you draw? e.g. a deer drinking at the water";
   if (operation === "faces") return "Optional: anything extra, e.g. eyes open, gentle smile";
+  if (operation === "enhance") return "Optional: what to bring out, e.g. the knit of the sweater";
   if (operation === "expand") return "Describe the scene or what to add beyond the edges…";
   if (referenceNames.length > 1) return `What are ${joinNames(referenceNames)} doing here? e.g. sitting together on the bench`;
   if (referenceNames.length) return `What is ${referenceNames[0]} doing here? e.g. sitting on the bench, reading`;
@@ -76,7 +92,9 @@ export function operationHint(operation: Operation, hasImage: boolean, hasMask: 
     const keep = referenceNames.length
       ? `${joinNames(referenceNames)} ${referenceNames.length > 1 ? "keep" : "keeps"} the look of their reference.`
       : "Faces and everything you don't mention stay as they are.";
-    return `The AI redraws the whole picture by your instruction. ${keep} Apply adds the result as a new layer.`;
+    // A fresh picture opens here with a selection tool ready: clicking an object switches to Replace.
+    const part = hasImage && isSelectionTool(tool) ? " To change one part, select it first." : "";
+    return `The AI redraws the whole picture by your instruction. ${keep}${part} Apply adds the result as a new layer.`;
   }
   if (operation === "expand") return "Describe the scene or new content. Your original image stays intact.";
   if (!hasImage) return "Describe a new image, or open one to edit.";

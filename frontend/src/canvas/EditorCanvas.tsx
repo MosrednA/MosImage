@@ -4,7 +4,7 @@ import { Icon } from "../components/Icon";
 import { SelectionActionProps, SelectionActions } from "../components/SelectionActions";
 import { isTyping } from "../hooks/useWindowEvents";
 import { HARDNESS_RANGE, OPACITY_RANGE } from "../layers/brush";
-import { DEFAULT_EXPAND, autoSoften } from "../masks/maskRefine";
+import { DEFAULT_EXPAND, autoExpand, autoSoften } from "../masks/maskRefine";
 import { ImageBox, paddedContextBox } from "./context";
 import { ImageSize, viewportPointToImage } from "./coordinates";
 import { BRUSH_RANGE, CanvasToolbar } from "./CanvasToolbar";
@@ -72,7 +72,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const cursorRef = useRef<HTMLDivElement | null>(null);
   const imageSize = useImageSize(imageUrl, props.onImageSize, props.onError);
   const [brushSize, setBrushSize] = useState(64);
-  const [expand, setExpand] = useState(DEFAULT_EXPAND);
+  const [expandOverride, setExpandOverride] = useState<number | null>(null);
   const [softenOverride, setSoftenOverride] = useState<number | null>(null);
   const [showContext, setShowContext] = useState(true);
   const [maskVisible, setMaskVisible] = useState(true);
@@ -85,6 +85,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const [sketchSize, setSketchSize] = useState<number>(SKETCH_SIZE.initial);
   const [sketchErase, setSketchErase] = useState(false);
   const { layerActive } = props;
+  const expand = expandOverride ?? (imageSize ? autoExpand(imageSize.width, imageSize.height) : DEFAULT_EXPAND);
   const soften = softenOverride ?? (imageSize ? autoSoften(imageSize.width, imageSize.height) : 0);
   const panning = tool === "move" || spacePan;
   const viewport = useViewport(stageRef, surfaceRef, imageSize, panning);
@@ -180,7 +181,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
         onFind={props.onFind} onSubject={props.onSubject}
         zoom={zoom} fitToStage={viewport.fitToStage} atActualSize={!viewport.fitToStage && viewport.manualZoom === 1} onZoom={value => viewport.setZoom(value)} onFit={viewport.fit} />
       {editing && mask.hasSelection && <SelectionBar disabled={disabled}
-        expand={expand} onExpand={setExpand} soften={soften} softenAuto={softenOverride === null} onSoften={setSoftenOverride}
+        expand={expand} onExpand={setExpandOverride} soften={soften} softenAuto={softenOverride === null} onSoften={setSoftenOverride}
         contextPadding={contextPadding} onContextPadding={value => { setShowContext(true); props.onContextPadding(value); }}
         showContext={showContext} onToggleContext={() => setShowContext(value => !value)}
         maskVisible={maskVisible} onToggleMask={() => setMaskVisible(value => !value)}

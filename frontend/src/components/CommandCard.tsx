@@ -1,5 +1,5 @@
 import { Ref } from "react";
-import { EditScope, Operation, SketchScope, promptPlaceholder, submitLabel } from "../generation/operation";
+import { EditScope, EnhanceLevel, FaceMode, Operation, SketchScope, promptPlaceholder, submitLabel } from "../generation/operation";
 import { Icon } from "./Icon";
 
 export interface ActiveReference { id: number; name: string; imageUrl: string }
@@ -15,6 +15,10 @@ interface Props {
   onEditScope?: (scope: EditScope) => void;
   sketchScope: SketchScope;
   onSketchScope: (scope: SketchScope) => void;
+  faceMode: FaceMode;
+  onFaceMode: (mode: FaceMode) => void;
+  enhanceLevel: EnhanceLevel;
+  onEnhanceLevel: (level: EnhanceLevel) => void;
   settingsLabel: string;
   prompt: string;
   references: readonly ActiveReference[];
@@ -43,8 +47,17 @@ export function CommandCard(props: Props) {
             <button aria-pressed={operation === "replace"} disabled={locked} onClick={() => props.onOperation("replace")}>Replace</button>
             <button aria-pressed={operation === "remove"} disabled={locked} onClick={() => props.onOperation("remove")}>Remove</button>
             <button aria-pressed={operation === "sketch"} disabled={locked} title="Paint rough shapes and let the AI render them · P" onClick={() => props.onOperation("sketch")}>Sketch</button>
-            <button aria-pressed={operation === "faces"} disabled={locked} title="Redraw blurry or distorted faces sharper" onClick={() => props.onOperation("faces")}>Faces</button>
+            <button aria-pressed={operation === "faces"} disabled={locked} title="Sharpen blurry or distorted faces" onClick={() => props.onOperation("faces")}>Faces</button>
+            <button aria-pressed={operation === "enhance"} disabled={locked} title="Add fine detail to the picture or the selection" onClick={() => props.onOperation("enhance")}>Enhance</button>
           </div>
+          {operation === "faces" && <div className="segmented compact" aria-label="How to fix faces">
+            <button aria-pressed={props.faceMode === "faithful"} disabled={locked} title="Sharpen each face from itself; expression and lighting stay" onClick={() => props.onFaceMode("faithful")}>Faithful</button>
+            <button aria-pressed={props.faceMode === "redraw"} disabled={locked} title="Draw each face anew, for faces too blurry to sharpen; the expression can change" onClick={() => props.onFaceMode("redraw")}>Redraw</button>
+          </div>}
+          {operation === "enhance" && <div className="segmented compact" aria-label="How much detail">
+            <button aria-pressed={props.enhanceLevel === "subtle"} disabled={locked} title="Believable texture; colours and shapes stay" onClick={() => props.onEnhanceLevel("subtle")}>Subtle</button>
+            <button aria-pressed={props.enhanceLevel === "strong"} disabled={locked} title="More texture; small details may be reinvented" onClick={() => props.onEnhanceLevel("strong")}>Strong</button>
+          </div>}
           {operation === "sketch" && <div className="segmented compact" aria-label="What to render">
             <button aria-pressed={props.sketchScope === "strokes"} disabled={locked} title="Render only the sketched area; the rest stays exactly as it is" onClick={() => props.onSketchScope("strokes")}>Only the sketch</button>
             <button aria-pressed={props.sketchScope === "whole"} disabled={locked} title="Redraw the whole picture around the sketch, for matching light and style" onClick={() => props.onSketchScope("whole")}>Whole picture</button>

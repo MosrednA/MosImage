@@ -12,7 +12,7 @@ import { validExpansion } from "./canvas/expansion";
 import { CropCanvas } from "./canvas/CropCanvas";
 import { CropRatio, CropRect, cropForRatio, fullCrop, ratioValue, resizeCrop, validCrop } from "./canvas/crop";
 import { errorMessage } from "./errors";
-import { EditScope, Operation, SketchScope, isWholeImage } from "./generation/operation";
+import { EditScope, EnhanceLevel, FaceMode, Operation, SketchScope, isWholeImage } from "./generation/operation";
 import { CommandState, canSubmit, commandHint } from "./generation/commandState";
 import { LayerResult, submitJob } from "./generation/submission";
 import { SettingsControls, defaultSettings, settingsSummary } from "./components/EditorSettings";
@@ -82,6 +82,8 @@ export default function App() {
   const [sketch, setSketch] = useState<Blob | null>(null);
   const [sketchClear, setSketchClear] = useState(0);
   const [sketchScope, setSketchScope] = useState<SketchScope>("strokes");
+  const [faceMode, setFaceMode] = useState<FaceMode>("faithful");
+  const [enhanceLevel, setEnhanceLevel] = useState<EnhanceLevel>("subtle");
   // Crop works on the picture as you see it; the image is a flattened copy, released when crop ends.
   const [crop, setCrop] = useState<{ rect: CropRect; ratio: CropRatio; imageUrl: string } | null>(null);
   const refs = useReferences(document?.id ?? null, setError);
@@ -250,9 +252,10 @@ export default function App() {
         ? await proposeAlternatives(submitted.documentId, next.generation_ids, submitted.operation, submitted.revisionId ?? undefined, submitted.layerOffset) : null;
       if (isDisposed()) return;
       setAlternatives(generated); setProposal(revision); setLayerResult(submitted?.result ?? null); setSelected(0); setCompare(false);
-      await refresh();
     }
-    setModels(await listModels());
+    // The result shows now; history, documents and the loaded model catch up in the background.
+    void Promise.all([next.generation_ids.length ? refresh() : null, listModels().then(setModels)])
+      .catch(err => { if (!isDisposed()) setError(errorMessage(err)); });
   }
 
   async function perform(action: () => Promise<void>) {
@@ -267,7 +270,9 @@ export default function App() {
     setSource(file); setDocument(record); setSize({ width: record.canvas_width, height: record.canvas_height });
     selection.reset(); setAlternatives([]); setProposal(null); setCompare(false);
     setBlendTarget(null); setLayerResult(null);
-    setOperation("replace"); setTool("object"); setExpansion(initialExpansion); setLibraryOpen(false); jobs.setJob(null); setCrop(null);
+    // Without a selection the prompt edits the whole picture; clicking an object switches to Replace.
+    regionalOperation.current = "replace"; hadSelection.current = false;
+    setOperation("edit"); setEditScope("visible"); setTool("object"); setExpansion(initialExpansion); setLibraryOpen(false); jobs.setJob(null); setCrop(null);
   }
   async function openFile(file: File) {
     if (!file.type.startsWith("image/")) throw new Error("Choose a PNG, JPG or WebP image.");
@@ -375,10 +380,10 @@ export default function App() {
   function chooseOperation(next: Exclude<Operation, "expand">) {
     // The pencil belongs to Sketch; other operations go back to selecting.
     if (next === "sketch") { layers.select(null); setMaskingId(null); setTool("sketch"); }
-    else if (tool === "sketch" || (next === "faces" && tool === "transform")) setTool("object");
+    else if (tool === "sketch" || ((next === "faces" || next === "enhance") && tool === "transform")) setTool("object");
     setCrop(null);
-    // Faces work on the picture as you see it; a selection may narrow them down.
-    if (next === "faces") { layers.select(null); setMaskingId(null); }
+    // Faces and Enhance work on the picture as you see it; a selection may narrow them down.
+    if (next === "faces" || next === "enhance") { layers.select(null); setMaskingId(null); }
     if (isWholeImage(next)) {
       // With a layer selected, Edit starts on that layer alone.
       if (next === "edit") setEditScope(layers.active ? "layer" : "visible");
@@ -507,7 +512,7 @@ export default function App() {
       await layers.settled();
       const submission = await submitJob({
         operation: chosen, settings, referenceIds: referencesFor(chosen).map(item => item.id), source, size, hasDocument: !!document, layerCount: layers.layers.length,
-        mask, sketch, sketchScope, editScope, editLayer, expansion, picture: picture.editImage,
+        mask, sketch, sketchScope, editScope, faceMode, enhanceLevel, editLayer, expansion, picture: picture.editImage,
         blendLayer: picture.visibleLayers().find(layer => layer.id === blendTarget) ?? null,
       });
       jobs.queued(submission.created, submission.operation, submission.extras);
@@ -575,7 +580,7 @@ export default function App() {
 
   const command: CommandState = {
     operation, prompt: settings.prompt, hasImage: !!source, hasMask: !!mask, hasSketch: !!sketch,
-    expansionValid: !!size && validExpansion(size, expansion), editScope, editLayerName: editLayer?.name ?? null, sketchScope,
+    expansionValid: !!size && validExpansion(size, expansion), editScope, editLayerName: editLayer?.name ?? null, sketchScope, faceMode,
     referenceNames: references.map(item => item.name), tool, activeLayerName: activeLayer?.name ?? null, layerMasking, blendingName: blending?.name ?? null,
   };
   const submittable = !locked && online && !cudaBlocked && canSubmit(command);
@@ -601,7 +606,7 @@ export default function App() {
             sketchVisible={operation === "sketch"} sketchClearToken={sketchClear} onSketchChange={setSketch}
             onFind={text => void selection.findByText(text)} onSubject={() => void selection.selectSubject()}
             selectionActions={operation === "sketch" || blending ? null : {
-              disabled: locked, onFill: fillSelection, onRemove: () => void submit("remove"), onFaces: () => void submit("faces"),
+              disabled: locked, onFill: fillSelection, onRemove: () => void submit("remove"), onFaces: () => void submit("faces"), onEnhance: () => void submit("enhance"),
               onToLayer: () => void copySelectionToLayer(), maskTarget: maskTarget?.name ?? null, onMaskLayer: () => maskTarget && void addLayerMask(maskTarget.id, false),
             }}
             renderLayers={view => previewUrl ? null : <LayerStage layers={layers.layers} active={activeLayer} zoom={view.zoom} size={view.size} tool={tool} brushSize={view.brushSize} hide={view.hide}
@@ -622,6 +627,7 @@ export default function App() {
         ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} onApplySeparately={layerResult ? () => void apply(true) : undefined} />
         : <CommandCard promptRef={promptRef} operation={operation} onOperation={chooseOperation} hasImage={!!source} locked={locked}
           editScope={editScope} onEditScope={document && layers.layers.length ? chooseEditScope : undefined} sketchScope={sketchScope} onSketchScope={setSketchScope}
+          faceMode={faceMode} onFaceMode={setFaceMode} enhanceLevel={enhanceLevel} onEnhanceLevel={setEnhanceLevel}
           settingsLabel={settingsSummary(settings, operation, !!blending)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
           references={references.map(item => ({ id: item.id, name: item.name, imageUrl: fileUrl(item.subject_url ?? item.image_url) }))} onRemoveReference={id => refs.toggle(id)}
           hint={commandHint(command)} cancelled={job?.status === "cancelled"} jobActive={jobs.active} cancelling={jobs.cancelling} canSubmit={submittable}

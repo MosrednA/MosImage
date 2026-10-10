@@ -1,13 +1,14 @@
-"""AI image jobs: generate, edit, inpaint, expand and fix faces, plus the generation history."""
+"""AI image jobs: generate, edit, inpaint, expand, fix faces and enhance, plus the generation history."""
 from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import ValidationError
 
 from .. import storage
+from ..enhance import run_enhance
 from ..faces import run_face_fix
 from ..jobs import jobs
-from ..schemas import EditRequest, FaceFixRequest, GenerationRecord, InpaintForm, JobResponse, OutpaintForm, TextToImageRequest
+from ..schemas import EditRequest, EnhanceRequest, FaceFixRequest, GenerationRecord, InpaintForm, JobResponse, OutpaintForm, TextToImageRequest
 from ..services import run_image_edit, run_inpaint, run_outpaint, run_text_to_image
 from .common import check_references, http_errors, job_response, parse_parameters, read_uploaded_image, require_capability
 
@@ -98,6 +99,15 @@ async def fix_faces(image: UploadFile = File(...), parameters: str = Form(...), 
     content = await read_uploaded_image(image)
     mask_bytes = await read_uploaded_image(mask) if mask is not None else None
     return job_response(jobs.submit("edit", lambda control: run_face_fix(request, content, image.filename, mask_bytes, control)))
+
+
+@router.post("/enhance", response_model=JobResponse)
+async def enhance(image: UploadFile = File(...), parameters: str = Form(...), mask: UploadFile | None = File(None)) -> JobResponse:
+    request = parse_parameters(EnhanceRequest, parameters)
+    require_capability(request.model_name, "edit", "This model cannot enhance pictures.")
+    content = await read_uploaded_image(image)
+    mask_bytes = await read_uploaded_image(mask) if mask is not None else None
+    return job_response(jobs.submit("edit", lambda control: run_enhance(request, content, image.filename, mask_bytes, control)))
 
 
 @router.get("/history", response_model=list[GenerationRecord])

@@ -17,15 +17,15 @@ MosImage is two local processes: a FastAPI engine that owns the models, the job 
 
 1. A router in `routes/` validates the upload and parameters.
 2. It submits a job to `jobs.JobManager` and returns a job id at once.
-3. The job runs in `services.py` (generation, edit, inpaint, outpaint) or a specialised module (`faces.py`, `selection.py`).
+3. The job runs in `services.py` (generation, edit, inpaint, outpaint) or a specialised module (`faces.py`, `enhance.py`, `selection.py`).
 4. Services call an `ImageModelProvider` from `models/registry.py` and store results through `storage.py`.
-5. The UI polls `GET /api/jobs/{id}` until the job completes, fails or is cancelled.
+5. The UI polls `GET /api/jobs/{id}` every 250 ms until the job completes, fails or is cancelled. A result shows at once; history and model status refresh in the background.
 
 ### Routers (`routes/`)
 
 | Module | Prefix | Endpoints |
 |---|---|---|
-| `generation.py` | `/api` | generate, edit, inpaint, outpaint, faces, generation history |
+| `generation.py` | `/api` | generate, edit, inpaint, outpaint, faces, enhance, generation history |
 | `selection.py` | `/api` | point selection, select by text, subject cut-out |
 | `jobs.py` | `/api/jobs` | job status and cancellation |
 | `documents.py` | `/api/v2` | documents, revisions, layer assets, layers, AI alternatives, undo/redo |
@@ -50,19 +50,22 @@ Every runtime sits behind the `ImageModelProvider` protocol in `base.py`. `regis
 
 `nvfp4_runtime.py` loads the native CUDA NVFP4 transformer, shared with the benchmark tools.
 
-`klein_lora.py` provides reversible transformer-only low-rank residuals for the evaluated Consistency and FAL exports. It wraps BF16 or native NVFP4 linears, validates all targets before attachment and restores original modules on detach. Packed NVFP4 weights and scale buffers remain intact. App providers lazily resolve pinned, SHA-256-verified checkpoints under `models/adapters/` only for enabled options. Consistency V2 attaches at 0.6 on distilled 9B; FAL attaches at 1.1 before 4B placement/offload. Ordinary jobs reset unused adapters to zero. Unload and failed initial placement release adapter references with the shared pipeline. The research-only undistilled Base 4B model is absent from the registry. The [candidate report](../benchmarks/QUALITY_CANDIDATES_2026-10-09.md) preserves compatibility evidence and visual limits.
+Klein providers encode each prompt once and cache the embeddings. After a new encode they empty the CUDA cache. The 9B text encoder's weights (about 5 GiB) pass through the GPU per prompt, and Windows' system-memory fallback never makes an allocation fail. Without that step, the caching allocator kept those blocks while the denoiser's next allocations went to system RAM, about 20 times slower.
+
+`klein_lora.py` provides reversible transformer-only low-rank residuals for the evaluated Consistency, FAL and detail-enhancer exports. It wraps BF16 or native NVFP4 linears, validates all targets before attachment and restores original modules on detach. Packed NVFP4 weights and scale buffers remain intact. App providers lazily resolve pinned, SHA-256-verified checkpoints under `models/adapters/` only for enabled options. Consistency V2 attaches at 0.6 on distilled 9B; FAL attaches at 1.1 before 4B placement/offload. The detail enhancer attaches on 9B for Enhance and Faithful Fix faces at the requested scale; it and Consistency patch the same 112 linears, so the provider detaches one before attaching the other. `EditRequest.strength` below 1 runs a whole-picture edit through the inpaint pipeline with a full mask, so only the later steps are redrawn. Ordinary jobs reset unused adapters to zero. Unload and failed initial placement release adapter references with the shared pipeline. The research-only undistilled Base 4B model is absent from the registry. The [candidate report](../benchmarks/QUALITY_CANDIDATES_2026-10-09.md) preserves compatibility evidence and visual limits.
 
 ### Image processing
 
 | Module | Purpose |
 |---|---|
-| `compositing.py` | Context crops, separate generation/blend masks, colour-drift correction, seam matching for expansion and protected compositing |
+| `compositing.py` | Context crops, model sizing, separate generation/blend masks, colour-drift correction, seam matching, grain matching and protected compositing |
 | `selection.py` | SAM 2.1 Tiny point selection, text selection and subject cut-outs |
 | `detection.py` | Grounding DINO tiny text-to-box detection |
 | `matting.py` | ViTMatte edge refinement for hair and fur |
 | `faces.py` | Face detection, crop, re-render and blend for Fix faces |
+| `enhance.py` | Tile layout, tone keeping and overlap blending for Enhance |
 
-Masked edits use opaque generation coverage inside the selected footprint and the original soft alpha for final compositing. Expansion grows its generation mask by 32 pixels after resizing to model resolution, while its final blend reaches only 16 native pixels into the original. Colour-drift reference pixels exclude the larger regenerated footprint. The service chooses the named inpaint or outpaint workspace; providers receive the prepared image and mask through the existing interface. [Paired validation](../benchmarks/EDIT_MASK_RESULTS_2026-10-09.md) records visual limits, protected pixels and runtime measurements.
+Masked edits use opaque generation coverage inside the selected footprint and the original soft alpha for final compositing. Expansion grows its generation mask by 32 pixels after resizing to model resolution, while its final blend reaches only 16 native pixels into the original. Colour-drift reference pixels exclude the larger regenerated footprint. Inpaint grows its generation mask by one 16 px token after resizing; the tone offset in that hidden ring is carried into the selection with a tolerance, so only small offsets move. Grain lost to the model is restored as seeded monochrome noise measured outside the selection. After a cancel or a rejected request the model stays loaded; other failures unload it, since GPU memory may be in an unknown state. The service chooses the named inpaint or outpaint workspace; providers receive the prepared image and mask through the existing interface. [Paired validation](../benchmarks/EDIT_MASK_RESULTS_2026-10-09.md) records visual limits, protected pixels and runtime measurements.
 
 Optional Fine detail sends the contextual selected crop through `provider.edit` at full strength, then uses the same protected compositor. Specialized outpaint sends the full green-border canvas through `provider.outpaint` on distilled Fast4, then maps the full result into the outpaint workspace for protected seam compositing. The API rejects incompatible models, sampling and operations before queueing. Generation migration `generations.0004_quality_options` stores `consistency_lora`, `detail_crop` and `specialized_outpaint` as booleans; older records default to false. `qualityOptions` in EditorSettings derives effective options from the current operation while retaining previous model, sampler and strength preferences.
 
