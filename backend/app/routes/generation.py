@@ -40,7 +40,8 @@ async def edit_image(image: UploadFile = File(...), parameters: str = Form(...))
 async def inpaint(
     prompt: str = Form(...),
     negative_prompt: str | None = Form(None),
-    model_name: str = Form("flux2-klein-9b-nvfp4"),
+    # Empty means the Quality model of this device.
+    model_name: str | None = Form(None),
     seed: int | None = Form(None),
     runtime_mode: str = Form("balanced"),
     steps: int = Form(4),
@@ -61,7 +62,7 @@ async def inpaint(
         request = InpaintForm(
             prompt=prompt,
             negative_prompt=negative_prompt,
-            model_name=model_name,
+            **({"model_name": model_name} if model_name else {}),
             seed=seed,
             runtime_mode=runtime_mode,
             steps=steps,
