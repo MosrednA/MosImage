@@ -11,7 +11,7 @@ from typing import Literal
 from PIL import Image
 
 from . import references, storage
-from .compositing import FAST_PNG, INPAINT_GENERATION_OVERLAP, prepare_inpaint_workspace, prepare_outpaint_workspace
+from .compositing import FAST_PNG, INPAINT_GENERATION_OVERLAP, expansion_mask, prepare_inpaint_workspace, prepare_outpaint_workspace
 from .config import settings
 from .jobs import JobCancelled, JobControl
 from .models.base import ImageModelProvider, ModelReference
@@ -136,8 +136,7 @@ def prepare_outpaint_images(content: bytes, request: OutpaintForm) -> tuple[byte
         raise ValueError("The expanded canvas must fit within 4096 × 4096 pixels")
     canvas = Image.new("RGBA", size, (128, 128, 128, 0))
     canvas.paste(source, (request.left, request.top))
-    mask = Image.new("L", size, 255)
-    mask.paste(0, (request.left, request.top, request.left + source.width, request.top + source.height))
+    mask = expansion_mask(size, (request.left, request.top, request.left + source.width, request.top + source.height))
     image_buffer, mask_buffer = BytesIO(), BytesIO()
     canvas.save(image_buffer, "PNG", **FAST_PNG)
     mask.save(mask_buffer, "PNG", **FAST_PNG)

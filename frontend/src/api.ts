@@ -192,6 +192,8 @@ export interface RevisionRecord {
   accepted: boolean;
   created_at: string;
   alternatives: AlternativeRecord[];
+  /** The layers over this revision's background; an Expand proposal has them moved with the content. */
+  layers: LayerRecord[];
 }
 
 export interface LoadModelRequest {

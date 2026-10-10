@@ -1,11 +1,11 @@
 import { MutableRefObject, useEffect, useRef, useState } from "react";
-import { DocumentRecord, GenerationRecord, fileUrl } from "../api";
+import { DocumentRecord, GenerationRecord, RevisionRecord, fileUrl } from "../api";
 import { ImageSize } from "../canvas/coordinates";
 import { errorMessage } from "../errors";
 import { LayerResult } from "../generation/submission";
 import { FlatLayer, flatten, loadImage, shownMask } from "../layers/bitmaps";
 import { generationPlacement } from "../layers/geometry";
-import { editedLayer } from "./usePicture";
+import { editedLayer, flattenVisible, isShown } from "./usePicture";
 
 interface Options {
   result: LayerResult | null;
@@ -53,4 +53,31 @@ export function useResultPreview({ result, chosen, source, size, documentRef, pi
   }, [result, chosen, source, size]);
 
   return url;
+}
+
+/**
+ * Previews an Expand proposal as Apply leaves it: the new background with the
+ * layers moved along on top. Without visible layers that is the proposal itself.
+ */
+export function useExpansionPreview(proposal: RevisionRecord | null, index: number, onError: (message: string) => void): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  const latest = useRef(onError);
+  latest.current = onError;
+  const alternative = proposal?.alternatives[index];
+  const layered = !!proposal?.layers.some(isShown);
+
+  useEffect(() => {
+    setUrl(null);
+    if (!proposal || !alternative || !layered) return;
+    let disposed = false;
+    let created: string | null = null;
+    void (async () => {
+      const image = await loadImage(fileUrl(alternative.output_image_url));
+      const blob = await flattenVisible(image, { width: image.naturalWidth, height: image.naturalHeight }, proposal.layers);
+      if (!disposed) { created = URL.createObjectURL(blob); setUrl(created); }
+    })().catch(err => { if (!disposed) latest.current(errorMessage(err)); });
+    return () => { disposed = true; if (created) URL.revokeObjectURL(created); };
+  }, [proposal, alternative, layered]);
+
+  return alternative && !layered ? fileUrl(alternative.output_image_url) : url;
 }

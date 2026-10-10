@@ -119,9 +119,10 @@ describe("submitJob", () => {
     const whole = await submitJob(input({ operation: "edit" }));
     expect(whole.extras.result?.kind).toBe("generation");
   });
-  it("moves layers along when expanding", async () => {
-    const submission = await submitJob(input({ operation: "expand", expansion: { left: 64, top: 32, right: 0, bottom: 0 } }));
-    expect(vi.mocked(outpaintImage)).toHaveBeenCalled();
+  it("expands the picture as you see it and moves layers along", async () => {
+    const visible = new File(["with layers"], "picture.png");
+    const submission = await submitJob(input({ operation: "expand", expansion: { left: 64, top: 32, right: 0, bottom: 0 }, picture: async () => visible }));
+    expect(vi.mocked(outpaintImage).mock.calls[0][0]).toBe(visible);
     expect(submission).toMatchObject({ operation: "outpaint", extras: { layerOffset: { x: 64, y: 32 } } });
   });
   it("refuses another layer at the limit", async () => {

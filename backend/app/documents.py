@@ -11,6 +11,7 @@ from PIL import Image, ImageOps
 
 from . import layers as layer_store
 from . import storage
+from .compositing import FAST_PNG, rebase_expansion
 from .config import settings
 
 
@@ -217,6 +218,11 @@ def create_alternative_proposal(
     if any(item["task"] != expected_task for item in resolved):
         raise ValueError("Generation task does not match the proposed operation")
 
+    with storage.connect() as db:
+        parent = db.execute("SELECT composite_image_path, layers FROM revisions WHERE id = ?", (document["current_revision_id"],)).fetchone()
+    parent_layers = layer_store.parse(parent["layers"]) if parent else []
+    # Expand continued the picture with its layers, which stay on top of the new background.
+    rebase = operation_type == "outpaint" and bool(parent_layers)
     copied_paths: list[Path] = []
     copied_mask: Path | None = None
     proposal_size: tuple[int, int] | None = None
@@ -231,13 +237,15 @@ def create_alternative_proposal(
             if proposal_size is not None and proposal_size != (width, height):
                 raise ValueError("Alternative dimensions must match each other")
             proposal_size = (width, height)
-            copied_paths.append(_copy_revision_asset(source, "alternative"))
+            copied_paths.append(
+                _rebased_expansion(generation, _absolute_path(parent["composite_image_path"]), layer_offset)
+                if rebase else _copy_revision_asset(source, "alternative")
+            )
         mask_relative = resolved[0].get("mask_image_path")
         if mask_relative:
             copied_mask = _copy_revision_asset(_absolute_path(mask_relative), "mask")
 
         with storage.connect() as db:
-            parent_layers = _layers_of(db, document["current_revision_id"])
             revision_id = _insert_revision(
                 db,
                 document_id=document_id,
@@ -646,6 +654,21 @@ def _copy_revision_asset(source: Path, prefix: str) -> Path:
     suffix = source.suffix.lower() if source.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"} else ".png"
     destination = settings.revision_dir / f"{prefix}-{uuid4().hex}{suffix}"
     shutil.copy2(source, destination)
+    return destination
+
+
+def _rebased_expansion(generation: dict[str, Any], background: Path, offset: tuple[int, int]) -> Path:
+    """Expand's result over the document's own background, so no layer is baked into it."""
+    if not generation.get("input_image_path"):
+        raise ValueError("This expansion did not keep the picture it continued")
+    with (
+        Image.open(_absolute_path(generation["output_image_path"])) as result,
+        Image.open(_absolute_path(generation["input_image_path"])) as seen,
+        Image.open(background) as original,
+    ):
+        rebased = rebase_expansion(result, seen, original, offset)
+    destination = settings.revision_dir / f"alternative-{uuid4().hex}.png"
+    rebased.save(destination, "PNG", **FAST_PNG)
     return destination
 
 

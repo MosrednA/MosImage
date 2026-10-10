@@ -213,9 +213,47 @@ def prepare_outpaint_workspace(
         minimum_context, composite_feather=0, generation_growth=OUTPAINT_GENERATION_OVERLAP,
         minimum_dimension=minimum_dimension,
     )
-    composite_mask = _inner_feather(_grow_mask(selection, OUTPAINT_BLEND_BAND), OUTPAINT_BLEND_BAND)
     # The overlap redraws the original itself, so every offset there is tone.
-    return replace(workspace, composite_mask=composite_mask, seam_mask=selection, seam_band=OUTPAINT_BLEND_BAND, seam_tolerance=None)
+    return replace(workspace, composite_mask=outpaint_composite_mask(selection), seam_mask=selection, seam_band=OUTPAINT_BLEND_BAND, seam_tolerance=None)
+
+
+def expansion_mask(size: tuple[int, int], original: CropBox) -> Image.Image:
+    """What an expansion redraws: everything around the original at `original`."""
+    mask = Image.new("L", size, 255)
+    mask.paste(0, original)
+    return mask
+
+
+def outpaint_composite_mask(selection: Image.Image) -> Image.Image:
+    """Where an expansion's result shows: the new area, fading out over a band inside the original."""
+    return _inner_feather(_grow_mask(selection, OUTPAINT_BLEND_BAND), OUTPAINT_BLEND_BAND)
+
+
+def rebase_expansion(result: Image.Image, seen: Image.Image, background: Image.Image, offset: tuple[int, int]) -> Image.Image:
+    """An expansion of `seen` with `background` under the original instead.
+
+    The model continued `seen`, the background with its visible layers, so the
+    new area matches what you see. The layers stay separate, so inside the
+    original the result keeps the background's own pixels; in the band where
+    the model's redraw fades in, it fades into the background instead of the
+    layers: result + (background - seen) * (1 - blend). Where the background
+    itself was visible, the result is unchanged.
+    """
+    left, top = offset
+    original = (left, top, left + background.width, top + background.height)
+    if seen.size != result.size or left < 0 or top < 0 or original[2] > result.width or original[3] > result.height:
+        raise ValueError("The expansion does not line up with the document.")
+    rebased = result.convert("RGBA")
+    blend = np.asarray(outpaint_composite_mask(expansion_mask(result.size, original)).crop(original))
+    band = blend > 0
+    inside = np.array(background.convert("RGBA"))
+    if band.any():
+        made = np.asarray(rebased.crop(original))[band].astype(np.float32)
+        kept = np.asarray(seen.convert("RGBA").crop(original))[band].astype(np.float32)
+        share = 1 - blend[band][:, None].astype(np.float32) / 255
+        inside[band] = np.rint(np.clip(made + (inside[band] - kept) * share, 0, 255)).astype(np.uint8)
+    rebased.paste(Image.fromarray(inside), (left, top))
+    return rebased
 
 
 def correct_color_drift(generated: Image.Image, source: Image.Image, mask: Image.Image) -> Image.Image:

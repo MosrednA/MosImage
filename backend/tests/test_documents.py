@@ -101,6 +101,11 @@ class DocumentPersistenceTests(unittest.TestCase):
             db.commit()
         proposal = documents.create_alternative_proposal(document["id"], [generation_id], "outpaint", document["current_revision_id"])
         self.assertEqual(documents.get_document(document["id"])["canvas_width"], 96)
+        # Without layers the background is the engine's result itself.
+        self.assertEqual(
+            (settings.data_dir / proposal["alternatives"][0]["output_image_path"]).read_bytes(),
+            (settings.data_dir / record["output_image_path"]).read_bytes(),
+        )
         accepted = documents.accept_alternative(document["id"], proposal["id"], proposal["alternatives"][0]["id"])
         self.assertEqual((accepted["canvas_width"], accepted["canvas_height"]), (160, 96))
         undone = documents.undo(document["id"])

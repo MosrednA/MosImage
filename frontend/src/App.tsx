@@ -38,9 +38,9 @@ import { useLayers } from "./hooks/useLayers";
 import { MAX_ACTIVE_REFERENCES, useReferences } from "./hooks/useReferences";
 import { useEngine } from "./hooks/useEngine";
 import { JobContext, useJobRunner } from "./hooks/useJobRunner";
-import { editedLayer, usePicture } from "./hooks/usePicture";
+import { editedLayer, usePicture, usePictureUrl } from "./hooks/usePicture";
 import { useFaceDetection } from "./hooks/useFaceDetection";
-import { useResultPreview } from "./hooks/useResultPreview";
+import { useExpansionPreview, useResultPreview } from "./hooks/useResultPreview";
 import { useSelectionTools } from "./hooks/useSelectionTools";
 import { isTyping, useWindowEvents } from "./hooks/useWindowEvents";
 
@@ -110,7 +110,8 @@ export default function App() {
   const reviewing = alternatives.length > 0;
   const locked = busy || reviewing;
   const chosen = alternatives[selected];
-  const proposalUrls = alternatives.map((item, index) => fileUrl(proposal?.alternatives[index]?.output_image_url ?? item.output_image_url));
+  // What the AI made of the picture as you saw it; an Expand proposal keeps the layers out of the background it stores.
+  const proposalUrls = alternatives.map(item => fileUrl(item.output_image_url));
   // References place people in a selection (Replace), the whole picture (Edit) or a new image (Generate).
   const referencesFor = (chosen: Operation) => ((chosen === "replace" || chosen === "edit" || chosen === "faces") && source) || chosen === "generate" ? refs.active : [];
   const references = referencesFor(operation);
@@ -127,9 +128,12 @@ export default function App() {
   // Fix faces shows the faces it finds, so you can leave some out or add others.
   const faceFinder = useFaceDetection({ active: operation === "faces" && !!source, picture: picture.editImage, source, layers: document?.layers, mask, size, setError });
   const generationPreviewUrl = useResultPreview({ result: layerResult, chosen, source, size, documentRef, picture: picture.editImage, onError: setError });
-  // Full generations and layer edits preview as Apply places them; regional results already show the whole picture.
+  const expansionPreviewUrl = useExpansionPreview(proposal, selected, setError);
+  // Expand shows the picture as you see it, which the new edges continue.
+  const expansionPictureUrl = usePictureUrl(operation === "expand" && !crop, picture.editImage, source, document?.layers, setError);
+  // Full generations, layer edits and Expand proposals preview as Apply places them; regional results already show the whole picture.
   const previewUrl = chosen && !compare ? layerResult && (layerResult.kind === "generation" || layerResult.kind === "layer") && document
-    ? generationPreviewUrl : proposalUrls[selected] : null;
+    ? generationPreviewUrl : proposal ? expansionPreviewUrl : proposalUrls[selected] : null;
 
   useEffect(() => { if (layers.activeId) setLastLayerId(layers.activeId); }, [layers.activeId]);
   const maskTarget = layers.layers.find(layer => layer.id === lastLayerId) ?? null;
@@ -605,7 +609,7 @@ export default function App() {
         {source && sourceUrl ? crop && size
           ? <CropCanvas imageUrl={crop.imageUrl} size={size} rect={crop.rect} ratio={ratioValue(crop.ratio, size)} onChange={rect => setCrop({ ...crop, rect })} disabled={locked} />
           : operation === "expand" && size
-          ? <ExpansionCanvas imageUrl={sourceUrl} size={size} expansion={expansion} onChange={setExpansion} disabled={locked} reviewing={reviewing} previewUrl={previewUrl} previewSize={chosen?.width && chosen.height ? { width: chosen.width, height: chosen.height } : null} />
+          ? <ExpansionCanvas imageUrl={expansionPictureUrl} size={size} expansion={expansion} onChange={setExpansion} disabled={locked} reviewing={reviewing} previewUrl={previewUrl} previewSize={chosen?.width && chosen.height ? { width: chosen.width, height: chosen.height } : null} />
           : <EditorCanvas imageUrl={sourceUrl} previewImageUrl={previewUrl} reviewing={reviewing} imageName={document?.name} onMaskChange={selection.setMask} tool={tool} disabled={locked} maskImportUrl={selection.maskUrl} clearToken={selection.clearToken}
             points={selection.points} onObjectPoint={point => void selection.objectPoint(point)} onRemovePoint={index => void selection.removePoint(index)} onClearSelection={selection.clear}
             onImageSize={setSize} onError={setError} contextPadding={settings.context_padding} onContextPadding={context_padding => setSettings(current => ({ ...current, context_padding }))} onHelp={() => setPanel("shortcuts")}

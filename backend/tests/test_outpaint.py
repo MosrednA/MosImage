@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 from pydantic import ValidationError
 
-from app.compositing import OUTPAINT_BLEND_BAND, prepare_inpaint_workspace, prepare_outpaint_workspace
+from app.compositing import OUTPAINT_BLEND_BAND, prepare_inpaint_workspace, prepare_outpaint_workspace, rebase_expansion
 from app.schemas import OutpaintForm, SelectionRequest
 from app.services import prepare_outpaint_images
 from fastapi.testclient import TestClient
@@ -148,6 +148,53 @@ class OutpaintTests(unittest.TestCase):
             self.assertTrue(np.all(np.asarray(reduced.composite_mask)[:, 128 + OUTPAINT_BLEND_BAND:] == 0))
             # The overlap redraws the original, so its whole offset is carried.
             self.assertEqual((native.seam_band, native.seam_tolerance), (OUTPAINT_BLEND_BAND, None))
+
+    def _expanded(self, picture: Image.Image, request: OutpaintForm, root: Path) -> tuple[Image.Image, Image.Image]:
+        """The engine's result for `picture`, with a model that draws flat grey, and the canvas it saw."""
+        buffer = BytesIO()
+        picture.save(buffer, "PNG")
+        canvas, mask = prepare_outpaint_images(buffer.getvalue(), request)
+        root.mkdir()
+        (root / "canvas.png").write_bytes(canvas)
+        (root / "mask.png").write_bytes(mask)
+        workspace = prepare_outpaint_workspace(root / "canvas.png", root / "mask.png", root, 1024, .5, 128)
+        with Image.open(workspace.model_input_path) as model_input:
+            Image.new("RGB", model_input.size, (150, 150, 150)).save(workspace.model_output_path)
+        workspace.composite_to(root / "result.png")
+        with Image.open(root / "result.png") as result, Image.open(root / "canvas.png") as seen:
+            return result.copy(), seen.copy()
+
+    def test_rebased_expansion_keeps_layers_out_of_the_background(self) -> None:
+        x, y = np.meshgrid(np.arange(96), np.arange(64))
+        background = Image.fromarray(np.stack([x * 2, y * 3, np.full_like(x, 50)], axis=-1).astype(np.uint8))
+        # A layer covers the left of the picture, up to its edge; the right shows the background.
+        picture = background.copy()
+        picture.paste((200, 30, 30), (0, 0, 40, 64))
+        request = OutpaintForm(prompt="scene", left=32, right=32)
+        band = OUTPAINT_BLEND_BAND
+        with TemporaryDirectory() as directory:
+            result, seen = self._expanded(picture, request, Path(directory) / "layered")
+        rebased = np.asarray(rebase_expansion(result, seen, background, (32, 0))).astype(int)
+        made = np.asarray(result).astype(int)
+        flat = np.asarray(background.convert("RGBA")).astype(int)
+
+        self.assertTrue((rebased[:, :32] == made[:, :32]).all())  # The new area continues the picture with its layer.
+        self.assertTrue((rebased[:, 128:] == made[:, 128:]).all())
+        self.assertTrue((rebased[:, 32 + band:128 - band] == flat[:, band:96 - band]).all())  # No copy of the layer.
+        self.assertTrue((rebased[:, 128 - band:128] == made[:, 128 - band:128]).all())  # The blend stays where the background shows.
+        # Under the layer the redraw fades into the background, not into the layer.
+        self.assertLessEqual(np.abs(made[:, 32 + band - 2, :3] - (200, 30, 30)).max(), 3)
+        self.assertLessEqual(np.abs(rebased[:, 32 + band - 2] - flat[:, band - 2]).max(), 3)
+        self.assertTrue((rebased[:, 32 + band - 1] == flat[:, band - 1]).all())
+        with self.assertRaisesRegex(ValueError, "line up"):
+            rebase_expansion(result, seen, background, (100, 0))
+
+    def test_rebasing_an_expansion_of_the_background_itself_changes_nothing(self) -> None:
+        background = Image.new("RGB", (96, 64), (90, 110, 70))
+        background.paste((20, 40, 60), (0, 0, 30, 64))
+        with TemporaryDirectory() as directory:
+            result, seen = self._expanded(background, OutpaintForm(prompt="scene", left=32, top=16), Path(directory) / "plain")
+        self.assertEqual(rebase_expansion(result, seen, background, (32, 16)).tobytes(), result.tobytes())
 
     def test_selection_requires_bounded_finite_positive_points(self) -> None:
         for payload in ({"points": [{"x": 1, "y": 2, "label": 0}]}, {"points": [{"x": float("inf"), "y": 1, "label": 1}]}, {"points": []}):

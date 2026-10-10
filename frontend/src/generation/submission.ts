@@ -154,7 +154,8 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
   if (task === "outpaint") {
     if (!source || !size || !validExpansion(size, input.expansion)) throw new Error("Choose a valid canvas size first.");
     const { expansion } = input;
-    return { created: await outpaintImage(source, { ...parameters, ...expansion,
+    // The new edges continue the picture as you see it; the engine keeps the layers out of the background.
+    return { created: await outpaintImage(await input.picture(), { ...parameters, ...expansion,
       model_name: refinements.model_name, consistency_lora: refinements.consistency_lora,
       specialized_outpaint: refinements.specialized_outpaint,
       steps: refinements.specialized_outpaint ? 4 : parameters.steps,

@@ -4,7 +4,8 @@ import { ImageSize } from "./coordinates";
 import { expansionSize } from "./expansion";
 
 interface Props {
-  imageUrl: string;
+  /** The picture as you see it; null while it is being prepared. */
+  imageUrl: string | null;
   size: ImageSize;
   expansion: Expansion;
   onChange: (expansion: Expansion) => void;
@@ -48,7 +49,7 @@ export function ExpansionCanvas({ imageUrl, size, expansion, onChange, previewUr
     <div ref={stage} className="expansion-stage">
       <div className="expansion-surface" style={{ width: target.width * zoom, height: target.height * zoom }}>
         {previewUrl ? <img src={previewUrl} alt="Expanded image proposal" className="expansion-preview" /> : <>
-          <img src={imageUrl} alt="Original image" style={{ left: expansion.left * zoom, top: expansion.top * zoom, width: size.width * zoom, height: size.height * zoom }} />
+          {imageUrl && <img src={imageUrl} alt="Original image" style={{ left: expansion.left * zoom, top: expansion.top * zoom, width: size.width * zoom, height: size.height * zoom }} />}
           <span className="expansion-label">New space</span>
           {(["left", "top", "right", "bottom"] as const).map(side => <button key={side} className={`expansion-handle handle-${side}`} aria-label={`Drag ${side} edge`} disabled={disabled} onPointerDown={event => begin(event, side)} onPointerMove={move} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }} />)}
         </>}

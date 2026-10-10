@@ -4,13 +4,16 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import numpy as np
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app import documents, layers, main, storage
+from app import documents, layers, main, services, storage
+from app.compositing import OUTPAINT_BLEND_BAND
 from app.config import settings
+from app.schemas import OutpaintForm
 
 
 def image_bytes(mode: str, size: tuple[int, int], color: object, kind: str = "PNG") -> bytes:
@@ -91,7 +94,62 @@ class LayerTests(unittest.TestCase):
         self.assertFalse(storage.absolute_path(asset["path"]).exists())
         self.assertFalse(storage.absolute_path(mask["path"]).exists())
 
-    def test_background_edits_keep_layers_and_expand_moves_them_with_the_content(self) -> None:
+    def test_expand_continues_the_visible_picture_and_moves_layers_over_their_own_background(self) -> None:
+        asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
+        document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset)], "Add layer")
+        # The engine saw the background with the red layer on it and drew the new area beside it.
+        seen = Image.new("RGBA", (160, 64), (128, 128, 128, 0))
+        seen.paste((10, 20, 30, 255), (32, 0, 128, 64))
+        seen.paste((255, 0, 0, 255), (70, 27, 90, 37))
+        output = seen.copy()
+        output.paste((1, 2, 3, 255), (0, 0, 32, 64))
+        output.paste((1, 2, 3, 255), (128, 0, 160, 64))
+        generation = storage.create_generation({
+            "task": "outpaint", "prompt": "more garden", "negative_prompt": None, "model_name": "flux2-klein-9b-nvfp4",
+            "runtime_mode": "balanced", "seed": 1, "steps": 4, "guidance": 1.0, "width": 160, "height": 64, "strength": 1.0,
+            "input_image_path": self._save(seen, settings.input_dir / "input-wide.png"), "mask_image_path": None,
+            "output_image_path": self._save(output, settings.output_dir / "output-wide.png"),
+        })
+        proposal = documents.create_alternative_proposal(document["id"], [generation], "outpaint", layer_offset=(32, 0))
+        self.assertEqual(proposal["layers"][0]["x"], 80.0)
+        with Image.open(settings.data_dir / proposal["alternatives"][0]["output_image_path"]) as alternative:
+            self.assertEqual(alternative.getpixel((80, 32)), (10, 20, 30, 255))  # The background, not a copy of the layer.
+            self.assertEqual(alternative.getpixel((4, 32)), (1, 2, 3, 255))
+        accepted = documents.accept_alternative(document["id"], proposal["id"], proposal["alternatives"][0]["id"])
+        self.assertEqual((accepted["layers"][0]["x"], accepted["layers"][0]["y"]), (80.0, 32.0))
+        self.assertEqual((accepted["canvas_width"], accepted["canvas_height"]), (160, 64))
+
+    def test_expanding_a_layered_picture_from_engine_to_accepted_background(self) -> None:
+        # A layer covers the left of the picture, up to its edge, as an applied AI result often does.
+        asset = layers.save_asset(image_bytes("RGBA", (40, 64), (200, 30, 30, 255)), "image")
+        document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset, x=20.0)], "Add layer")
+        picture = Image.new("RGB", (96, 64), (10, 20, 30))
+        picture.paste((200, 30, 30), (0, 0, 40, 64))
+        buffer = io.BytesIO()
+        picture.save(buffer, "PNG")
+        provider = MagicMock()
+
+        def draw_grey(request, source_path, mask_path, output_path, control):
+            with Image.open(mask_path) as model_mask:
+                Image.new("RGB", model_mask.size, (150, 150, 150)).save(output_path)
+            return 7, model_mask.width
+
+        provider.inpaint.side_effect = draw_grey
+        with patch("app.services.registry.activate", return_value=provider):
+            generation_ids = services.run_outpaint(OutpaintForm(prompt="more garden", left=32, right=32), buffer.getvalue(), MagicMock())
+        proposal = documents.create_alternative_proposal(document["id"], generation_ids, "outpaint", document["current_revision_id"], (32, 0))
+        accepted = documents.accept_alternative(document["id"], proposal["id"], proposal["alternatives"][0]["id"])
+
+        self.assertEqual((accepted["layers"][0]["x"], accepted["canvas_width"]), (52.0, 160))
+        with Image.open(settings.data_dir / accepted["current_image_url"].removeprefix("/files/")) as background:
+            pixels = np.asarray(background.convert("RGBA")).astype(int)
+        # The new edge continues the layer on the left and the background on the right.
+        self.assertTrue((pixels[:, 31, 0] - pixels[:, 31, 1] > 30).all())
+        self.assertTrue((np.abs(pixels[:, 128, 0] - pixels[:, 128, 1]) < 5).all())
+        # Under the layer the background keeps its own pixels: moving the layer shows no copy of it.
+        self.assertTrue((pixels[:, 32 + OUTPAINT_BLEND_BAND:128 - OUTPAINT_BLEND_BAND] == (10, 20, 30, 255)).all())
+
+    def test_a_layered_expansion_needs_the_picture_the_engine_continued(self) -> None:
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
         document = documents.save_layers(self.document["id"], self.document["current_revision_id"], [self.layer(asset)], "Add layer")
         generation = storage.create_generation({
@@ -99,10 +157,9 @@ class LayerTests(unittest.TestCase):
             "runtime_mode": "balanced", "seed": 1, "steps": 4, "guidance": 1.0, "width": 160, "height": 64, "strength": 1.0,
             "input_image_path": None, "mask_image_path": None, "output_image_path": self._output((160, 64)),
         })
-        proposal = documents.create_alternative_proposal(document["id"], [generation], "outpaint", layer_offset=(32, 0))
-        self.assertEqual(proposal["layers"][0]["x"], 80.0)
-        accepted = documents.accept_alternative(document["id"], proposal["id"], proposal["alternatives"][0]["id"])
-        self.assertEqual((accepted["layers"][0]["x"], accepted["layers"][0]["y"]), (80.0, 32.0))
+        with self.assertRaisesRegex(ValueError, "picture it continued"):
+            documents.create_alternative_proposal(document["id"], [generation], "outpaint", layer_offset=(32, 0))
+        self.assertEqual(list(settings.revision_dir.glob("alternative-*")), [])
 
     def test_rejects_unknown_files_mismatched_masks_and_stale_bases(self) -> None:
         asset = layers.save_asset(image_bytes("RGBA", (20, 10), (255, 0, 0, 255)), "image")
@@ -168,8 +225,10 @@ class LayerTests(unittest.TestCase):
         self.assertEqual(client.put(f"{url}/layers", json=flat).status_code, 422)
 
     def _output(self, size: tuple[int, int]) -> str:
-        path = settings.output_dir / "output-wide.png"
-        Image.new("RGB", size, (1, 2, 3)).save(path)
+        return self._save(Image.new("RGB", size, (1, 2, 3)), settings.output_dir / "output-wide.png")
+
+    def _save(self, image: Image.Image, path: Path) -> str:
+        image.save(path)
         return storage.to_relative(path)
 
 
