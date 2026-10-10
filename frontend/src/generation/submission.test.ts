@@ -23,7 +23,7 @@ const layer = { id: "l1", name: "Hat", visible: true, opacity: 1 } as Submission
 function input(overrides: Partial<SubmissionInput>): SubmissionInput {
   return {
     operation: "replace", settings: { ...defaultSettings, prompt: "a red hat" }, referenceIds: [], source: picture, size: { width: 100, height: 80 },
-    hasDocument: true, layerCount: 0, mask: new Blob(["mask"]), sketch: null, sketchScope: "strokes", editScope: "visible", faceMode: "faithful", enhanceLevel: "subtle", editLayer: null, blendLayer: null,
+    hasDocument: true, layerCount: 0, mask: new Blob(["mask"]), sketch: null, sketchScope: "strokes", editScope: "visible", faceMode: "faithful", faces: null, enhanceLevel: "subtle", editLayer: null, blendLayer: null,
     expansion: { left: 128, top: 0, right: 128, bottom: 0 }, picture: async () => picture, ...overrides,
   };
 }
@@ -81,6 +81,13 @@ describe("submitJob", () => {
     expect(vi.mocked(fixFaces).mock.calls[0][1].faithful).toBe(true);
     await submitJob(input({ operation: "faces", faceMode: "redraw" }));
     expect(vi.mocked(fixFaces).mock.calls[1][1].faithful).toBe(false);
+    expect(vi.mocked(fixFaces).mock.calls[1][1].faces).toBeUndefined();
+  });
+  it("sends the faces picked on the canvas instead of the selection", async () => {
+    await submitJob(input({ operation: "faces", mask: new Blob(["faces"]), faces: [[10, 20, 40, 60]] }));
+    expect(vi.mocked(fixFaces).mock.calls[0][1].faces).toEqual([[10, 20, 40, 60]]);
+    expect(vi.mocked(fixFaces).mock.calls[0][2]).toBeNull();
+    await expect(submitJob(input({ operation: "faces", faces: [] }))).rejects.toThrow("Click a face");
   });
   it("enhances the selection or the whole picture on Quality, without references", async () => {
     const mask = new Blob(["detail"]);

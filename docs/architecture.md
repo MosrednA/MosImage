@@ -25,7 +25,7 @@ MosImage is two local processes: a FastAPI engine that owns the models, the job 
 
 | Module | Prefix | Endpoints |
 |---|---|---|
-| `generation.py` | `/api` | generate, edit, inpaint, outpaint, faces, enhance, generation history |
+| `generation.py` | `/api` | generate, edit, inpaint, outpaint, faces and finding them, enhance, generation history |
 | `selection.py` | `/api` | point selection, select by text, subject cut-out |
 | `jobs.py` | `/api/jobs` | job status and cancellation |
 | `documents.py` | `/api/v2` | documents, revisions, layer assets, layers, AI alternatives, undo/redo |

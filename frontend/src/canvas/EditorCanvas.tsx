@@ -1,5 +1,5 @@
 import { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from "react";
-import { SelectionPoint } from "../api";
+import { FaceBox, SelectionPoint } from "../api";
 import { Icon } from "../components/Icon";
 import { SelectionActionProps, SelectionActions } from "../components/SelectionActions";
 import { isTyping } from "../hooks/useWindowEvents";
@@ -63,10 +63,19 @@ interface EditorCanvasProps {
   onSketchChange: (sketch: Blob | null) => void;
   onFind: (text: string) => void;
   onSubject: () => void;
+  /** The faces Fix faces found; clicking one picks it or leaves it out. */
+  faces?: FaceOverlay | null;
+}
+
+export interface FaceOverlay {
+  boxes: FaceBox[];
+  picked: boolean[];
+  finding: boolean;
+  onToggle: (index: number) => void;
 }
 
 export function EditorCanvas(props: EditorCanvasProps) {
-  const { imageUrl, previewImageUrl, reviewing, imageName, tool, disabled, points, contextPadding } = props;
+  const { imageUrl, previewImageUrl, reviewing, imageName, tool, disabled, points, contextPadding, faces } = props;
   const stageRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const cursorRef = useRef<HTMLDivElement | null>(null);
@@ -225,6 +234,13 @@ export function EditorCanvas(props: EditorCanvasProps) {
               onPointerDown={event => event.stopPropagation()} onClick={() => props.onRemovePoint(index)}>
               <span aria-hidden="true">{point.label ? "+" : "−"}</span>
             </button>)}
+            {!reviewing && faces && faces.boxes.map(([left, top, right, bottom], index) => <button key={`${index}-${left}-${top}`} type="button"
+              className={"face-box" + (faces.picked[index] ? " picked" : "")} style={{ left: left * zoom, top: top * zoom, width: (right - left) * zoom, height: (bottom - top) * zoom }}
+              disabled={disabled} aria-pressed={faces.picked[index]} aria-label={`Face ${index + 1}`} title={faces.picked[index] ? "Click to leave this face out" : "Click to fix this face too"}
+              onPointerDown={event => event.stopPropagation()} onClick={() => faces.onToggle(index)}>
+              <span aria-hidden="true">{faces.picked[index] ? "✓" : "+"}</span>
+            </button>)}
+            {!reviewing && faces?.finding && <div className="face-status" role="status">Finding faces…</div>}
           </div>
         ) : (
           <div className="canvas-empty">

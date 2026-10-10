@@ -1,4 +1,4 @@
-import { EditParameters, Expansion, JobResponse, LayerRecord, editWholeImage, enhanceImage, fileUrl, fixFaces, generateImage, inpaintImage, outpaintImage } from "../api";
+import { EditParameters, Expansion, FaceBox, JobResponse, LayerRecord, editWholeImage, enhanceImage, fileUrl, fixFaces, generateImage, inpaintImage, outpaintImage } from "../api";
 import { ImageSize } from "../canvas/coordinates";
 import { validExpansion } from "../canvas/expansion";
 import { sketchMask, sketchedPicture } from "../canvas/sketch";
@@ -45,6 +45,8 @@ export interface SubmissionInput {
   sketchScope: SketchScope;
   editScope: EditScope;
   faceMode: FaceMode;
+  /** The faces picked on the canvas; without them the engine finds the faces, inside the selection if there is one. */
+  faces: FaceBox[] | null;
   enhanceLevel: EnhanceLevel;
   /** The layer Edit works on alone. */
   editLayer: LayerRecord | null;
@@ -117,8 +119,11 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
   }
   if (operation === "faces") {
     if (!source || !input.hasDocument) throw new Error("Open an image first.");
-    // A selection limits which faces are fixed.
-    return asLayer(await fixFaces(await input.picture(), { ...withReferences, faithful: input.faceMode === "faithful" }, mask), { kind: "faces", name: "Fixed faces" });
+    const { faces } = input;
+    if (faces && !faces.length) throw new Error("Click a face on the picture to fix it.");
+    // Picked faces already account for the selection; otherwise the selection limits which faces are fixed.
+    const created = await fixFaces(await input.picture(), { ...withReferences, faithful: input.faceMode === "faithful", faces: faces ?? undefined }, faces ? null : mask);
+    return asLayer(created, { kind: "faces", name: "Fixed faces" });
   }
   if (operation === "enhance") {
     if (!source || !input.hasDocument) throw new Error("Open an image first.");

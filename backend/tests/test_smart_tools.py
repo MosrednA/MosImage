@@ -14,7 +14,7 @@ from PIL import Image
 from app import storage
 from app.config import settings
 from app.detection import Detection, coverage, detection_query, iou, strongest
-from app.faces import FACE_QUERY, face_blend_mask, face_crop_box, faces_to_fix, matched_colours, run_face_fix
+from app.faces import FACE_QUERY, face_blend_mask, face_candidates, face_crop_box, faces_to_fix, matched_colours, picked_faces, run_face_fix
 from app.main import app
 from app.matting import UNKNOWN, edge_radius, mask_box, trimap
 from app.models.flux2_klein import ENHANCE_TRIGGER, FACE_AREA, Flux2KleinProvider, _face_prompt, _inpaint_prompt, _mode_prompt, _sketch_prompt
@@ -111,6 +111,23 @@ class FaceGeometryTests(unittest.TestCase):
         ball = Detection("human face", 0.51, (400, 300, 600, 500))
         self.assertEqual(faces_to_fix([ball], [Detection("person", 0.31, (398, 301, 601, 502))], None), [])
 
+    def test_candidates_show_every_face_and_suggest_the_real_ones(self) -> None:
+        picture = Image.new("RGB", (100, 80))
+        real, cake, tiny = (Detection("human face", 0.5, (10.4, -2.0, 40.6, 30.0)), Detection("human face", 0.34, (60, 40, 100.8, 80)),
+                            Detection("human face", 0.4, (50, 5, 60, 15)))
+        people = [Detection("person", 0.8, (0, 0, 50, 80)), Detection("person", 0.3, (60, 40, 100, 80))]
+        detect = lambda _image, query, *_args, **_kwargs: [real, cake, tiny] if query == FACE_QUERY else people
+        with patch("app.faces.detector.detect", side_effect=detect):
+            candidates = face_candidates(picture)
+        self.assertEqual([(item.box, item.suggested) for item in candidates], [((60, 40, 100, 80), False), ((10, 0, 41, 30), True)])
+
+    def test_picked_faces_stay_inside_the_picture(self) -> None:
+        self.assertEqual([item.box for item in picked_faces([(10, 10, 30, 30), (90, 0, 140, 60), (120, 0, 130, 10)], 100, 50)],
+                         [(90, 0, 100, 50), (10, 10, 30, 30)])
+        for faces in ([], [(0, 0, 10, 10)] * 9, [(10, 0, 10, 10)]):
+            with self.assertRaises(ValueError):
+                FaceFixRequest(faces=faces)
+
 
 class FaceFixServiceTests(unittest.TestCase):
     def test_each_face_is_restored_and_pasted_back_with_one_shared_mask(self) -> None:
@@ -163,6 +180,23 @@ class FaceFixServiceTests(unittest.TestCase):
             self.assertEqual([(r.steps, r.strength, r.detail) for r in requests], [(8, .625, .4), (4, 1, 0), (8, .625, 0)])
             record = storage.get_generation(faithful)
             self.assertEqual((record["steps"], record["strength"]), (8, .625))
+
+    def test_picked_faces_replace_detection_and_the_selection(self) -> None:
+        with isolated_data():
+            provider = MagicMock()
+
+            def fake_edit(request, input_path, output_path, _control, **kwargs):
+                with Image.open(input_path) as crop:
+                    crop.save(output_path)
+                return 3, 0
+
+            provider.edit.side_effect = fake_edit
+            picture = png(Image.new("RGB", (200, 120), (40, 40, 40)))
+            selection = png(Image.new("L", (200, 120), 0))
+            with patch("app.faces.registry.activate", return_value=provider), patch("app.faces.detector.detect") as detect:
+                run_face_fix(FaceFixRequest(faces=[(30, 30, 60, 70), (130, 30, 160, 70)]), picture, "photo.png", selection, MagicMock())
+            detect.assert_not_called()
+            self.assertEqual(provider.edit.call_count, 2)
 
     def test_no_faces_is_an_error_that_leaves_no_files(self) -> None:
         with isolated_data():
@@ -279,6 +313,19 @@ class SmartToolApiTests(unittest.TestCase):
             response = self.client.post("/api/faces", files={"image": self.picture, "mask": mask}, data={"parameters": "{}"})
             self.assertEqual(response.status_code, 200)
             self.assertEqual(submit.call_args.args[0], "edit")
+            picked = json.dumps({"faces": [[4, 4, 30, 40]]})
+            self.assertEqual(self.client.post("/api/faces", files={"image": self.picture}, data={"parameters": picked}).status_code, 200)
+            flat = json.dumps({"faces": [[4, 4, 30, 4]]})
+            self.assertEqual(self.client.post("/api/faces", files={"image": self.picture}, data={"parameters": flat}).status_code, 422)
+
+    def test_finding_faces_answers_with_the_candidates(self) -> None:
+        faces = [Detection("human face", 0.61, (10, 8, 30, 30))]
+        with patch("app.faces.detector.detect", side_effect=detected(faces)):
+            response = self.client.post("/api/faces/detect", files={"image": self.picture})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"faces": [{"box": [10, 8, 30, 30], "score": 0.61, "suggested": True}]})
+        broken = ("picture.png", b"not an image", "image/png")
+        self.assertEqual(self.client.post("/api/faces/detect", files={"image": broken}).status_code, 422)
 
     def test_sketches_need_a_known_model(self) -> None:
         with patch("app.main.jobs.submit") as submit:

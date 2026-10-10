@@ -14,7 +14,7 @@ from .config import settings
 from .detection import Box, Detection, coverage, detector, strongest
 from .jobs import JobControl
 from .models.registry import registry
-from .schemas import EditRequest, FaceFixRequest
+from .schemas import MAX_FACES, EditRequest, FaceCandidate, FaceFixRequest
 from .services import _alternative_seed, _model_references, _new_image_path, _save_bytes, release_after_failure
 
 FACE_QUERY = "human face."
@@ -25,7 +25,6 @@ PERSON_QUERY = "person."
 FACE_IN_PERSON = 0.6
 PERSON_TO_FACE = 1.5
 MIN_FACE_SIDE = 16
-MAX_FACES = 8
 # The crop shows hair, chin and some background, so the face sits in context.
 CROP_FACTOR = 2.2
 # Faithful redraws only the later steps: twice the steps at this strength is
@@ -72,15 +71,45 @@ def in_a_person(face: Detection, people: list[Detection]) -> bool:
     return any(coverage(face.box, person.box) >= FACE_IN_PERSON and person.area >= face.area * PERSON_TO_FACE for person in people)
 
 
+def face_sized(face: Detection) -> bool:
+    return min(face.box[2] - face.box[0], face.box[3] - face.box[1]) >= MIN_FACE_SIDE
+
+
 def faces_to_fix(detections: list[Detection], people: list[Detection], selection: np.ndarray | None) -> list[Detection]:
     """Real faces, largest first; with a selection, only those centred inside it."""
-    faces = [item for item in strongest(detections, relative=0, limit=32)
-             if min(item.box[2] - item.box[0], item.box[3] - item.box[1]) >= MIN_FACE_SIDE and in_a_person(item, people)]
+    faces = [item for item in strongest(detections, relative=0, limit=32) if face_sized(item) and in_a_person(item, people)]
     if selection is not None:
         height, width = selection.shape
         faces = [item for item in faces
                  if selection[min(height - 1, int(item.centre[1])), min(width - 1, int(item.centre[0]))] > 127]
     return sorted(faces, key=lambda item: item.area, reverse=True)[:MAX_FACES]
+
+
+def find_faces(picture: Image.Image, control: JobControl | None = None) -> tuple[list[Detection], list[Detection]]:
+    """The detector's faces and, when it finds any, the people to check them against."""
+    found = detector.detect(picture, FACE_QUERY, control, activity="Finding faces")
+    people = detector.detect(picture, PERSON_QUERY, control, activity="Finding faces") if found else []
+    return found, people
+
+
+def face_candidates(picture: Image.Image) -> list[FaceCandidate]:
+    """Every face big enough to fix, largest first; suggested are the real ones, inside a person."""
+    found, people = find_faces(picture)
+    faces = sorted((item for item in strongest(found, relative=0, limit=32) if face_sized(item)), key=lambda item: item.area, reverse=True)
+    width, height = picture.size
+
+    def pixels(box: Box) -> tuple[int, int, int, int]:
+        left, top, right, bottom = box
+        return max(0, round(left)), max(0, round(top)), min(width, round(right)), min(height, round(bottom))
+
+    return [FaceCandidate(box=pixels(face.box), score=round(face.score, 3), suggested=in_a_person(face, people)) for face in faces]
+
+
+def picked_faces(boxes: list[tuple[int, int, int, int]], width: int, height: int) -> list[Detection]:
+    """The faces picked on the canvas, largest first, kept inside the picture."""
+    faces = [Detection("human face", 1.0, (min(left, width), min(top, height), min(right, width), min(bottom, height)))
+             for left, top, right, bottom in boxes]
+    return sorted((face for face in faces if face.area > 0), key=lambda item: item.area, reverse=True)
 
 
 def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | None, mask_bytes: bytes | None, control: JobControl) -> list[int]:
@@ -101,9 +130,8 @@ def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | 
                 # Selections arrive with their coverage in alpha when they have one.
                 band = uploaded_mask.getchannel("A") if "A" in uploaded_mask.getbands() else uploaded_mask.convert("L")
                 selection = np.asarray(band.resize(picture.size))
-        found = detector.detect(picture, FACE_QUERY, control, activity="Finding faces")
-        people = detector.detect(picture, PERSON_QUERY, control, activity="Finding faces") if found else []
-        faces = faces_to_fix(found, people, selection)
+        # Faces picked on the canvas already account for the selection.
+        faces = picked_faces(request.faces, *picture.size) if request.faces else faces_to_fix(*find_faces(picture, control), selection)
         if not faces:
             raise ValueError("No faces found in the selection" if selection is not None else "No faces found in the picture")
         crops = [face_crop_box(face.box, picture.width, picture.height) for face in faces]

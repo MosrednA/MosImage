@@ -17,6 +17,10 @@ describe("sketch, faces and enhance", () => {
     expect(sketchHint("whole", true)).toContain("redraws the whole picture");
     expect(facesHint(false)).toBe("Every face in the picture is sharpened from the face itself and pasted back. Expression and lighting stay the same. Apply adds the faces as a new layer.");
     expect(facesHint(false, [], "redraw")).toContain("The expression can change.");
+    expect(facesHint(true, [], "faithful", { found: 3, picked: 2 })).toBe("The 2 picked faces are sharpened from the face itself and pasted back. Expression and lighting stay the same. Click a face to leave it out or add it. Apply adds the faces as a new layer.");
+    expect(facesHint(false, [], "faithful", { found: 3, picked: 1 })).toMatch(/^The picked face is sharpened/);
+    expect(facesHint(false, [], "faithful", { found: 3, picked: 0 })).toBe("Click a face on the picture to fix it.");
+    expect(facesHint(false, [], "faithful", { found: 0, picked: 0 })).toBe("No faces found in the picture.");
     expect(facesHint(true, ["Anna"], "redraw")).toBe("Faces inside your selection are drawn anew and pasted back, for faces too blurry to sharpen. Anna keeps the look of their reference. Apply adds the faces as a new layer.");
     expect(enhanceHint(true)).toContain("to your selection;");
     expect(enhanceHint(false)).toContain("to the whole picture;");

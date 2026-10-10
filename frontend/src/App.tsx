@@ -39,6 +39,7 @@ import { MAX_ACTIVE_REFERENCES, useReferences } from "./hooks/useReferences";
 import { useEngine } from "./hooks/useEngine";
 import { JobContext, useJobRunner } from "./hooks/useJobRunner";
 import { editedLayer, usePicture } from "./hooks/usePicture";
+import { useFaceDetection } from "./hooks/useFaceDetection";
 import { useResultPreview } from "./hooks/useResultPreview";
 import { useSelectionTools } from "./hooks/useSelectionTools";
 import { isTyping, useWindowEvents } from "./hooks/useWindowEvents";
@@ -123,6 +124,8 @@ export default function App() {
     onClear: () => setBlendTarget(null),
   });
   const { mask } = selection;
+  // Fix faces shows the faces it finds, so you can leave some out or add others.
+  const faceFinder = useFaceDetection({ active: operation === "faces" && !!source, picture: picture.editImage, source, layers: document?.layers, mask, size, setError });
   const generationPreviewUrl = useResultPreview({ result: layerResult, chosen, source, size, documentRef, picture: picture.editImage, onError: setError });
   // Full generations and layer edits preview as Apply places them; regional results already show the whole picture.
   const previewUrl = chosen && !compare ? layerResult && (layerResult.kind === "generation" || layerResult.kind === "layer") && document
@@ -510,9 +513,11 @@ export default function App() {
     if (chosen !== operation) setOperation(chosen);
     await perform(async () => {
       await layers.settled();
+      // From the selection bar the faces were not shown, so the engine finds them in the selection.
+      const faces = chosen === "faces" && operation === "faces" && source ? faceFinder.boxesFor(await picture.editImage()) : null;
       const submission = await submitJob({
         operation: chosen, settings, referenceIds: referencesFor(chosen).map(item => item.id), source, size, hasDocument: !!document, layerCount: layers.layers.length,
-        mask, sketch, sketchScope, editScope, faceMode, enhanceLevel, editLayer, expansion, picture: picture.editImage,
+        mask, sketch, sketchScope, editScope, faceMode, faces, enhanceLevel, editLayer, expansion, picture: picture.editImage,
         blendLayer: picture.visibleLayers().find(layer => layer.id === blendTarget) ?? null,
       });
       jobs.queued(submission.created, submission.operation, submission.extras);
@@ -580,7 +585,7 @@ export default function App() {
 
   const command: CommandState = {
     operation, prompt: settings.prompt, hasImage: !!source, hasMask: !!mask, hasSketch: !!sketch,
-    expansionValid: !!size && validExpansion(size, expansion), editScope, editLayerName: editLayer?.name ?? null, sketchScope, faceMode,
+    expansionValid: !!size && validExpansion(size, expansion), editScope, editLayerName: editLayer?.name ?? null, sketchScope, faceMode, facePicks: faceFinder.picks,
     referenceNames: references.map(item => item.name), tool, activeLayerName: activeLayer?.name ?? null, layerMasking, blendingName: blending?.name ?? null,
   };
   const submittable = !locked && online && !cudaBlocked && canSubmit(command);
@@ -605,6 +610,7 @@ export default function App() {
             layerActive={!!activeLayer} layerPointCount={selection.layerPoints.length} onUndoLayerPoint={() => void selection.removeLayerPoint(selection.layerPoints.length - 1)}
             sketchVisible={operation === "sketch"} sketchClearToken={sketchClear} onSketchChange={setSketch}
             onFind={text => void selection.findByText(text)} onSubject={() => void selection.selectSubject()}
+            faces={operation === "faces" && !previewUrl ? { boxes: faceFinder.faces.map(face => face.box), picked: faceFinder.picked, finding: faceFinder.finding, onToggle: faceFinder.toggle } : null}
             selectionActions={operation === "sketch" || blending ? null : {
               disabled: locked, onFill: fillSelection, onRemove: () => void submit("remove"), onFaces: () => void submit("faces"), onEnhance: () => void submit("enhance"),
               onToLayer: () => void copySelectionToLayer(), maskTarget: maskTarget?.name ?? null, onMaskLayer: () => maskTarget && void addLayerMask(maskTarget.id, false),

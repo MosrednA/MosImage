@@ -295,8 +295,25 @@ export async function cutoutSubject(image: File, text = ""): Promise<JobResponse
   return request("/api/cutout", { method: "POST", body: form });
 }
 
-/** Sharpens the faces, faithfully or by redrawing them; a selection limits which faces. */
-export async function fixFaces(image: File, parameters: EditParameters & { faithful?: boolean }, selection: Blob | null): Promise<JobResponse> {
+/** Left, top, right and bottom in picture pixels. */
+export type FaceBox = [number, number, number, number];
+
+export interface FaceCandidate {
+  box: FaceBox;
+  score: number;
+  /** Inside a bigger person: a real face, which Fix faces picks by itself. */
+  suggested: boolean;
+}
+
+/** Every face the detector finds in the picture, largest first. */
+export async function detectFaces(image: File): Promise<FaceCandidate[]> {
+  const form = new FormData();
+  form.set("image", image);
+  return (await request<{ faces: FaceCandidate[] }>("/api/faces/detect", { method: "POST", body: form })).faces;
+}
+
+/** Sharpens the faces, faithfully or by redrawing them; picked `faces`, or else a selection, limit which. */
+export async function fixFaces(image: File, parameters: EditParameters & { faithful?: boolean; faces?: FaceBox[] }, selection: Blob | null): Promise<JobResponse> {
   const form = new FormData();
   form.set("image", image);
   form.set("parameters", JSON.stringify(parameters));

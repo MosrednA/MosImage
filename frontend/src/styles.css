@@ -124,6 +124,15 @@ small { color: var(--muted); }
 .selection-point:hover:not(:disabled) span { font-size: 0; }
 .selection-point:hover:not(:disabled) span::after { content: "×"; font-size: 14px; color: #0d1d18; }
 .selection-point:disabled { opacity: .7; }
+/* Fix faces: every face found, picked ones in mint; a click leaves one out or adds it. */
+.face-box { position: absolute; z-index: 3; display: block; box-sizing: border-box; padding: 0; background: transparent; border: 1.5px dashed #ffffffb3; border-radius: 4px; box-shadow: 0 0 0 1px #0008; }
+.face-box span { position: absolute; left: 0; top: 0; transform: translate(-50%,-50%); width: 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; background: #0d1d18d9; border: 1.5px solid #ffffffb3; color: #fff; font: 700 10px/1 sans-serif; }
+.face-box:hover:not(:disabled) { background: #ffffff1a; border-color: #fff; }
+.face-box.picked { border: 2px solid var(--mint); box-shadow: 0 0 0 1px #0d1d18, 0 0 10px #6ee7c355; }
+.face-box.picked:hover:not(:disabled) { background: #6ee7c31f; border-color: var(--mint); }
+.face-box.picked span { background: var(--mint); border-color: #0d1d18; color: #0d1d18; }
+.face-box:disabled { opacity: .6; }
+.face-status { position: absolute; left: 8px; top: 8px; z-index: 3; padding: 4px 8px; border-radius: var(--radius); background: var(--float); border: 1px solid var(--line); color: var(--muted); font-size: 11px; pointer-events: none; }
 .context-boundary { position: absolute; border: 1px dashed var(--mint); pointer-events: none; box-sizing: border-box; }
 .context-boundary span { position: absolute; left: 5px; top: 5px; padding: 3px 5px; color: #c4f5e4; background: #0d221ce6; border-radius: 3px; font-size: 9px; white-space: nowrap; }
 .canvas-status { height: 24px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 10px; color: var(--muted); font-size: 11px; background: var(--chrome); border-top: 1px solid var(--line); }

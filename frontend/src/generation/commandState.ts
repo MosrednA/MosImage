@@ -1,4 +1,5 @@
 import { CanvasTool } from "../canvas/tools";
+import { FacePicks } from "./faces";
 import { EditScope, FaceMode, Operation, SketchScope, enhanceHint, facesHint, isWholeImage, layerEditHint, operationHint, sketchHint, taskFor } from "./operation";
 
 /** What the command dock needs to know to enable Submit and explain the next step. */
@@ -13,6 +14,8 @@ export interface CommandState {
   editLayerName: string | null;
   sketchScope: SketchScope;
   faceMode?: FaceMode;
+  /** The faces shown on the canvas for Fix faces, once they are found. */
+  facePicks?: FacePicks | null;
   referenceNames: string[];
   tool: CanvasTool;
   /** The layer the canvas works on, and whether its mask is being edited. */
@@ -26,7 +29,8 @@ export function canSubmit(state: CommandState): boolean {
   const prompted = !!state.prompt.trim();
   const task = taskFor(state.operation);
   if (state.operation === "sketch") return state.hasImage && state.hasSketch && prompted;
-  if (state.operation === "faces" || state.operation === "enhance") return state.hasImage;
+  if (state.operation === "faces") return state.hasImage && (state.facePicks?.picked ?? 1) > 0;
+  if (state.operation === "enhance") return state.hasImage;
   if (task === "outpaint") return state.expansionValid && prompted;
   const area = task === "text-to-image" || (task === "edit" && state.hasImage && (state.editScope === "visible" || state.editLayerName !== null)) || state.hasMask;
   return (state.operation === "remove" || prompted) && area;
@@ -38,7 +42,7 @@ export function commandHint(state: CommandState): string {
   if (state.activeLayerName !== null) return `Editing layer “${state.activeLayerName}”. Pick a selection tool or press Esc for AI edits; they see every visible layer.`;
   if (operation === "edit" && state.editScope === "layer") return layerEditHint(state.editLayerName, referenceNames);
   if (operation === "sketch") return sketchHint(state.sketchScope, state.hasSketch);
-  if (operation === "faces") return facesHint(state.hasMask, referenceNames, state.faceMode);
+  if (operation === "faces") return facesHint(state.hasMask, referenceNames, state.faceMode, state.facePicks);
   if (operation === "enhance") return enhanceHint(state.hasMask);
   if (state.blendingName !== null && state.hasMask) return `Blending “${state.blendingName}” in: the AI redraws it and its edges to fit the scene. Widen the area with the brush if needed.`;
   const asLayer = state.hasImage && operation !== "expand" && !isWholeImage(operation) ? " Apply adds the result as a new layer." : "";

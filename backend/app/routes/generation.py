@@ -1,14 +1,19 @@
 """AI image jobs: generate, edit, inpaint, expand, fix faces and enhance, plus the generation history."""
 from __future__ import annotations
 
+from io import BytesIO
+
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from PIL import Image, UnidentifiedImageError
 from pydantic import ValidationError
 
 from .. import storage
 from ..enhance import run_enhance
-from ..faces import run_face_fix
+from ..faces import face_candidates, run_face_fix
 from ..jobs import jobs
-from ..schemas import EditRequest, EnhanceRequest, FaceFixRequest, GenerationRecord, InpaintForm, JobResponse, OutpaintForm, TextToImageRequest
+from ..schemas import (EditRequest, EnhanceRequest, FaceCandidate, FaceDetectionResponse, FaceFixRequest, GenerationRecord, InpaintForm, JobResponse,
+                       OutpaintForm, TextToImageRequest)
 from ..services import run_image_edit, run_inpaint, run_outpaint, run_text_to_image
 from .common import check_references, http_errors, job_response, parse_parameters, read_uploaded_image, require_capability
 
@@ -99,6 +104,19 @@ async def fix_faces(image: UploadFile = File(...), parameters: str = Form(...), 
     content = await read_uploaded_image(image)
     mask_bytes = await read_uploaded_image(mask) if mask is not None else None
     return job_response(jobs.submit("edit", lambda control: run_face_fix(request, content, image.filename, mask_bytes, control)))
+
+
+@router.post("/faces/detect", response_model=FaceDetectionResponse)
+async def detect_faces(image: UploadFile = File(...)) -> FaceDetectionResponse:
+    content = await read_uploaded_image(image)
+
+    def candidates() -> list[FaceCandidate]:
+        with Image.open(BytesIO(content)) as uploaded:
+            return face_candidates(uploaded.convert("RGB"))
+
+    # Grounding DINO runs on the CPU lane, after any selection in progress.
+    with http_errors({UnidentifiedImageError: 422}):
+        return FaceDetectionResponse(faces=await run_in_threadpool(jobs.run_cpu, candidates))
 
 
 @router.post("/enhance", response_model=JobResponse)

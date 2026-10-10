@@ -21,6 +21,8 @@ describe("canSubmit", () => {
     expect(canSubmit(state({ operation: "sketch", hasSketch: false }))).toBe(false);
     expect(canSubmit(state({ operation: "faces", prompt: "", hasMask: false }))).toBe(true);
     expect(canSubmit(state({ operation: "faces", hasImage: false }))).toBe(false);
+    expect(canSubmit(state({ operation: "faces", facePicks: { found: 3, picked: 0 } }))).toBe(false);
+    expect(canSubmit(state({ operation: "faces", facePicks: { found: 3, picked: 1 } }))).toBe(true);
     expect(canSubmit(state({ operation: "enhance", prompt: "", hasMask: false }))).toBe(true);
     expect(canSubmit(state({ operation: "enhance", hasImage: false }))).toBe(false);
     expect(commandHint(state({ operation: "faces", faceMode: "redraw" }))).toContain("drawn anew");

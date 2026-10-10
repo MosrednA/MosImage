@@ -9,6 +9,9 @@ JobState = Literal["queued", "running", "cancelling", "cancelled", "completed", 
 JobPhase = Literal["loading", "warming", "preparing", "generating", "finishing"]
 RuntimeMode = Literal["safe", "balanced", "performance"]
 MAX_REFERENCES_PER_EDIT = 3
+# Fix faces redraws up to this many faces at a time.
+MAX_FACES = 8
+FaceBox = tuple[Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)]]
 
 
 class ModelInfo(BaseModel):
@@ -88,6 +91,27 @@ class FaceFixRequest(PromptRequest):
 
     prompt: str = Field(default="", max_length=500)
     faithful: bool = True
+    # The faces picked on the canvas as left, top, right and bottom pixels; they
+    # replace detection and the selection. Without them the faces are found anew.
+    faces: list[FaceBox] | None = Field(default=None, min_length=1, max_length=MAX_FACES)
+
+    @field_validator("faces")
+    @classmethod
+    def faces_have_area(cls, faces: list[FaceBox] | None) -> list[FaceBox] | None:
+        if faces and any(right <= left or bottom <= top for left, top, right, bottom in faces):
+            raise ValueError("Every face needs a width and a height.")
+        return faces
+
+
+class FaceCandidate(BaseModel):
+    box: FaceBox
+    score: float
+    # Inside a bigger person: a real face, which Fix faces picks by itself.
+    suggested: bool
+
+
+class FaceDetectionResponse(BaseModel):
+    faces: list[FaceCandidate]
 
 
 class EnhanceRequest(PromptRequest):

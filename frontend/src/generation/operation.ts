@@ -1,5 +1,6 @@
 import { ImageTask } from "../api";
 import { CanvasTool, isSelectionTool } from "../canvas/tools";
+import { FacePicks } from "./faces";
 
 export type Operation = "generate" | "edit" | "replace" | "remove" | "expand" | "sketch" | "faces" | "enhance";
 
@@ -45,12 +46,17 @@ export function sketchHint(scope: SketchScope, hasSketch: boolean): string {
     : "Render redraws the whole picture around your sketch, so lighting and style match. Apply adds it as a new layer.";
 }
 
-export function facesHint(hasSelection: boolean, referenceNames: readonly string[] = [], mode: FaceMode = "faithful"): string {
-  const which = hasSelection ? "Faces inside your selection" : "Every face in the picture";
+/** `picks` counts the faces shown on the canvas, once they are found. */
+export function facesHint(hasSelection: boolean, referenceNames: readonly string[] = [], mode: FaceMode = "faithful", picks: FacePicks | null = null): string {
+  if (picks && !picks.found) return "No faces found in the picture.";
+  if (picks && !picks.picked) return "Click a face on the picture to fix it.";
+  const which = picks ? picks.picked === 1 ? "The picked face" : `The ${picks.picked} picked faces` : hasSelection ? "Faces inside your selection" : "Every face in the picture";
+  const plural = picks ? picks.picked > 1 : hasSelection;
   const how = mode === "faithful" ? "sharpened from the face itself and pasted back" : "drawn anew and pasted back, for faces too blurry to sharpen";
   const likeness = referenceNames.length ? ` ${joinNames(referenceNames)} ${referenceNames.length > 1 ? "keep" : "keeps"} the look of their reference.`
     : mode === "faithful" ? " Expression and lighting stay the same." : " The expression can change.";
-  return `${which} ${hasSelection ? "are" : "is"} ${how}.${likeness} Apply adds the faces as a new layer.`;
+  const clicking = picks ? " Click a face to leave it out or add it." : "";
+  return `${which} ${plural ? "are" : "is"} ${how}.${likeness}${clicking} Apply adds the faces as a new layer.`;
 }
 
 export function enhanceHint(hasSelection: boolean): string {
