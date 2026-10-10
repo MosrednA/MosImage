@@ -98,8 +98,8 @@ class Nvfp4ProviderTests(unittest.TestCase):
         self.assertFalse(provider.info().loaded)
 
 
-class KleinSoftMaskRoutingTests(unittest.TestCase):
-    def test_both_precisions_receive_soft_sampling_masks_and_preserve_protected_pixels(self) -> None:
+class KleinMaskRoutingTests(unittest.TestCase):
+    def test_both_precisions_receive_full_generation_coverage_with_a_soft_final_blend(self) -> None:
         source = Image.new("RGB", (64, 64), "purple")
         selection = Image.new("L", source.size, 0)
         selection.paste(255, (16, 16, 48, 48))
@@ -124,10 +124,13 @@ class KleinSoftMaskRoutingTests(unittest.TestCase):
                 provider.inpaint.side_effect = render
                 with patch.object(settings, "data_dir", root), patch("app.services.registry.activate", return_value=provider), patch("app.services.storage.to_relative", side_effect=str), patch("app.services.storage.create_generations", return_value=[1]) as save:
                     run_inpaint(InpaintForm(prompt="scene", model_name=model), image_buffer.getvalue(), "source.png", mask_buffer.getvalue(), "mask.png", MagicMock())
-                self.assertTrue(any(0 < value < 255 for value in masks[0]))
+                self.assertEqual(set(masks[0]), {0, 255})
                 record = save.call_args.args[0][0]
                 with Image.open(record["output_image_path"]) as result:
                     self.assertEqual(result.getpixel((0, 0))[:3], source.getpixel((0, 0)))
+                    blended = result.getpixel((18, 32))[:3]
+                    self.assertNotEqual(blended, source.getpixel((18, 32)))
+                    self.assertNotEqual(blended, Image.new("RGB", (1, 1), "orange").getpixel((0, 0)))
                 self.assertEqual(record["model_name"], model)
 
 

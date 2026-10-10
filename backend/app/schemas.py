@@ -60,6 +60,13 @@ class EditRequest(PromptRequest):
     """
 
     mode: Literal["edit", "sketch", "face"] = "edit"
+    consistency_lora: bool = False
+
+    @model_validator(mode="after")
+    def compatible_consistency(self) -> "EditRequest":
+        if self.consistency_lora and (self.model_name != "flux2-klein-9b-nvfp4" or self.mode != "edit"):
+            raise ValueError("Consistency is available for Quality image edits only.")
+        return self
 
 
 class FaceFixRequest(PromptRequest):
@@ -86,6 +93,8 @@ class InpaintForm(BaseModel):
     blend_feather: float = Field(default=16, ge=0, le=64, allow_inf_nan=False)
     context_padding: int = Field(default=320, ge=32, le=1024)
     scene_context: str = Field(default="", max_length=1500)
+    consistency_lora: bool = False
+    detail_crop: bool = False
     # Order matters: the prompt names them as reference image 1, 2, ...
     reference_ids: list[Annotated[int, Field(ge=1)]] = Field(default_factory=list, max_length=MAX_REFERENCES_PER_EDIT)
 
@@ -93,6 +102,14 @@ class InpaintForm(BaseModel):
     @classmethod
     def _unique_references(cls, value: list[int]) -> list[int]:
         return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def compatible_quality_options(self) -> "InpaintForm":
+        if self.consistency_lora and (self.model_name != "flux2-klein-9b-nvfp4" or self.edit_operation != "replace"):
+            raise ValueError("Consistency is available for Quality replacement and expansion only.")
+        if self.detail_crop and (self.edit_operation != "replace" or self.strength != 1):
+            raise ValueError("Fine detail requires Replace at full strength.")
+        return self
 
 
 class OutpaintForm(InpaintForm):
@@ -102,11 +119,16 @@ class OutpaintForm(InpaintForm):
     top: int = Field(default=0, ge=0, le=2048)
     right: int = Field(default=0, ge=0, le=2048)
     bottom: int = Field(default=0, ge=0, le=2048)
+    specialized_outpaint: bool = False
 
     @model_validator(mode="after")
     def requires_expansion(self) -> "OutpaintForm":
         if not (self.left or self.top or self.right or self.bottom):
             raise ValueError("Add space on at least one side of the image")
+        if self.detail_crop:
+            raise ValueError("Fine detail is available for selected replacements only.")
+        if self.specialized_outpaint and (self.model_name != "flux2-klein-4b-nvfp4" or self.steps != 4 or self.guidance != 1 or self.strength != 1):
+            raise ValueError("Specialized outpaint requires Fast NVFP4 at four steps and guidance one.")
         return self
 
 
@@ -184,6 +206,9 @@ class GenerationRecord(BaseModel):
     blend_feather: float | None = None
     context_padding: int | None = None
     scene_context: str | None = None
+    consistency_lora: bool = False
+    detail_crop: bool = False
+    specialized_outpaint: bool = False
     reference_image_paths: list[str] = Field(default_factory=list)
     input_image_path: str | None = None
     mask_image_path: str | None = None

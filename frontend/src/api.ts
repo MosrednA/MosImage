@@ -29,6 +29,9 @@ export interface GenerationRecord {
   blend_feather: number | null;
   context_padding: number | null;
   scene_context: string | null;
+  consistency_lora: boolean;
+  detail_crop: boolean;
+  specialized_outpaint: boolean;
   input_image_path: string | null;
   mask_image_path: string | null;
   output_image_path: string;
@@ -237,7 +240,7 @@ export async function loadModel(payload: LoadModelRequest): Promise<JobResponse>
   });
 }
 
-export type EditParameters = Omit<TextToImageRequest, "width" | "height">;
+export type EditParameters = Omit<TextToImageRequest, "width" | "height"> & { consistency_lora?: boolean };
 
 /** Edits the whole picture by instruction, or renders a sketch on it; proposals keep the picture's size. */
 export async function editWholeImage(image: File, parameters: EditParameters & { mode?: "edit" | "sketch" }): Promise<JobResponse> {
@@ -257,7 +260,7 @@ export async function inpaintImage(form: FormData): Promise<JobResponse> {
 export interface SelectionPoint { x: number; y: number; label: 0 | 1 }
 export interface Expansion { left: number; top: number; right: number; bottom: number }
 
-export async function outpaintImage(image: File, parameters: Omit<TextToImageRequest, "width" | "height"> & Expansion): Promise<JobResponse> {
+export async function outpaintImage(image: File, parameters: EditParameters & Expansion & { specialized_outpaint?: boolean }): Promise<JobResponse> {
   const form = new FormData();
   form.set("image", image);
   form.set("parameters", JSON.stringify(parameters));

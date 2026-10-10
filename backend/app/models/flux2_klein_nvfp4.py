@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+import random
 from typing import TYPE_CHECKING, Any
 
+from PIL import Image
+
 from app.config import settings
-from app.jobs import JobControl
-from app.models.flux2_klein import SHARED_COMPONENTS, Flux2KleinProvider, Placement, PipelineTask
-from app.runtime import selected_device, selected_dtype
-from app.schemas import RuntimeMode
+from app.jobs import JobCancelled, JobControl
+from app.models.flux2_klein import SHARED_COMPONENTS, Flux2KleinProvider, Placement, PipelineTask, _fit_area
+from app.runtime import require_generation_device, selected_device, selected_dtype
+from app.schemas import OutpaintForm, RuntimeMode
 
 if TYPE_CHECKING:
     from diffusers import Flux2KleinInpaintPipeline, Flux2KleinPipeline
+    from app.models.klein_lora import KleinLora
 
 BASE_REPO = "black-forest-labs/FLUX.2-klein-4B"
 BASE_REVISION = "e7b7dc27f91deacad38e78976d1f2b499d76a294"
@@ -35,6 +39,55 @@ class Flux2KleinNvfp4Provider(Flux2KleinProvider):
     quant_repo = QUANT_REPO
     quant_revision = QUANT_REVISION
     quant_filename = QUANT_FILENAME
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._outpaint_adapter: KleinLora | None = None
+        self._want_outpaint_adapter = False
+
+    def unload(self) -> None:
+        self._outpaint_adapter = None
+        self._want_outpaint_adapter = False
+        super().unload()
+
+    def _configure_edit_adapters(self, pipe: Any, enabled: bool, control: JobControl) -> None:
+        super()._configure_edit_adapters(pipe, enabled, control)
+        if self._outpaint_adapter is not None:
+            self._outpaint_adapter.set_scale(0)
+
+    def outpaint(self, request: OutpaintForm, input_path: Path, output_path: Path,
+                 control: JobControl) -> tuple[int, int]:
+        if self.name != "flux2-klein-4b-nvfp4" or not request.specialized_outpaint:
+            raise ValueError("Specialized outpaint requires Fast NVFP4.")
+        try:
+            control.raise_if_cancelled()
+            require_generation_device()
+            # Attach before Accelerate installs its offload hooks. This costs
+            # one reload the first time it is enabled on an already loaded 4B.
+            placement = self._placement_for(request.runtime_mode)
+            if self._outpaint_adapter is None or (self._pipes and self._placement != placement):
+                self.unload()
+                self._want_outpaint_adapter = True
+            pipe = self._load_pipe(placement, "text-to-image", control)
+            assert self._outpaint_adapter is not None
+            self._outpaint_adapter.set_scale(1.1)
+            torch = self._load_torch()
+            seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
+            with Image.open(input_path) as source:
+                size = source.size
+                canvas = _fit_area(source.convert("RGB"))
+            embeds = self._encode_prompt(pipe, "Fill the green spaces according to the image", control)
+            control.set_phase("generating")
+            image = pipe(image=canvas, prompt_embeds=embeds, height=canvas.height, width=canvas.width,
+                num_inference_steps=4, guidance_scale=1,
+                generator=torch.Generator("cuda").manual_seed(seed),
+                callback_on_step_end=control.diffusion_callback(4)).images[0]
+            control.raise_if_cancelled()
+            image.resize(size, Image.Resampling.LANCZOS).save(output_path)
+            return seed, size[0]
+        except JobCancelled:
+            self.unload()
+            raise
 
     def _validate_runtime(self) -> None:
         torch = self._load_torch()
@@ -64,12 +117,17 @@ class Flux2KleinNvfp4Provider(Flux2KleinProvider):
         transformer = load_transformer(Path(config), Path(checkpoint), kernel, control.raise_if_cancelled)
         pipeline_class = Flux2KleinInpaintPipeline if task == "inpaint" else Flux2KleinPipeline
         # No dtype cast after loading packed weights and FP8/FP32 scale buffers.
-        return pipeline_class.from_pretrained(
+        pipe = pipeline_class.from_pretrained(
             self.base_repo, revision=self.base_revision, transformer=transformer,
             torch_dtype=self._load_torch().bfloat16, low_cpu_mem_usage=True,
             token=settings.huggingface_token, use_safetensors=True,
             **self._pipeline_overrides(control),
         )
+        if self._want_outpaint_adapter:
+            from app.models.klein_lora import FAL_OUTPAINT, KleinLora, resolve_checkpoint
+            self._outpaint_adapter = KleinLora.attach(pipe.transformer,
+                resolve_checkpoint(FAL_OUTPAINT, control), control.raise_if_cancelled)
+        return pipe
 
     def _pipeline_overrides(self, control: JobControl) -> dict[str, Any]:
         return {}

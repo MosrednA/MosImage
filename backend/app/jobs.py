@@ -297,6 +297,7 @@ class JobManager:
     @staticmethod
     def _status_for(job: Job) -> JobStatus:
         now = monotonic()
+        elapsed_until = job.completed_at if job.completed_at is not None else now
         eta = _estimate_remaining(job, now) if job.status == "running" else None
         return JobStatus(
             id=job.id,
@@ -313,8 +314,8 @@ class JobManager:
             steps=job.steps,
             item=job.item,
             items=job.items,
-            elapsed_seconds=round(now - job.started_at, 1) if job.started_at is not None else None,
-            phase_elapsed_seconds=round(now - job.phase_started_at, 1) if job.phase_started_at is not None else None,
+            elapsed_seconds=round(elapsed_until - job.started_at, 1) if job.started_at is not None else None,
+            phase_elapsed_seconds=round(elapsed_until - job.phase_started_at, 1) if job.phase_started_at is not None else None,
             eta_seconds=round(eta, 1) if eta is not None else None,
         )
 

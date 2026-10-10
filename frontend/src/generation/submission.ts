@@ -2,7 +2,7 @@ import { EditParameters, Expansion, JobResponse, LayerRecord, editWholeImage, fi
 import { ImageSize } from "../canvas/coordinates";
 import { validExpansion } from "../canvas/expansion";
 import { sketchMask, sketchedPicture } from "../canvas/sketch";
-import { EditorSettings } from "../components/EditorSettings";
+import { EditorSettings, qualityOptions } from "../components/EditorSettings";
 import { canvasBlob, loadImage, loadMask, maskedLayer } from "../layers/bitmaps";
 import { MAX_LAYERS } from "../layers/stack";
 import { EditScope, Operation, SketchScope, taskFor } from "./operation";
@@ -99,6 +99,7 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
   const task = taskFor(operation);
   const prompt = requestPrompt(operation, settings);
   const parameters = requestParameters(settings, prompt);
+  const refinements = qualityOptions(settings, operation, !!input.blendLayer);
   const withReferences = { ...parameters, reference_ids: referenceIds };
   if (input.hasDocument && task !== "outpaint" && input.layerCount >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one before generating.`);
   const asLayer = (created: JobResponse, result: LayerResult): Submission => ({ created, operation: null, extras: { result } });
@@ -125,6 +126,7 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
     return { ...asLayer(created, { kind: "generation", name: resultName(null, operation, prompt) }), startReferences: [] };
   }
   if (task === "edit") {
+    withReferences.consistency_lora = refinements.consistency_lora;
     if (!source || !input.hasDocument) throw new Error("Open an image first.");
     const layer = input.editLayer;
     if (layer) {
@@ -141,16 +143,23 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
   if (task === "outpaint") {
     if (!source || !size || !validExpansion(size, input.expansion)) throw new Error("Choose a valid canvas size first.");
     const { expansion } = input;
-    return { created: await outpaintImage(source, { ...parameters, ...expansion }), operation: "outpaint", extras: { layerOffset: { x: expansion.left, y: expansion.top } } };
+    return { created: await outpaintImage(source, { ...parameters, ...expansion,
+      model_name: refinements.model_name, consistency_lora: refinements.consistency_lora,
+      specialized_outpaint: refinements.specialized_outpaint,
+      steps: refinements.specialized_outpaint ? 4 : parameters.steps,
+      guidance: refinements.specialized_outpaint ? 1 : parameters.guidance,
+    }), operation: "outpaint", extras: { layerOffset: { x: expansion.left, y: expansion.top } } };
   }
   if (!source || !mask || !input.hasDocument) throw new Error("Select the area you want to change first.");
   // Every regional edit becomes a layer over the picture the AI saw.
   const blendLayer = input.blendLayer;
   const form = inpaintForm(parameters, await input.picture(), mask, {
-    strength: blendLayer ? Math.min(settings.strength, BLEND_STRENGTH) : settings.strength,
+    strength: refinements.detail_crop ? 1 : blendLayer ? Math.min(settings.strength, BLEND_STRENGTH) : settings.strength,
     editOperation: operation === "remove" ? "remove" : "replace",
     contextPadding: settings.context_padding,
   });
+  form.set("consistency_lora", String(refinements.consistency_lora));
+  form.set("detail_crop", String(refinements.detail_crop));
   form.set("scene_context", settings.scene_context);
   for (const id of referenceIds) form.append("reference_ids", String(id));
   return asLayer(await inpaintImage(form), { kind: "selection", mask, name: resultName(blendLayer?.name ?? null, operation, prompt), replaces: blendLayer?.id ?? null });

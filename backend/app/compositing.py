@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import ceil
 from pathlib import Path
 from typing import Literal
@@ -22,6 +22,8 @@ DRIFT_WORKING_SIZE = 128
 # original, which the result keeps original. The difference there is the new
 # area's tone offset right at the edge; it fades out over a few band widths.
 SEAM_WORKING_SIZE = 512
+OUTPAINT_GENERATION_OVERLAP = 32  # Pixels at inference resolution, independent of canvas size.
+OUTPAINT_BLEND_BAND = 16  # Native pixels the final composite may change inside the original.
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,9 @@ class InpaintWorkspace:
     # model redrew inside the original. Its offset is carried into the new area.
     seam_mask: Image.Image | None = None
     seam_band: int = 0
+    # A wider generation footprint must not become reference pixels for drift
+    # correction merely because the final blend protects those pixels.
+    color_reference_mask: Image.Image | None = None
 
     def composite_to(self, destination: Path) -> tuple[int, int]:
         left, top, right, bottom = self.crop_box
@@ -52,7 +57,8 @@ class InpaintWorkspace:
         source_crop = self.source.crop(self.crop_box)
         mask_crop = self.composite_mask.crop(self.crop_box)
         if self.color_correction:
-            generated = correct_color_drift(generated, source_crop, mask_crop)
+            reference_mask = (self.color_reference_mask or self.composite_mask).crop(self.crop_box)
+            generated = correct_color_drift(generated, source_crop, reference_mask)
         if self.seam_mask is not None:
             generated = match_seam(generated, source_crop, self.seam_mask.crop(self.crop_box), self.seam_band)
         protected_crop = Image.composite(generated, source_crop, mask_crop)
@@ -93,8 +99,9 @@ def prepare_inpaint_workspace(
     # selection in the middle.
     model_box = _context_box(selection_box, None, context_ratio, minimum_context) if center_selection else crop_box
     source_crop = _padded_crop(source, model_box, "symmetric")
-    # Pipelines supporting soft latent masks retain the user's alpha as well
-    # as the inward transition. Other providers receive a binary footprint.
+    # Production inpaint gives the model full coverage inside the selection,
+    # while the compositor keeps its alpha. The optional sampling feather is
+    # retained for controlled comparisons with older mask recipes.
     # Continue the mask's edge coverage into the source's mirrored context. Padding
     # it with black would invent a protected boundary at the canvas edge,
     # letting the model retain the original there even for a full selection.
@@ -135,6 +142,37 @@ def prepare_inpaint_workspace(
         model_box=model_box,
         seam_mask=mask if match_edges and mask_growth else None,
         seam_band=mask_growth,
+    )
+
+
+def prepare_outpaint_workspace(
+    source_path: Path,
+    mask_path: Path,
+    work_dir: Path,
+    max_dimension: int,
+    context_ratio: float,
+    minimum_context: int,
+) -> InpaintWorkspace:
+    """Redraw an overlap at model resolution; blend only the native edge band."""
+    with Image.open(mask_path) as uploaded_mask:
+        selection = _selection_alpha(uploaded_mask)
+    workspace = prepare_inpaint_workspace(
+        source_path, mask_path, work_dir, max_dimension, context_ratio,
+        minimum_context, composite_feather=0,
+    )
+    with Image.open(workspace.model_mask_path) as model_mask:
+        # Grow after resizing: 32 inference pixels must not become four on a
+        # 4K canvas. Keep resampling coverage at the mask boundary.
+        generation_mask = _grow_mask(model_mask.convert("L"), OUTPAINT_GENERATION_OVERLAP)
+    generation_mask.save(workspace.model_mask_path)
+    composite_mask = _inner_feather(_grow_mask(selection, OUTPAINT_BLEND_BAND), OUTPAINT_BLEND_BAND)
+    reference_mask = Image.new("L", workspace.source.size, 0)
+    left, top, right, bottom = workspace.crop_box
+    generation_coverage = generation_mask.resize((right - left, bottom - top), Image.Resampling.LANCZOS)
+    reference_mask.paste(generation_coverage, (left, top))
+    return replace(
+        workspace, composite_mask=composite_mask, seam_mask=selection,
+        seam_band=OUTPAINT_BLEND_BAND, color_reference_mask=reference_mask,
     )
 
 
@@ -230,7 +268,12 @@ def _grow_mask(mask: Image.Image, radius: int) -> Image.Image:
         raise ValueError("Inpaint mask growth cannot be negative.")
     if radius == 0:
         return mask.copy()
-    return mask.filter(ImageFilter.MaxFilter((radius * 2) + 1))
+    # Repeated square dilation has the same coverage as one large MaxFilter,
+    # with much less CPU work for the 16/32 px outpaint overlaps.
+    grown = mask
+    for _ in range(radius):
+        grown = grown.filter(ImageFilter.MaxFilter(3))
+    return grown
 
 
 def _inner_feather(mask: Image.Image, radius: float) -> Image.Image:

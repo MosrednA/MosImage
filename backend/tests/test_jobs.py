@@ -279,6 +279,16 @@ class JobProgressDetailTests(unittest.TestCase):
         finally:
             manager.shutdown()
 
+    def test_finished_job_timers_stop_at_completion(self) -> None:
+        for state in ("completed", "failed", "cancelled"):
+            job = Job(id="finished", kind="inpaint", status=state, started_at=100.0,
+                      phase_started_at=106.0, completed_at=108.0)
+            with self.subTest(state=state), patch("app.jobs.monotonic", return_value=150.0):
+                status = JobManager._status_for(job)
+                self.assertEqual(status.elapsed_seconds, 8.0)
+                self.assertEqual(status.phase_elapsed_seconds, 2.0)
+                self.assertIsNone(status.eta_seconds)
+
 
 def _exercise_second_slice(control: JobControl) -> list[int]:
     second = control.slice(1, 2)

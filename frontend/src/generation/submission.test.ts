@@ -101,4 +101,38 @@ describe("submitJob", () => {
   it("refuses another layer at the limit", async () => {
     await expect(submitJob(input({ layerCount: MAX_LAYERS }))).rejects.toThrow(`up to ${MAX_LAYERS} layers`);
   });
+  it("uses Fast four-step outpaint and restores Quality when switched off", async () => {
+    const settings = { ...defaultSettings, prompt: "continue", consistency_lora: true, specialized_outpaint: true, steps: 8, guidance: 2 };
+    await submitJob(input({ operation: "expand", settings }));
+    expect(vi.mocked(outpaintImage).mock.calls[0][1]).toMatchObject({ model_name: "flux2-klein-4b-nvfp4", steps: 4, guidance: 1, specialized_outpaint: true, consistency_lora: false });
+    await submitJob(input({ operation: "expand", settings: { ...settings, specialized_outpaint: false } }));
+    expect(vi.mocked(outpaintImage).mock.calls[1][1]).toMatchObject({ model_name: "flux2-klein-9b-nvfp4", steps: 8, guidance: 2, specialized_outpaint: false, consistency_lora: true });
+  });
+  it("sends crop detail at full strength and keeps Blend in capped", async () => {
+    const settings = { ...defaultSettings, prompt: "weave", detail_crop: true, consistency_lora: true, strength: .5, context_padding: 96 };
+    await submitJob(input({ settings }));
+    expect(sentForm().get("detail_crop")).toBe("true");
+    expect(sentForm().get("consistency_lora")).toBe("true");
+    expect(sentForm().get("strength")).toBe("1");
+    expect(sentForm().get("context_padding")).toBe("96");
+    await submitJob(input({ settings, blendLayer: layer }));
+    expect(sentForm().get("detail_crop")).toBe("false");
+    expect(sentForm().get("strength")).toBe("0.5");
+    await submitJob(input({ settings, operation: "remove" }));
+    expect(sentForm().get("detail_crop")).toBe("false");
+    expect(sentForm().get("consistency_lora")).toBe("false");
+  });
+  it("limits Consistency to Quality edits and ignores refinements in Generate", async () => {
+    const settings = { ...defaultSettings, prompt: "weave", consistency_lora: true, detail_crop: true, specialized_outpaint: true };
+    await submitJob(input({ operation: "edit", settings }));
+    expect(vi.mocked(editWholeImage).mock.calls[0][1].consistency_lora).toBe(true);
+    await submitJob(input({ operation: "edit", settings: { ...settings, model_name: "flux2-klein-4b-nvfp4" } }));
+    expect(vi.mocked(editWholeImage).mock.calls[1][1].consistency_lora).toBe(false);
+    await submitJob(input({ operation: "generate", settings }));
+    const parameters = vi.mocked(generateImage).mock.calls[0][0];
+    expect(parameters.model_name).toBe("flux2-klein-9b-nvfp4");
+    expect(parameters).not.toHaveProperty("consistency_lora");
+    expect(parameters).not.toHaveProperty("specialized_outpaint");
+    expect(parameters).not.toHaveProperty("detail_crop");
+  });
 });

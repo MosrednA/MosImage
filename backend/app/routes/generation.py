@@ -45,6 +45,8 @@ async def inpaint(
     blend_feather: float = Form(16),
     context_padding: int = Form(320),
     scene_context: str = Form(""),
+    consistency_lora: bool = Form(False),
+    detail_crop: bool = Form(False),
     reference_ids: list[int] = Form([]),
     image: UploadFile = File(...),
     mask: UploadFile = File(...),
@@ -64,6 +66,8 @@ async def inpaint(
             blend_feather=blend_feather,
             context_padding=context_padding,
             scene_context=scene_context,
+            consistency_lora=consistency_lora,
+            detail_crop=detail_crop,
             reference_ids=reference_ids,
         )
     except ValidationError as exc:

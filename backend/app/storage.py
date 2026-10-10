@@ -90,10 +90,16 @@ def _add_generation_edit_metadata(db: sqlite3.Connection) -> None:
         add_column_if_missing(db, "generations", column, definition)
 
 
+def _add_quality_options(db: sqlite3.Connection) -> None:
+    for column in ("consistency_lora", "detail_crop", "specialized_outpaint"):
+        add_column_if_missing(db, "generations", column, "INTEGER NOT NULL DEFAULT 0")
+
+
 GENERATION_MIGRATIONS: list[Migration] = [
     ("generations.0001_create", lambda db: db.execute(SCHEMA)),
     ("generations.0002_runtime_mode", lambda db: add_column_if_missing(db, "generations", "runtime_mode", "TEXT NOT NULL DEFAULT 'balanced'")),
     ("generations.0003_edit_metadata", _add_generation_edit_metadata),
+    ("generations.0004_quality_options", _add_quality_options),
 ]
 
 
@@ -186,4 +192,6 @@ def row_to_record(row: sqlite3.Row) -> dict[str, Any]:
     record = dict(row)
     record["output_image_url"] = image_url(record["output_image_path"])
     record["reference_image_paths"] = json.loads(record.get("reference_image_paths") or "[]")
+    for column in ("consistency_lora", "detail_crop", "specialized_outpaint"):
+        record[column] = bool(record[column])
     return record

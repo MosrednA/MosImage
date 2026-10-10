@@ -8,7 +8,11 @@
 
 ## Benchmarks
 
+- [Natural texture and classical 2x upscaling, 10 October 2026](../benchmarks/UPSCALING_FIDELITY_2026-10-10.md): six native/reconstruction cases, SwinIR Light/M and Swin2SR, BF16 and tile-size comparisons; Light preserves more source texture, with visual acceptance and shared-runtime timing recorded separately.
+- [Upscaling quality, speed and Klein residency, 10 October 2026](../benchmarks/UPSCALING_2026-10-10.md): x2plus/x4v3, timings and shared-GPU evidence; the user rejected all displayed faces as too smooth, so photo integration awaits an accepted recipe.
+- [LoRA, specialized outpaint and detail crops, 9 October 2026](../benchmarks/QUALITY_CANDIDATES_2026-10-09.md): native NVFP4 compatibility, optional editor switches and GPU acceptance, Consistency V2, fast FAL outpaint, the Base latency rejection and selected texture findings.
 - [Benchmark suite](../benchmarks/README.md): fixed fixtures and the protocol behind every measurement.
+- [Separate edit masks and resolution-aware expansion, 9 October 2026](../benchmarks/EDIT_MASK_RESULTS_2026-10-09.md): implementation, 30 paired Klein 9B renders, protected pixels, runtime and remaining visual limits.
 - [Model comparison and the Klein 9B default, 9 October 2026](../benchmarks/MODEL_COMPARISON_2026-10-09.md): Klein 4B and 9B NVFP4 against Qwen-Image 2.1 turbo on creative and retouching cases, and how 9B fits in 16 GB.
 - [Mask, context and reference quality, 8 October 2026](../benchmarks/INPAINT_QUALITY_2026-10-08.md): controlled GPU comparisons with full output galleries and app latency measurements.
 - [Klein BF16 against NVFP4, 7 October 2026](../benchmarks/NVFP4_RESULTS_2026-10-07.md)
@@ -17,6 +21,7 @@
 
 These notes are dated snapshots. They record what was tried, measured and decided at the time. Where they disagree with the guide, the guide describes the current behaviour.
 
+- [Image quality across generation, inpaint and outpaint, 9 October 2026](notes/2026-10-09-image-quality-research.md): pre-change pipeline findings, CPU overlap/resolution probe, LoRA candidates and proposed evaluation stages, with a link to the implemented first slice.
 - [Focus implementation and validation](notes/2026-10-07-focus-implementation.md): delivery log and regression evidence, updated through 9 October.
 - [Inpainting, context crops and blending](notes/2026-10-07-inpainting.md): the inpainting route, with controlled experiments on:
   - [scale-aware placement](notes/2026-10-07-inpainting.md#scale-aware-placement-research)

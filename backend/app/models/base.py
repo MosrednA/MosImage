@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Protocol, Sequence
 
 from app.jobs import JobControl
-from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, TextToImageRequest
+from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, OutpaintForm, TextToImageRequest
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,10 @@ class ImageModelProvider(Protocol):
         control: JobControl,
         references: Sequence[ModelReference] = (),
     ) -> tuple[int, int]:
+        ...
+
+    def outpaint(self, request: OutpaintForm, input_path: Path, output_path: Path,
+                 control: JobControl) -> tuple[int, int]:
         ...
 
     def preload(self, request: LoadModelRequest, control: JobControl) -> None:

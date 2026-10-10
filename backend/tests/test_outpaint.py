@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 from pydantic import ValidationError
 
-from app.compositing import prepare_inpaint_workspace
+from app.compositing import OUTPAINT_BLEND_BAND, prepare_inpaint_workspace, prepare_outpaint_workspace
 from app.schemas import OutpaintForm, SelectionRequest
 from app.services import prepare_outpaint_images
 from fastapi.testclient import TestClient
@@ -97,6 +97,54 @@ class OutpaintTests(unittest.TestCase):
         Image.new("RGB", (3000, 2000)).save(image, "PNG")
         with self.assertRaisesRegex(ValueError, "4096"):
             prepare_outpaint_images(image.getvalue(), OutpaintForm(prompt="scene", left=1200))
+
+    def test_model_overlap_survives_downscaling_without_expanding_final_edits(self) -> None:
+        source = Image.new("RGBA", (576, 288), (20, 80, 140, 180))
+        buffer = BytesIO()
+        source.save(buffer, "PNG")
+        canvas, mask = prepare_outpaint_images(
+            buffer.getvalue(), OutpaintForm(prompt="scene", left=96, right=96, top=48, bottom=48),
+        )
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "canvas.png").write_bytes(canvas)
+            (root / "mask.png").write_bytes(mask)
+            workspace = prepare_outpaint_workspace(root / "canvas.png", root / "mask.png", root, 256, .5, 128)
+            with Image.open(workspace.model_mask_path) as model_mask:
+                self.assertEqual(model_mask.size, (256, 128))
+                # Twenty model pixels inside the old border (60 native px)
+                # remain fully editable even after a 3x downscale.
+                for point in ((52, 64), (204, 64), (128, 36), (128, 92)):
+                    self.assertEqual(model_mask.getpixel(point), 255)
+                self.assertEqual(model_mask.getpixel((128, 64)), 0)
+                Image.new("RGB", model_mask.size, (240, 120, 10)).save(workspace.model_output_path)
+            self.assertEqual(workspace.composite_mask.getpixel((156, 192)), 0)
+            self.assertIsNotNone(workspace.color_reference_mask)
+            self.assertEqual(workspace.color_reference_mask.getpixel((156, 192)), 255)
+            workspace.composite_to(root / "result.png")
+            with Image.open(root / "result.png") as result:
+                core = (96 + OUTPAINT_BLEND_BAND, 48 + OUTPAINT_BLEND_BAND,
+                        672 - OUTPAINT_BLEND_BAND, 336 - OUTPAINT_BLEND_BAND)
+                original_core = (OUTPAINT_BLEND_BAND, OUTPAINT_BLEND_BAND,
+                                 source.width - OUTPAINT_BLEND_BAND, source.height - OUTPAINT_BLEND_BAND)
+                self.assertEqual(result.crop(core).tobytes(), source.crop(original_core).tobytes())
+                self.assertEqual(result.getpixel((0, 0))[3], 255)
+
+    def test_outpaint_blend_footprint_stays_native_when_model_resolution_changes(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = Image.new("RGB", (384, 256), (100, 100, 100))
+            buffer = BytesIO()
+            source.save(buffer, "PNG")
+            canvas, mask = prepare_outpaint_images(buffer.getvalue(), OutpaintForm(prompt="scene", left=128))
+            (root / "canvas.png").write_bytes(canvas)
+            (root / "mask.png").write_bytes(mask)
+            (root / "native").mkdir()
+            (root / "reduced").mkdir()
+            native = prepare_outpaint_workspace(root / "canvas.png", root / "mask.png", root / "native", 1024, .5, 128)
+            reduced = prepare_outpaint_workspace(root / "canvas.png", root / "mask.png", root / "reduced", 256, .5, 128)
+            self.assertEqual(native.composite_mask.tobytes(), reduced.composite_mask.tobytes())
+            self.assertTrue(np.all(np.asarray(reduced.composite_mask)[:, 128 + OUTPAINT_BLEND_BAND:] == 0))
 
     def test_selection_requires_bounded_finite_positive_points(self) -> None:
         for payload in ({"points": [{"x": 1, "y": 2, "label": 0}]}, {"points": [{"x": float("inf"), "y": 1, "label": 1}]}, {"points": []}):

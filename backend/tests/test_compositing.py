@@ -58,6 +58,28 @@ class InpaintCompositingTests(unittest.TestCase):
                 self.assertLess(result.getpixel((48, 40))[0], 200)
                 self.assertEqual(result.getpixel((60, 40)), (200, 0, 0))
 
+    def test_regenerated_overlap_is_excluded_from_colour_drift_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = Image.new("RGB", (256, 128), (100, 100, 100))
+            source.save(root / "source.png")
+            selection = Image.new("L", source.size, 0)
+            selection.paste(255, (128, 0, 256, 128))
+            selection.save(root / "mask.png")
+            workspace = prepare_inpaint_workspace(
+                root / "source.png", root / "mask.png", root, 256, 0, 128, composite_feather=0,
+            )
+            generated = source.copy()
+            # The model changes an overlap which the final blend protects.
+            # Treating it as unchanged context would tint the new area.
+            generated.paste((80, 80, 80), (96, 0, 128, 128))
+            generated.save(workspace.model_output_path)
+            coverage = Image.new("L", source.size, 0)
+            coverage.paste(255, (96, 0, 256, 128))
+            replace(workspace, color_reference_mask=coverage).composite_to(root / "result.png")
+            with Image.open(root / "result.png") as result:
+                self.assertEqual(result.tobytes(), source.tobytes())
+
     def test_explicit_growth_and_inward_feather_have_separate_footprints(self) -> None:
         mask = Image.new("L", (25, 25), 0)
         for y in range(8, 17):
@@ -150,6 +172,32 @@ class InpaintCompositingTests(unittest.TestCase):
             workspace = prepare_inpaint_workspace(root / "source.png", root / "mask.png", root, 1024, 0, 32, generation_feather=0)
             with Image.open(workspace.model_mask_path) as generated_mask:
                 self.assertEqual(generated_mask.getpixel((32, 32)), 128)
+
+    def test_full_generation_coverage_keeps_the_independent_soft_composite(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = Image.new("RGB", (128, 128), (0, 0, 200))
+            source.save(root / "source.png")
+            mask = Image.new("L", source.size, 0)
+            mask.paste(64, (32, 32, 96, 96))
+            mask.paste(255, (48, 48, 80, 80))
+            mask.save(root / "mask.png")
+            workspace = prepare_inpaint_workspace(
+                root / "source.png", root / "mask.png", root, 1024, 0, 32,
+                composite_feather=0, center_selection=True,
+            )
+            with Image.open(workspace.model_mask_path) as generation_mask:
+                self.assertEqual(generation_mask.getpixel((36, 64)), 255)
+                self.assertEqual(generation_mask.getpixel((31, 64)), 0)
+                Image.new("RGB", generation_mask.size, (200, 0, 0)).save(workspace.model_output_path)
+            self.assertEqual(workspace.composite_mask.tobytes(), mask.tobytes())
+            replace(workspace, color_correction=False).composite_to(root / "result.png")
+            with Image.open(root / "result.png") as result:
+                # A single 25% final blend, rather than 25% denoising coverage
+                # followed by another 25% blend, while protected pixels match.
+                self.assertEqual(result.getpixel((36, 64)), (50, 0, 150))
+                self.assertEqual(result.getpixel((64, 64)), (200, 0, 0))
+                self.assertEqual(result.getpixel((31, 64)), source.getpixel((31, 64)))
 
     def test_centered_model_mask_continues_selected_canvas_edges_and_corners(self) -> None:
         cases = (

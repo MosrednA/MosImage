@@ -192,6 +192,18 @@ small { color: var(--muted); }
 .prompt-options .segmented { flex-basis: 100%; width: fit-content; margin-bottom: 3px; }
 .prompt-options .segmented button { flex: 1; padding: 8px 12px; }
 .prompt-options select { flex: 1; min-width: 120px; }
+.quality-refinements { display: grid; gap: 15px; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.quality-refinements > small { color: var(--muted); font-size: 10px; }
+.quality-switch { display: flex; align-items: center; justify-content: space-between; gap: 18px; font-size: 12px; cursor: pointer; }
+.quality-switch span { min-width: 0; }
+.quality-switch small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.quality-switch input { appearance: none; position: relative; flex: 0 0 30px; width: 30px; height: 18px; padding: 0; margin: 0; border: 1px solid #53647a; border-radius: 12px; background: #263342; cursor: pointer; }
+.quality-switch input::before { content: ""; position: absolute; width: 10px; height: 10px; left: 3px; top: 3px; border-radius: 50%; background: #96a5b7; transition: transform .12s, background .12s; }
+.quality-switch input:checked { border-color: var(--accent); background: #324a61; }
+.quality-switch input:checked::before { transform: translateX(12px); background: var(--accent); }
+.quality-switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.quality-switch input:disabled { opacity: .35; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .quality-switch input::before { transition: none; } }
 .advanced { margin-top: 24px; font-size: 12px; }
 .advanced summary { color: var(--accent); padding: 8px 0; }
 .advanced-content { padding-top: 16px; display: flex; flex-direction: column; gap: 16px; }

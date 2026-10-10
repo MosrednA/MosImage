@@ -11,7 +11,7 @@ from typing import Literal
 from PIL import Image
 
 from . import references, storage
-from .compositing import prepare_inpaint_workspace
+from .compositing import prepare_inpaint_workspace, prepare_outpaint_workspace
 from .config import settings
 from .jobs import JobControl
 from .models.base import ModelReference
@@ -94,6 +94,7 @@ def run_image_edit(request: EditRequest, image_bytes: bytes, image_name: str | N
                     "height": height,
                     "strength": None,
                     "input_image_path": storage.to_relative(input_path),
+                    "consistency_lora": request.consistency_lora,
                     "mask_image_path": None,
                     "output_image_path": storage.to_relative(output_path),
                     "reference_image_paths": json.dumps([storage.to_relative(reference.path) for reference in model_references]) if model_references else None,
@@ -166,19 +167,20 @@ def _run_masked_edit(
 
     try:
         with TemporaryDirectory(prefix="inpaint-", dir=settings.data_dir) as temporary_dir:
-            workspace = prepare_inpaint_workspace(
-                input_path,
-                mask_path,
-                Path(temporary_dir),
-                settings.inpaint_max_dimension,
-                settings.inpaint_context_ratio if task == "outpaint" else 0,
-                settings.inpaint_minimum_context if task == "outpaint" else request.context_padding,
-                mask_growth=16 if task == "outpaint" else 0,
-                composite_feather=0 if task == "outpaint" else request.blend_feather,
-                generation_feather=request.blend_feather if task == "inpaint" else None,
-                center_selection=task == "inpaint",
-                match_edges=task == "outpaint",
-            )
+            if task == "outpaint":
+                workspace = prepare_outpaint_workspace(
+                    input_path, mask_path, Path(temporary_dir), settings.inpaint_max_dimension,
+                    settings.inpaint_context_ratio, settings.inpaint_minimum_context,
+                )
+            else:
+                # Generate throughout the selected footprint; the soft mask
+                # belongs to final compositing, not to retaining old content
+                # during denoising. Pixels beyond that footprint stay exact.
+                workspace = prepare_inpaint_workspace(
+                    input_path, mask_path, Path(temporary_dir), settings.inpaint_max_dimension,
+                    0, request.context_padding, composite_feather=request.blend_feather,
+                    center_selection=True,
+                )
             for index in range(request.count):
                 output_path = _new_image_path(settings.output_dir, "output")
                 output_paths.append(output_path)
@@ -190,14 +192,29 @@ def _run_masked_edit(
                 iteration_control = control.slice(index, request.count)
                 # Only reference-aware providers receive the extra argument.
                 extra = {"references": model_references} if model_references else {}
-                seed, _model_width = provider.inpaint(
-                    iteration,
-                    iteration_workspace.model_input_path,
-                    iteration_workspace.model_mask_path,
-                    iteration_workspace.model_output_path,
-                    iteration_control,
-                    **extra,
-                )
+                if isinstance(iteration, OutpaintForm) and iteration.specialized_outpaint:
+                    green_path = Path(temporary_dir) / "green-input.png"
+                    green = workspace.source.convert("RGB")
+                    with Image.open(mask_path) as border:
+                        green.paste((0, 255, 0), mask=border.convert("L"))
+                    green.save(green_path)
+                    full_output = Path(temporary_dir) / f"full-output-{index}.png"
+                    seed, _model_width = provider.outpaint(iteration, green_path, full_output, iteration_control)
+                    with Image.open(full_output) as result:
+                        result.resize(workspace.source.size, Image.Resampling.LANCZOS).crop(workspace.crop_box).save(model_output_path)
+                    iteration_workspace = replace(iteration_workspace, model_box=None)
+                elif iteration.detail_crop:
+                    detail_request = EditRequest(prompt=iteration.prompt + (
+                        " Scene context: " + iteration.scene_context if iteration.scene_context else ""),
+                        negative_prompt=iteration.negative_prompt,
+                        model_name=iteration.model_name, runtime_mode=iteration.runtime_mode,
+                        seed=iteration.seed, steps=iteration.steps, guidance=iteration.guidance,
+                        reference_ids=iteration.reference_ids, consistency_lora=iteration.consistency_lora)
+                    seed, _model_width = provider.edit(detail_request, iteration_workspace.model_input_path,
+                        model_output_path, iteration_control, **extra)
+                else:
+                    seed, _model_width = provider.inpaint(iteration, iteration_workspace.model_input_path,
+                        iteration_workspace.model_mask_path, model_output_path, iteration_control, **extra)
                 iteration_control.set_progress(0.97)
                 iteration_control.set_phase("finishing")
                 width, height = iteration_workspace.composite_to(output_path)
@@ -215,6 +232,9 @@ def _run_masked_edit(
                         "width": width,
                         "height": height,
                         "strength": request.strength,
+                        "consistency_lora": request.consistency_lora,
+                        "detail_crop": request.detail_crop,
+                        "specialized_outpaint": isinstance(request, OutpaintForm) and request.specialized_outpaint,
                         "edit_operation": request.edit_operation if task == "inpaint" else None,
                         "blend_feather": request.blend_feather if task == "inpaint" else None,
                         "context_padding": request.context_padding if task == "inpaint" else None,

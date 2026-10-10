@@ -10,7 +10,7 @@ import { ImageSize } from "./canvas/coordinates";
 import { ExpansionCanvas } from "./canvas/ExpansionCanvas";
 import { validExpansion } from "./canvas/expansion";
 import { errorMessage } from "./errors";
-import { EditScope, Operation, SketchScope, isWholeImage, taskFor } from "./generation/operation";
+import { EditScope, Operation, SketchScope, isWholeImage } from "./generation/operation";
 import { CommandState, canSubmit, commandHint } from "./generation/commandState";
 import { LayerResult, submitJob } from "./generation/submission";
 import { SettingsControls, defaultSettings, settingsSummary } from "./components/EditorSettings";
@@ -92,7 +92,6 @@ export default function App() {
   const locked = busy || reviewing;
   const chosen = alternatives[selected];
   const proposalUrls = alternatives.map((item, index) => fileUrl(proposal?.alternatives[index]?.output_image_url ?? item.output_image_url));
-  const task = taskFor(operation);
   // References place people in a selection (Replace), the whole picture (Edit) or a new image (Generate).
   const references = ((operation === "replace" || operation === "edit" || operation === "faces") && source) || operation === "generate" ? refs.active : [];
   // Selection tools select on the picture, as in Photoshop, unless the layer is being masked.
@@ -470,7 +469,7 @@ export default function App() {
         ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} />
         : <CommandCard operation={operation} onOperation={chooseOperation} hasImage={!!source} locked={locked}
           editScope={editScope} onEditScope={document && layers.layers.length ? chooseEditScope : undefined} sketchScope={sketchScope} onSketchScope={setSketchScope}
-          settingsLabel={settingsSummary(settings, task)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
+          settingsLabel={settingsSummary(settings, operation, !!blending)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
           references={references.map(item => ({ id: item.id, name: item.name, imageUrl: fileUrl(item.subject_url ?? item.image_url) }))} onRemoveReference={id => refs.toggle(id)}
           hint={commandHint(command)} cancelled={job?.status === "cancelled"} jobActive={jobs.active} cancelling={jobs.cancelling} canSubmit={submittable}
           onCanvasSize={() => setPanel("expansion")} onSettings={() => setPanel("settings")} onSubmit={() => void submit()} onCancel={() => void jobs.cancel()} />}
@@ -491,7 +490,7 @@ export default function App() {
           disabled={locked || operation === "expand"} note={referenceNote}
           onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null) chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}
     </SidePanel>
-    {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} task={task} disabled={locked} /></ControlDialog>}
+    {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} operation={operation} blending={!!blending} disabled={locked} /></ControlDialog>}
     {panel === "expansion" && size && <ExpansionDialog size={size} expansion={expansion} onChange={setExpansion} disabled={locked} onClose={() => setPanel(null)} />}
     {panel === "shortcuts" && <ShortcutsDialog onClose={() => setPanel(null)} />}
     {libraryOpen && <LibraryDrawer documents={engine.documents} history={engine.history} onClose={() => setLibraryOpen(false)}

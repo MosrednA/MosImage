@@ -1,5 +1,13 @@
 # Inpainting benchmark fixtures
 
+The [10 October texture-preservation follow-up](UPSCALING_FIDELITY_2026-10-10.md) compares classical 2x SwinIR Light/M and Swin2SR on six native enlargements and reconstruction diagnostics, including one real camera photo. It records BF16 and larger-tile measurements, source/alpha/protected-pixel contracts and shared-runtime observations. Light is the next visual-review candidate; no AI upscale feature or quality default is approved.
+
+The [10 October upscaling comparison](UPSCALING_2026-10-10.md) measures RealESRGAN_x2plus and compact x4v3, including PNG save time, four retained quality cases, tile/alpha/protected-pixel checks and coexistence with real Klein 9B edits. This is experimental tooling and evidence; AI upscaling is not yet integrated into Export or the editor.
+
+The [9 October quality-candidate evaluation](QUALITY_CANDIDATES_2026-10-09.md) compares Consistency V2 on the native 9B provider, FAL green-border outpaint on the fast 4B NVFP4 runtime, and contextual detail crops. The published Base 4B recipe was stopped after six garden outputs because its 157–180-second edits exceed the user's latency requirement. The subsequent optional editor switches and six real GPU acceptance jobs are recorded separately in that report; all switches start off and the model registry retains its three distilled/BF16 Klein providers.
+
+The [9 October edit-mask implementation comparison](EDIT_MASK_RESULTS_2026-10-09.md) retains 30 before/after renders on the real Klein 9B provider. It checks separate generation/final blend masks, expansion overlap at model resolution, protected pixels and visual limits. Its recipes use current production compositing; the v1 precision fixtures below keep their frozen historical settings.
+
 The [9 October model comparison](MODEL_COMPARISON_2026-10-09.md) adds the [v2 creative fixtures](fixtures/v2/manifest.json) (a man and a man holding a phone, generated locally) and compares Klein 4B/9B NVFP4, Qwen-Image 2.1 turbo and encoder variants across twelve cases.
 
 The [8 October mask/reference investigation](INPAINT_QUALITY_2026-10-08.md) extends these fixtures with paired context/resolution tests, local identity and object references, and a separate measurement of the real app provider. Its recipes and all outcomes are retained under `data/inpaint-quality-2026-10-08/`.

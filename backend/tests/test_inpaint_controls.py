@@ -64,6 +64,32 @@ class InpaintControlTests(unittest.TestCase):
                 for path in (settings.input_dir, settings.mask_dir, settings.output_dir):
                     self.assertEqual(list(path.iterdir()), [])
 
+    def test_service_generates_fully_inside_a_soft_selection(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(settings, "data_dir", root), patch.object(settings, "image_dir", root / "images"), patch.object(settings, "db_path", root / "app.db"):
+                storage.ensure_storage()
+                provider = MagicMock()
+
+                def render(request, source_path, mask_path, output_path, control):
+                    with Image.open(mask_path) as model_mask:
+                        self.assertEqual(model_mask.getpixel((32, 32)), 255)
+                        self.assertEqual(model_mask.getpixel((15, 32)), 0)
+                        Image.new("RGB", model_mask.size, (200, 0, 0)).save(output_path)
+                    return 42, 64
+
+                provider.inpaint.side_effect = render
+                source = Image.new("RGB", (64, 64), "blue")
+                mask = Image.new("L", source.size, 0)
+                mask.paste(128, (16, 16, 48, 48))
+                with patch("app.services.registry.activate", return_value=provider), patch("app.services.storage.create_generations", return_value=[123]):
+                    result = run_inpaint(
+                        InpaintForm(prompt="red", blend_feather=0, context_padding=32),
+                        image_bytes(source), "source.png", image_bytes(mask), "mask.png", MagicMock(),
+                    )
+                self.assertEqual(result, [123])
+                provider.inpaint.assert_called_once()
+
     def test_existing_generation_survives_migration_with_optional_new_metadata(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -84,6 +110,8 @@ class InpaintControlTests(unittest.TestCase):
                 self.assertIsNotNone(record)
                 self.assertEqual(record["prompt"], "old mushroom")
                 self.assertEqual(record["runtime_mode"], "balanced")
+                for field in ("consistency_lora", "detail_crop", "specialized_outpaint"):
+                    self.assertIs(record[field], False)
                 for field in ("edit_operation", "blend_feather", "context_padding", "scene_context"):
                     self.assertIsNone(record[field])
 

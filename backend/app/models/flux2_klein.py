@@ -6,7 +6,7 @@ from collections import OrderedDict
 import random
 import re
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 from PIL import Image, ImageOps
 
@@ -15,6 +15,9 @@ from app.jobs import JobCancelled, JobControl
 from app.models.base import ModelReference
 from app.runtime import require_generation_device, selected_device, selected_dtype, torch_module
 from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, OutpaintForm, RuntimeMode, TextToImageRequest
+
+if TYPE_CHECKING:
+    from app.models.klein_lora import KleinLora
 
 
 Placement = Literal["cuda", "offload"]
@@ -185,6 +188,7 @@ class Flux2KleinProvider:
         self._placement: Placement | None = None
         self._torch: Any | None = None
         self._prompt_cache: OrderedDict[str, Any] = OrderedDict()
+        self._consistency_adapter: KleinLora | None = None
 
     def info(self) -> ModelInfo:
         return ModelInfo(
@@ -208,6 +212,7 @@ class Flux2KleinProvider:
             require_generation_device()
             torch = self._load_torch()
             pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
+            self._configure_edit_adapters(pipe, False, control)
             reference_images = _reference_images([reference.path for reference in references])
             control.set_progress(0.15)
             seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
@@ -246,6 +251,7 @@ class Flux2KleinProvider:
             require_generation_device()
             torch = self._load_torch()
             pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
+            self._configure_edit_adapters(pipe, request.consistency_lora, control)
             with Image.open(input_path) as picture:
                 source = _opaque(picture)
             fitted = _fit_area(source, FACE_AREA if request.mode == "face" else EDIT_AREA)
@@ -291,6 +297,7 @@ class Flux2KleinProvider:
             require_generation_device()
             torch = self._load_torch()
             pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control)
+            self._configure_edit_adapters(pipe, request.consistency_lora, control)
             if request.edit_operation in ("remove", "sketch"):
                 references = ()
             reference_images = _reference_images([reference.path for reference in references])
@@ -333,6 +340,7 @@ class Flux2KleinProvider:
             require_generation_device()
             placement = self._placement_for(request.runtime_mode)
             pipe = self._load_pipe(placement, request.task, control)
+            self._configure_edit_adapters(pipe, False, control)
             control.set_progress(0.6)
             if request.warm_up:
                 self._warm_up(pipe, request.task, control)
@@ -344,10 +352,25 @@ class Flux2KleinProvider:
             raise
 
     def unload(self) -> None:
+        self._consistency_adapter = None
         self._pipes = {}
         self._placement = None
         self._prompt_cache.clear()
         self._collect()
+
+    def _configure_edit_adapters(self, pipe: Any, enabled: bool, control: JobControl) -> None:
+        if enabled and self.name != "flux2-klein-9b-nvfp4":
+            raise ValueError("Consistency requires the distilled Quality 9B NVFP4 model.")
+        if enabled and self._consistency_adapter is None:
+            from app.models.klein_lora import CONSISTENCY_V2, KleinLora, resolve_checkpoint
+            path = resolve_checkpoint(CONSISTENCY_V2, control)
+            self._consistency_adapter = KleinLora.attach(pipe.transformer, path, control.raise_if_cancelled)
+        if self._consistency_adapter is not None:
+            self._consistency_adapter.set_scale(0.6 if enabled else 0)
+
+    def outpaint(self, request: OutpaintForm, input_path: Path, output_path: Path,
+                 control: JobControl) -> tuple[int, int]:
+        raise ValueError("Specialized outpaint requires the Fast NVFP4 model.")
 
     def _encode_prompt(self, pipe: Any, prompt: str, control: JobControl | None = None) -> Any:
         """Encode each prompt once.
@@ -394,14 +417,15 @@ class Flux2KleinProvider:
             pipe = self._create_pipeline(task, control) if shared is None else self._derive_pipeline(shared, task)
             control.raise_if_cancelled()
             if task == "inpaint":
-                # Preserve the inward ramp during latent sampling.
+                # Keep mask resampling coverage; final user feathering is
+                # applied by the compositor, independently of generation.
                 pipe.mask_processor.register_to_config(do_binarize=False)
             self._place_pipeline(pipe, placement)
             control.raise_if_cancelled()
         except BaseException:
             pipe = None
             if shared is None:
-                self._collect()
+                self.unload()
             raise
         # Publish only after loading, placement and cancellation checks.
         self._pipes[task] = pipe
