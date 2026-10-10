@@ -79,7 +79,7 @@ Fast path from the repository root:
 ./start.sh
 ```
 
-It does what `start.cmd` does: it creates `backend/.venv` with Python 3.13 or 3.12 (`python3.13` from Homebrew, or uv when that is installed), installs `requirements-torch-macos.txt` and `requirements.txt`, checks that PyTorch can use Metal, installs the frontend dependencies and starts the supervised engine and Vite. `./start.sh --no-install` skips the checks. Ctrl+C, closing the terminal or a plain `kill` stops both; the engine also exits if the script is killed outright.
+It does what `start.cmd` does: it creates `backend/.venv` with Python 3.13 or 3.12 (`python3.13` from Homebrew, or uv when that is installed), installs `requirements-torch-macos.txt` and `requirements.txt`, checks that PyTorch can use Metal, installs the frontend dependencies and starts the supervised engine and Vite. `./start.sh --no-install` skips the checks. Ctrl+C, closing the terminal or a plain `kill` stops both and waits for the engine to unload; the engine also exits by itself if the script is killed outright (`MOSIMAGE_WATCH_PID`). A second `./start.sh` stops again when the ports are taken, and leaves the first one running.
 
 Manual setup:
 
@@ -97,7 +97,8 @@ On macOS the defaults switch to the Apple silicon profile (`MOSIMAGE_PREFERRED_D
 - `Fast` is FLUX.2 Klein 4B (`flux2-klein-4b`), which also runs Specialized outpaint.
 - Consistency and the detail enhancer work with Quality, as on Windows.
 - CPU and GPU share one memory, so every component stays resident and the memory usage setting is hidden: offloading would only copy weights around. Quality takes about 30 GB, Fast about 16 GB; switching between them releases the other.
-- `PYTORCH_ENABLE_MPS_FALLBACK=1` is set, so an operator Metal lacks runs on the CPU instead of failing.
+- `PYTORCH_ENABLE_MPS_FALLBACK=1` is set before PyTorch loads, so an operator Metal lacks runs on the CPU instead of failing.
+- With less than 48 GB of unified memory the engine warms up Fast instead of Quality at start; choose Fast in the editor as well. `MOSIMAGE_WARM_UP_MODEL` overrides the choice.
 
 Measured warm through the API on an M5 Max (40-core GPU, 128 GB), macOS 27, PyTorch 2.14.1:
 

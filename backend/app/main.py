@@ -43,7 +43,7 @@ warm_up_job_id: str | None = None
 async def lifespan(_app: FastAPI):
     global warm_up_job_id
     if settings.exit_with_parent and os.name == "posix":
-        threading.Thread(target=_exit_with_parent, args=(os.getppid(),), name="parent-watch", daemon=True).start()
+        threading.Thread(target=_exit_with_parent, args=(os.getppid(), settings.watch_pid), name="parent-watch", daemon=True).start()
     if settings.warm_up_on_start:
         warm_up_job_id = jobs.submit("load-model", _warm_up_engine).id
     try:
@@ -103,17 +103,28 @@ def _schedule_exit() -> None:
     asyncio.get_running_loop().call_later(0.1, signal.raise_signal, signal.SIGINT)
 
 
-def _exit_with_parent(parent: int) -> None:
-    """Stops the engine once its parent is gone; POSIX re-parents an orphan, so its parent ID changes.
+def _exit_with_parent(parent: int, watched: int | None = None) -> None:
+    """Stops the engine once its parent, or the ``watched`` process, is gone.
 
-    Windows has no such signal; the desktop app's job object ends the engine there.
+    POSIX re-parents an orphan, so its parent ID changes. Windows has no such
+    signal; the desktop app's job object ends the engine there.
     """
-    while os.getppid() == parent:
+    while os.getppid() == parent and (watched is None or _running(watched)):
         time.sleep(1)
     os.kill(os.getpid(), signal.SIGINT)
     # A running edit can hold the graceful shutdown; the memory must be released regardless.
     time.sleep(settings.cancel_grace_seconds + 5)
     os._exit(0)
+
+
+def _running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 @app.get("/api/engine", response_model=EngineStatus)

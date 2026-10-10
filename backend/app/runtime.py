@@ -6,16 +6,13 @@ import subprocess
 from functools import lru_cache
 from typing import Any
 
-from .config import settings
+from .config import physical_memory_gb, settings
 
 
 @lru_cache(maxsize=1)
 def torch_module() -> Any:
     if settings.cuda_alloc_conf:
         os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", settings.cuda_alloc_conf)
-    if settings.apple_silicon:
-        # An operator Metal lacks then runs on the CPU instead of failing the edit.
-        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
     import torch
 
@@ -87,18 +84,15 @@ def require_generation_device() -> None:
 
 
 @lru_cache(maxsize=1)
-def _apple_chip() -> tuple[str, float | None]:
+def _apple_chip() -> tuple[str, int | None]:
     """The chip name and unified memory size, as About This Mac shows them."""
     try:
         name = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True,
                               timeout=2, check=True).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         name = ""
-    try:
-        memory = round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**3)
-    except (ValueError, OSError, AttributeError):
-        memory = None
-    return name or f"Apple silicon ({platform.machine()})", memory
+    memory = physical_memory_gb()
+    return name or f"Apple silicon ({platform.machine()})", round(memory) if memory is not None else None
 
 
 def system_info() -> dict[str, Any]:

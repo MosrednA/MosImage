@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -33,7 +35,8 @@ def fake_torch(*, cuda: bool = False, mps: bool = False) -> SimpleNamespace:
 
 
 class AppleProfileTests(unittest.TestCase):
-    def test_each_profile_names_its_quality_and_fast_models(self) -> None:
+    @patch("app.config.physical_memory_gb", return_value=128)
+    def test_each_profile_names_its_quality_and_fast_models(self, _memory: MagicMock) -> None:
         apple = Settings(_env_file=None, preferred_device="mps")
         self.assertEqual((apple.quality_model, apple.fast_model, apple.warm_up_model),
                          ("flux2-klein-9b", "flux2-klein-4b", "flux2-klein-9b"))
@@ -42,6 +45,18 @@ class AppleProfileTests(unittest.TestCase):
                          ("flux2-klein-9b-nvfp4", "flux2-klein-4b-nvfp4", "flux2-klein-9b-nvfp4"))
         self.assertEqual(Settings(_env_file=None, preferred_device="mps", warm_up_model="flux2-klein-4b").warm_up_model,
                          "flux2-klein-4b")
+
+    def test_a_mac_without_room_for_quality_warms_up_fast(self) -> None:
+        with patch("app.config.physical_memory_gb", return_value=24):
+            self.assertEqual(Settings(_env_file=None, preferred_device="mps").warm_up_model, "flux2-klein-4b")
+            self.assertEqual(Settings(_env_file=None, preferred_device="cuda").warm_up_model, "flux2-klein-9b-nvfp4")
+        with patch("app.config.physical_memory_gb", return_value=None):
+            self.assertEqual(Settings(_env_file=None, preferred_device="mps").warm_up_model, "flux2-klein-9b")
+
+    @unittest.skipUnless(sys.platform == "darwin", "macOS only")
+    def test_metal_fallback_is_set_before_torch_loads(self) -> None:
+        # torch reads it at import, and SAM can import torch before runtime.torch_module() runs.
+        self.assertEqual(os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK"), "1")
 
     def test_registry_offers_the_bf16_models_on_a_mac(self) -> None:
         with apple_profile():
@@ -182,6 +197,25 @@ class ParentWatchTests(unittest.TestCase):
         kill.assert_called_once_with(99, main.signal.SIGINT)
         hard_exit.assert_called_once_with(0)
         self.assertEqual(sleep.call_count, 3)
+
+    def test_engine_stops_once_start_sh_is_gone_behind_its_supervisor(self) -> None:
+        from app import main
+
+        with patch.object(main.os, "getppid", return_value=41), patch.object(main, "_running", side_effect=[True, False]) as running, \
+                patch.object(main.os, "getpid", return_value=99), patch.object(main.os, "kill") as kill, \
+                patch.object(main.os, "_exit") as hard_exit, patch.object(main.time, "sleep"):
+            main._exit_with_parent(41, watched=7)
+        self.assertEqual(running.call_args_list[-1].args, (7,))
+        kill.assert_called_once_with(99, main.signal.SIGINT)
+        hard_exit.assert_called_once_with(0)
+
+    def test_a_vanished_process_is_not_running(self) -> None:
+        from app import main
+
+        with patch.object(main.os, "kill", side_effect=ProcessLookupError):
+            self.assertFalse(main._running(7))
+        with patch.object(main.os, "kill", side_effect=PermissionError):
+            self.assertTrue(main._running(7))
 
 
 class ResidentTextEncoderTests(unittest.TestCase):

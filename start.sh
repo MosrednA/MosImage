@@ -100,8 +100,8 @@ fi
 
 # Restarts the engine after a hard cancel or crash, like backend/supervisor.ps1.
 supervise() {
-    # The engine also exits by itself if this script is killed outright.
-    export MOSIMAGE_SUPERVISED=true MOSIMAGE_EXIT_WITH_PARENT=true PYTHONUNBUFFERED=1
+    # The engine also exits by itself if this script ($$, also in this subshell) is killed outright.
+    export MOSIMAGE_SUPERVISED=true MOSIMAGE_EXIT_WITH_PARENT=true MOSIMAGE_WATCH_PID=$$ PYTHONUNBUFFERED=1
     cd "$BACKEND"
     local code
     while true; do
@@ -117,10 +117,19 @@ supervise() {
 stop_all() {
     trap - EXIT INT TERM HUP
     echo "Stopping MosImage..."
-    [[ -n "${ui:-}" ]] && kill -TERM "$ui" 2> /dev/null
-    # uvicorn unloads the models and exits 0 on SIGTERM, which also ends the supervisor loop.
-    pkill -TERM -P "$supervisor" 2> /dev/null
-    wait 2> /dev/null
+    # Under set -e, a process that is already gone must not end this cleanup early.
+    if [[ -n "${ui:-}" ]]; then kill -TERM "$ui" 2> /dev/null || true; fi
+    local engine pid alive
+    engine="$(pgrep -P "$supervisor" || true)"
+    # The loop first, so it cannot start another engine; uvicorn unloads the models on SIGTERM.
+    kill -TERM "$supervisor" 2> /dev/null || true
+    for pid in $engine; do kill -TERM "$pid" 2> /dev/null || true; done
+    for _ in $(seq 1 40); do
+        alive=false
+        for pid in $engine; do if kill -0 "$pid" 2> /dev/null; then alive=true; fi; done
+        $alive || break
+        sleep 0.5
+    done
     exit 0
 }
 
