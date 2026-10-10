@@ -1,4 +1,5 @@
 import { Icon } from "./Icon";
+import { MOD } from "../platform";
 
 export interface SelectionActionProps {
   disabled: boolean;
@@ -27,12 +28,12 @@ export function SelectionActions(props: SelectionActionProps) {
     <button disabled={disabled} title="Sharpen the faces inside the selection" onClick={props.onFaces}><Icon name="face" />Faces</button>
     <button disabled={disabled} title="Add fine detail inside the selection" onClick={props.onEnhance}><Icon name="enhance" />Enhance</button>
     <span className="selection-actions-divider" />
-    <button disabled={disabled} title="Copy the selection to a new layer · Ctrl + J" onClick={props.onToLayer}><Icon name="layers" />To layer</button>
+    <button disabled={disabled} title={`Copy the selection to a new layer · ${MOD} + J`} onClick={props.onToLayer}><Icon name="layers" />To layer</button>
     {props.maskTarget && <button disabled={disabled} title={`Show only the part of “${props.maskTarget}” inside the selection`} onClick={props.onMaskLayer}>
       <Icon name="scissors" /><span className="selection-actions-target">Mask “{props.maskTarget}”</span>
     </button>}
     <span className="selection-actions-divider" />
-    <button className="icon-button" disabled={disabled} aria-label="Invert selection" title="Invert selection · Ctrl + Shift + I" onClick={props.onInvert}><Icon name="invert" /></button>
-    <button className="icon-button" disabled={disabled} aria-label="Deselect" title="Deselect · Ctrl + D" onClick={props.onDeselect}><Icon name="close" /></button>
+    <button className="icon-button" disabled={disabled} aria-label="Invert selection" title={`Invert selection · ${MOD} + Shift + I`} onClick={props.onInvert}><Icon name="invert" /></button>
+    <button className="icon-button" disabled={disabled} aria-label="Deselect" title={`Deselect · ${MOD} + D`} onClick={props.onDeselect}><Icon name="close" /></button>
   </div>;
 }

@@ -1,6 +1,7 @@
 import { Ref } from "react";
 import { EditScope, EnhanceLevel, FaceMode, Operation, SketchScope, promptPlaceholder, submitLabel } from "../generation/operation";
 import { Icon } from "./Icon";
+import { MOD } from "../platform";
 
 export interface ActiveReference { id: number; name: string; imageUrl: string }
 
@@ -85,7 +86,7 @@ export function CommandCard(props: Props) {
         onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); if (props.canSubmit) props.onSubmit(); } }} />
       {props.jobActive
         ? <button className="generate-button cancel-button" disabled={props.cancelling} onClick={props.onCancel}><Icon name="close" /><span>{props.cancelling ? "Cancelling…" : "Cancel"}</span></button>
-        : <button className="primary generate-button" disabled={!props.canSubmit} onClick={props.onSubmit}><Icon name="spark" /><span>{submitLabel(operation)}</span><kbd>Ctrl ↵</kbd></button>}
+        : <button className="primary generate-button" disabled={!props.canSubmit} onClick={props.onSubmit}><Icon name="spark" /><span>{submitLabel(operation)}</span><kbd>{MOD} ↵</kbd></button>}
     </div>
     <p className="command-hint" role={props.cancelled ? "status" : undefined}>{props.cancelled ? "Operation cancelled. Your image and selection are unchanged." : props.hint}</p>
   </section>;

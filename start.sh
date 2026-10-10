@@ -98,30 +98,40 @@ EOF
     echo "Created backend/.env"
 fi
 
-# Restarts the engine after a hard cancel or crash, like backend/supervisor.ps1; exit code 0 means stop.
+# Restarts the engine after a hard cancel or crash, like backend/supervisor.ps1.
 supervise() {
-    export MOSIMAGE_SUPERVISED=true PYTHONUNBUFFERED=1
+    # The engine also exits by itself if this script is killed outright.
+    export MOSIMAGE_SUPERVISED=true MOSIMAGE_EXIT_WITH_PARENT=true PYTHONUNBUFFERED=1
     cd "$BACKEND"
-    until "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8000; do
-        echo "MosImage engine exited with code $?. Restarting..." >&2
+    local code
+    while true; do
+        "$PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port 8000 && return
+        code=$?
+        # Asked to stop: uvicorn re-raises Ctrl+C (130) or SIGTERM (143) once it has shut down.
+        [[ $code -eq 130 || $code -eq 143 ]] && return
+        echo "MosImage engine exited with code $code. Restarting..." >&2
         sleep 1
     done
 }
 
-stop_engine() {
-    trap - EXIT INT TERM
-    echo "Stopping MosImage engine..."
+stop_all() {
+    trap - EXIT INT TERM HUP
+    echo "Stopping MosImage..."
+    [[ -n "${ui:-}" ]] && kill -TERM "$ui" 2> /dev/null
     # uvicorn unloads the models and exits 0 on SIGTERM, which also ends the supervisor loop.
-    pkill -TERM -P "$supervisor" 2> /dev/null || true
-    wait "$supervisor" 2> /dev/null || true
+    pkill -TERM -P "$supervisor" 2> /dev/null
+    wait 2> /dev/null
+    exit 0
 }
 
 echo "Starting MosImage engine on http://127.0.0.1:8000"
 supervise &
 supervisor=$!
-trap stop_engine EXIT INT TERM
+trap stop_all EXIT INT TERM HUP
 
 sleep 2
 echo "Starting MosImage UI on http://localhost:5173"
-cd "$FRONTEND"
-npm run dev
+# In the background, so a signal reaches the trap at once instead of after the UI exits.
+(cd "$FRONTEND" && exec ./node_modules/.bin/vite) &
+ui=$!
+wait "$ui"
