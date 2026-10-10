@@ -337,6 +337,8 @@ export default function App() {
   function chooseTool(next: CanvasTool) {
     setCrop(null);
     if (next === "sketch") { chooseOperation("sketch"); return; }
+    // With a layer selected, Brush and Eraser paint its mask, as in Photoshop; Esc first selects on the picture.
+    if ((next === "brush" || next === "eraser") && layers.active && !layerMasking) { editLayerMask(layers.active.id); setTool(next); return; }
     setTool(next);
     if (operation === "sketch" && next !== "move") setOperation("replace");
     if (operation === "expand" || isWholeImage(operation)) { selection.clear(); setOperation("replace"); }
@@ -616,7 +618,7 @@ export default function App() {
               onToLayer: () => void copySelectionToLayer(), maskTarget: maskTarget?.name ?? null, onMaskLayer: () => maskTarget && void addLayerMask(maskTarget.id, false),
             }}
             renderLayers={view => previewUrl ? null : <LayerStage layers={layers.layers} active={activeLayer} zoom={view.zoom} size={view.size} tool={tool} brushSize={view.brushSize} hide={view.hide}
-              brushHardness={view.brushHardness} brushOpacity={view.brushOpacity} maskView={maskView} overlay={layerMasking && maskOverlay}
+              brushHardness={view.brushHardness} brushOpacity={view.brushOpacity} brushTone={view.brushTone} maskView={maskView} overlay={layerMasking && maskOverlay}
               interactive={view.interactive} disabled={locked} points={selection.layerPoints} onSelect={layers.select}
               onPreview={layers.preview} onCancelPreview={layers.cancelPreview} onCommit={layers.update} onMask={(id, layerMask, label) => void layers.setMask(id, layerMask, label)}
               onObjectPoint={point => void selection.objectPoint(point)} onRemovePoint={index => void selection.removeLayerPoint(index)} onCursor={view.trackCursor} />} />

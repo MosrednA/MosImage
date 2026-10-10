@@ -31,7 +31,7 @@ export const TOOLS: Record<CanvasTool, ToolInfo> = {
 /** What the tools do while masking a layer: they edit its mask instead of the AI selection. */
 export const LAYER_STATUS: Record<CanvasTool, string> = {
   object: "Click the part of the layer to keep · Right-click to exclude",
-  brush: "Paint to bring hidden parts of the layer back · Alt hides · [ ] size · \\ shows hidden parts",
+  brush: "Paint the mask: white shows, black hides, grey between · X swaps · Alt hides · [ ] size · \\ shows hidden parts",
   eraser: "Paint to hide parts of the layer · Alt restores · [ ] size · \\ shows hidden parts",
   lasso: "Draw around an area to hide or restore it · Alt switches",
   rectangle: "Drag a box to hide or restore it · Alt switches",

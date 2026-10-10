@@ -14,9 +14,10 @@ interface Props {
   size: ImageSize;
   tool: CanvasTool;
   brushSize: number;
-  /** Mask brush hardness and opacity, 0–1. */
+  /** Mask brush hardness, opacity and tone, 0–1. The Brush paints `brushTone`; the Eraser paints black. */
   brushHardness: number;
   brushOpacity: number;
+  brushTone: number;
   /** The layer shown as its mask alone, in grey. */
   maskView: string | null;
   /** Tint what the selected layer's mask hides in red. */
@@ -44,7 +45,7 @@ type Gesture =
   | { kind: "resize"; layer: LayerRecord; handle: Handle; patch: Patch | null }
   | { kind: "rotate"; layer: LayerRecord; from: Point; patch: Patch | null }
   // `base` is the mask before the stroke, `stroke` how strongly each pixel is painted.
-  | { kind: "paint"; layer: LayerRecord; erase: boolean; tip: BrushTip; opacity: number; base: HTMLCanvasElement; stroke: HTMLCanvasElement; mask: HTMLCanvasElement; image: HTMLImageElement; last: Point }
+  | { kind: "paint"; layer: LayerRecord; tone: number; tip: BrushTip; opacity: number; base: HTMLCanvasElement; stroke: HTMLCanvasElement; mask: HTMLCanvasElement; image: HTMLImageElement; last: Point }
   | { kind: "shape"; layer: LayerRecord; rectangle: boolean; hide: boolean; points: Point[] };
 
 interface ActiveAssets { imageUrl: string; image: HTMLImageElement; mask: HTMLCanvasElement | null }
@@ -118,8 +119,10 @@ export function LayerStage(props: Props) {
       const base = loaded.mask ? copyCanvas(loaded.mask) : solidMask(active.width, active.height);
       // Brush size is in canvas pixels; the tip works in the layer's own pixels.
       const radius = Math.max(0.5, props.brushSize / 2 / Math.sqrt(Math.abs(active.scale_x * active.scale_y)));
+      // Alt swaps the Brush to black and the Eraser to white.
+      const tone = tool === "eraser" ? (event.altKey ? 1 : 0) : event.altKey ? 0 : props.brushTone;
       const paint: Gesture = {
-        kind: "paint", layer: active, erase: (tool === "eraser") !== event.altKey, tip: { radius, hardness: props.brushHardness }, opacity: props.brushOpacity,
+        kind: "paint", layer: active, tone, tip: { radius, hardness: props.brushHardness }, opacity: props.brushOpacity,
         base, stroke: blankCanvas(active.width, active.height), mask: copyCanvas(base), image: loaded.image, last: local,
       };
       start(event, paint);
@@ -182,7 +185,7 @@ export function LayerStage(props: Props) {
       props.onCommit(id, current.patch, current.kind === "move" ? "Move layer" : current.kind === "resize" ? "Resize layer" : "Rotate layer");
     } else if (current.kind === "paint") {
       if (assets.current?.imageUrl === current.layer.image_url) assets.current.mask = current.mask;
-      props.onMask(id, current.mask, current.erase ? "Hide part of layer" : "Restore part of layer");
+      props.onMask(id, current.mask, current.tone === 0 ? "Hide part of layer" : current.tone === 1 ? "Restore part of layer" : "Paint layer mask");
     } else {
       setShape(null);
       fillShape(current);
@@ -202,7 +205,7 @@ export function LayerStage(props: Props) {
     const context = paint.stroke.getContext("2d");
     if (!context) return;
     const box = stampSegment(context, paint.last, point, paint.tip);
-    applyStroke(paint.mask, paint.base, paint.stroke, box, paint.erase, paint.opacity);
+    applyStroke(paint.mask, paint.base, paint.stroke, box, paint.tone, paint.opacity);
     paint.last = point;
     redraw(paint.layer.id, paint.image, paint.mask);
   }

@@ -160,42 +160,53 @@ function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDup
   const [opacity, setOpacity] = useState(Math.round(layer.opacity * 100));
   useEffect(() => setOpacity(Math.round(layer.opacity * 100)), [layer.opacity]);
   const commitOpacity = () => { if (opacity / 100 !== layer.opacity) onUpdate(layer.id, { opacity: opacity / 100 }, "Change opacity"); };
+  // Two groups, as in Photoshop's Properties panel: what changes the layer's pixels and placement, and what changes its mask.
   return <section className="layer-properties" aria-label="Layer settings">
     {variantIndex(layer) >= 0 && <LayerVariants layer={layer} disabled={disabled} onUpdate={onUpdate} onVariant={props.onVariant} onSeparateVariants={props.onSeparateVariants} />}
-    <label className="layer-opacity">
-      <span>Opacity</span>
-      <input type="range" min={0} max={100} value={opacity} disabled={disabled}
-        onChange={event => { const value = Number(event.target.value); setOpacity(value); onPreview(layer.id, { opacity: value / 100 }); }}
-        onPointerUp={commitOpacity} onKeyUp={commitOpacity} onBlur={commitOpacity} />
-      <output>{opacity}%</output>
-    </label>
-    <div className="layer-tools">
-      <button className="icon-button" disabled={disabled} title="Flip horizontally" aria-label="Flip horizontally" onClick={() => onUpdate(layer.id, { scale_x: -layer.scale_x }, "Flip layer")}><Icon name="flipH" /></button>
-      <button className="icon-button" disabled={disabled} title="Flip vertically" aria-label="Flip vertically" onClick={() => onUpdate(layer.id, { scale_y: -layer.scale_y }, "Flip layer")}><Icon name="flipV" /></button>
-      <button className="icon-button" disabled={disabled} title="Rotate 90°" aria-label="Rotate 90 degrees" onClick={() => onUpdate(layer.id, { rotation: turnedQuarter(layer.rotation) }, "Rotate layer")}><Icon name="rotate" /></button>
-      <button className="icon-button" disabled={disabled} title="Reset position, size and rotation" aria-label="Reset transform" onClick={() => onReset(layer.id)}><Icon name="reset" /></button>
-      <button className="icon-button" disabled={disabled} title="Duplicate layer" aria-label="Duplicate layer" onClick={() => onDuplicate(layer.id)}><Icon name="duplicate" /></button>
-      <button className="icon-button" disabled={disabled} title="Delete layer · Delete" aria-label="Delete layer" onClick={() => onRemove(layer.id)}><Icon name="trash" /></button>
-    </div>
-    {layer.mask_url
-      ? <div className="layer-mask-row" role="group" aria-label="Layer mask">
-        <button className="layer-mask" aria-pressed={masking} disabled={disabled}
-          title={masking ? "Back to the layer's pixels · Esc" : "Paint the mask: Brush shows, Eraser hides. Object, Lasso and Box work too"}
-          onClick={() => props.onMask(layer.id)}><Icon name="brush" />{masking ? "Done" : "Paint mask"}</button>
-        <button className="icon-button" disabled={disabled} aria-pressed={!layer.mask_enabled} aria-label={layer.mask_enabled ? "Switch the mask off" : "Switch the mask on"}
-          title={(layer.mask_enabled ? "Switch the mask off" : "Switch the mask on") + " · Shift-click its thumbnail"} onClick={() => props.onSwitchMask(layer.id)}><Icon name={layer.mask_enabled ? "eye" : "eyeOff"} /></button>
-        <button className="icon-button" disabled={disabled} aria-pressed={props.maskView} aria-label="Show the mask alone"
-          title="Show the mask alone, in grey · Alt-click its thumbnail" onClick={() => props.onViewMask(layer.id)}><Icon name="image" /></button>
-        <button className="icon-button" disabled={disabled} aria-label="Invert layer mask" title="Swap what is hidden and shown" onClick={() => props.onInvertMask(layer.id)}><Icon name="invert" /></button>
-        <button className="icon-button" disabled={disabled} aria-label="Delete layer mask" title="Delete the mask and show the whole layer" onClick={() => props.onDeleteMask(layer.id)}><Icon name="trash" /></button>
+    <div className="layer-group" role="group" aria-labelledby="layer-group-pixels">
+      <h3 className="layer-group-title" id="layer-group-pixels"><Icon name="image" />Layer</h3>
+      <label className="layer-opacity">
+        <span>Opacity</span>
+        <input type="range" min={0} max={100} value={opacity} disabled={disabled}
+          onChange={event => { const value = Number(event.target.value); setOpacity(value); onPreview(layer.id, { opacity: value / 100 }); }}
+          onPointerUp={commitOpacity} onKeyUp={commitOpacity} onBlur={commitOpacity} />
+        <output>{opacity}%</output>
+      </label>
+      <div className="layer-tools">
+        <button className="icon-button" disabled={disabled} title="Flip horizontally" aria-label="Flip horizontally" onClick={() => onUpdate(layer.id, { scale_x: -layer.scale_x }, "Flip layer")}><Icon name="flipH" /></button>
+        <button className="icon-button" disabled={disabled} title="Flip vertically" aria-label="Flip vertically" onClick={() => onUpdate(layer.id, { scale_y: -layer.scale_y }, "Flip layer")}><Icon name="flipV" /></button>
+        <button className="icon-button" disabled={disabled} title="Rotate 90°" aria-label="Rotate 90 degrees" onClick={() => onUpdate(layer.id, { rotation: turnedQuarter(layer.rotation) }, "Rotate layer")}><Icon name="rotate" /></button>
+        <button className="icon-button" disabled={disabled} title="Reset position, size and rotation" aria-label="Reset transform" onClick={() => onReset(layer.id)}><Icon name="reset" /></button>
+        <button className="icon-button" disabled={disabled} title="Duplicate layer" aria-label="Duplicate layer" onClick={() => onDuplicate(layer.id)}><Icon name="duplicate" /></button>
+        <button className="icon-button" disabled={disabled} title="Delete layer · Delete" aria-label="Delete layer" onClick={() => onRemove(layer.id)}><Icon name="trash" /></button>
       </div>
-      : <button className="layer-mask" disabled={disabled}
-        title={props.canCopySelection ? "Show only the part of this layer inside your selection · Alt: start with everything hidden instead" : "Add a mask that shows the whole layer, then paint parts away · Alt: start with everything hidden"}
-        onClick={event => props.onAddMask(layer.id, event.altKey)}><Icon name="plus" />{props.canCopySelection ? "Mask from selection" : "Add mask"}</button>}
-    <button className="layer-cutout" disabled={disabled} title="Keep the main subject with soft edges for hair and fur; the background is hidden by the layer mask"
-      onClick={() => onRemoveBackground(layer.id)}><Icon name="scissors" />Remove background</button>
-    <button className="layer-blend" disabled={disabled || !layer.visible} title={layer.visible ? "Let the AI match its light, colours, shadows and edges to the picture" : "Show the layer to blend it in"}
-      onClick={() => onBlend(layer.id)}><Icon name="spark" />Blend in</button>
+      <button className="layer-blend" disabled={disabled || !layer.visible} title={layer.visible ? "Let the AI match its light, colours, shadows and edges to the picture" : "Show the layer to blend it in"}
+        onClick={() => onBlend(layer.id)}><Icon name="spark" />Blend in</button>
+    </div>
+    <div className={"layer-group mask-group" + (masking ? " masking" : "")} role="group" aria-labelledby="layer-group-mask">
+      <h3 className="layer-group-title" id="layer-group-mask"><Icon name="invert" />Mask
+        <small>{!layer.mask_url ? "none: the whole layer shows" : layer.mask_enabled ? "white shows · black hides" : "switched off"}</small></h3>
+      {layer.mask_url
+        ? <>
+          <button className="layer-mask" aria-pressed={masking} disabled={disabled}
+            title={masking ? "Back to the layer's pixels · Esc" : "Paint the mask from white to black: Brush paints its tone, Eraser hides · B or E with the layer selected"}
+            onClick={() => props.onMask(layer.id)}><Icon name="brush" />{masking ? "Done painting" : "Paint mask"}</button>
+          <div className="mask-tools">
+            <button className="mask-tool" disabled={disabled} aria-pressed={!layer.mask_enabled}
+              title={(layer.mask_enabled ? "Switch the mask off and show the whole layer" : "Switch the mask on") + " · Shift-click its thumbnail"} onClick={() => props.onSwitchMask(layer.id)}>
+              <Icon name={layer.mask_enabled ? "eye" : "eyeOff"} /><span>{layer.mask_enabled ? "Turn off" : "Turn on"}</span></button>
+            <button className="mask-tool" disabled={disabled} aria-pressed={props.maskView}
+              title="Show the mask alone, in grey · Alt-click its thumbnail" onClick={() => props.onViewMask(layer.id)}><Icon name="image" /><span>View</span></button>
+            <button className="mask-tool" disabled={disabled} title="Swap what is hidden and shown" onClick={() => props.onInvertMask(layer.id)}><Icon name="invert" /><span>Invert</span></button>
+            <button className="mask-tool" disabled={disabled} title="Delete the mask and show the whole layer" onClick={() => props.onDeleteMask(layer.id)}><Icon name="trash" /><span>Delete</span></button>
+          </div>
+        </>
+        : <button className="layer-mask" disabled={disabled}
+          title={props.canCopySelection ? "Show only the part of this layer inside your selection · Alt: start with everything hidden instead" : "Add a mask that shows the whole layer, then paint parts away · Alt: start with everything hidden"}
+          onClick={event => props.onAddMask(layer.id, event.altKey)}><Icon name="plus" />{props.canCopySelection ? "Mask from selection" : "Add mask"}</button>}
+      <button className="layer-cutout" disabled={disabled} title="Keep the main subject with soft edges for hair and fur: the mask hides the background, and you can paint it after"
+        onClick={() => onRemoveBackground(layer.id)}><Icon name="scissors" />Remove background</button>
+    </div>
   </section>;
 }
 

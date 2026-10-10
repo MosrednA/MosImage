@@ -4,8 +4,11 @@ import { Point } from "../canvas/coordinates";
 /** A round mask brush: radius in layer pixels, hardness 0 (soft) to 1 (hard). */
 export interface BrushTip { radius: number; hardness: number }
 
-export const HARDNESS_RANGE = { min: 0, max: 100, initial: 50 } as const;
+/** Softness is the inverse of hardness: 0 cuts cleanly, 100 fades over the whole radius. */
+export const SOFTNESS_RANGE = { min: 0, max: 100, initial: 50 } as const;
 export const OPACITY_RANGE = { min: 5, max: 100, initial: 100 } as const;
+/** The grey the brush paints on a mask: 100 is white and shows the layer, 0 is black and hides it. */
+export const TONE_RANGE = { min: 0, max: 100, initial: 100 } as const;
 
 /** Dabs a tenth of the radius apart keep soft edges smooth and hard edges round. */
 const SPACING = 0.1;
@@ -50,23 +53,23 @@ function stamp(context: CanvasRenderingContext2D, at: Point, tip: BrushTip) {
 
 /**
  * Applies a stroke to a mask inside `box`: the mask from before the stroke,
- * plus (restore) or minus (hide) the stroke at `opacity`. Masks keep their
- * coverage in alpha over white.
+ * moved toward `tone` (1 shows, 0 hides) by the stroke at `opacity`, as
+ * painting grey on a Photoshop mask does. Masks keep their coverage in alpha over white.
  */
-export function applyStroke(mask: HTMLCanvasElement, base: HTMLCanvasElement, stroke: HTMLCanvasElement, box: ImageBox, hide: boolean, opacity: number): void {
+export function applyStroke(mask: HTMLCanvasElement, base: HTMLCanvasElement, stroke: HTMLCanvasElement, box: ImageBox, tone: number, opacity: number): void {
   if (box.width <= 0 || box.height <= 0) return;
   const from = base.getContext("2d", { willReadFrequently: true })!.getImageData(box.x, box.y, box.width, box.height);
   const strength = stroke.getContext("2d", { willReadFrequently: true })!.getImageData(box.x, box.y, box.width, box.height);
-  mixStroke(from.data, strength.data, hide, opacity);
+  mixStroke(from.data, strength.data, tone, opacity);
   mask.getContext("2d")!.putImageData(from, box.x, box.y);
 }
 
 /** `coverage` (mask RGBA) takes the stroke (grey, in RGBA) in place: the pure part of applyStroke. */
-export function mixStroke(coverage: Uint8ClampedArray, stroke: Uint8ClampedArray, hide: boolean, opacity: number): void {
+export function mixStroke(coverage: Uint8ClampedArray, stroke: Uint8ClampedArray, tone: number, opacity: number): void {
   for (let index = 0; index < coverage.length; index += 4) {
     const amount = (stroke[index] * stroke[index + 3] * opacity) / (255 * 255);
     const alpha = coverage[index + 3] / 255;
-    const next = hide ? alpha * (1 - amount) : alpha + amount * (1 - alpha);
+    const next = alpha + (tone - alpha) * amount;
     coverage[index] = coverage[index + 1] = coverage[index + 2] = 255;
     coverage[index + 3] = Math.round(next * 255);
   }
