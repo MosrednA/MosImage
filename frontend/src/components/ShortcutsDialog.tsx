@@ -1,5 +1,5 @@
 import { ControlDialog } from "./ControlDialog";
-import { MOD } from "../platform";
+import { ALT, MOD } from "../platform";
 
 const GROUPS: [string, [string, string][]][] = [
   ["Tools", [["W", "Object selection"], ["B", "Brush"], ["E", "Eraser"], ["L", "Lasso"], ["M", "Box"], ["P", "Sketch"], [`V / ${MOD} + T`, "Transform layers"], ["H", "Pan"], ["C", "Crop canvas"], ["Shift + C", "Expand canvas"]]],
@@ -7,7 +7,7 @@ const GROUPS: [string, [string, string][]][] = [
     ["Click / right-click", "Include / exclude an object point"],
     ["Click a marker", "Remove that point"],
     ["Backspace", "Remove the last point"],
-    ["Alt + drag", "Subtract from the selection"],
+    [`${ALT} + drag`, "Subtract from the selection"],
     ["[ and ]", "Smaller / larger brush"],
     ["Q", "Show or hide the selection"],
     [`${MOD} + Shift + I`, "Invert the selection"],
@@ -26,7 +26,7 @@ const GROUPS: [string, [string, string][]][] = [
     ["B / E on a layer", "Paint its mask: show / hide"],
     ["X", "Swap the mask brush between white and black"],
     ["Shift + click a mask", "Switch the mask off or on"],
-    ["Alt + click a mask", "Show the mask alone, in grey"],
+    [`${ALT} + click a mask`, "Show the mask alone, in grey"],
     ["\\", "Tint what the mask hides in red"],
     [", and .", "Previous / next variant of an AI layer"],
     ["Shift + drag a corner", "Stretch freely"],

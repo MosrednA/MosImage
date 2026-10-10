@@ -3,7 +3,7 @@ import { LayerRecord, fileUrl } from "../api";
 import { MAX_LAYERS, MergeKind, replacementOf, variantIndex } from "../layers/stack";
 import { ContextMenu, MenuEntry } from "./ContextMenu";
 import { Icon } from "./Icon";
-import { MOD } from "../platform";
+import { ALT, MOD } from "../platform";
 
 interface Props {
   layers: LayerRecord[];
@@ -227,7 +227,7 @@ function SelectedLayers({ selected, selectedIds, disabled, mergeable, onMerge, o
 function MaskThumb({ layer, targeted, disabled, onEdit, onView, onSwitch }: { layer: LayerRecord; targeted: boolean; disabled: boolean; onEdit: () => void; onView: () => void; onSwitch: () => void }) {
   return <button type="button" className={"layer-thumb mask-thumb" + (targeted ? " targeted" : "") + (layer.mask_enabled ? "" : " off")} disabled={disabled}
     aria-pressed={targeted} aria-label={`Mask of ${layer.name}${layer.mask_enabled ? "" : ", switched off"}`}
-    title={`Layer mask: white shows, black hides\nClick to paint it · Shift-click switches it ${layer.mask_enabled ? "off" : "on"} · Alt-click shows it alone`}
+    title={`Layer mask: white shows, black hides\nClick to paint it · Shift-click switches it ${layer.mask_enabled ? "off" : "on"} · ${ALT}-click shows it alone`}
     onClick={event => {
       event.stopPropagation();
       if (event.shiftKey) onSwitch(); else if (event.altKey) onView(); else onEdit();
@@ -304,13 +304,13 @@ function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDup
               title={(layer.mask_enabled ? "Switch the mask off and show the whole layer" : "Switch the mask on") + " · Shift-click its thumbnail"} onClick={() => props.onSwitchMask(layer.id)}>
               <Icon name={layer.mask_enabled ? "eye" : "eyeOff"} /><span>{layer.mask_enabled ? "Turn off" : "Turn on"}</span></button>
             <button className="mask-tool" disabled={disabled} aria-pressed={props.maskView}
-              title="Show the mask alone, in grey · Alt-click its thumbnail" onClick={() => props.onViewMask(layer.id)}><Icon name="image" /><span>View</span></button>
+              title={`Show the mask alone, in grey · ${ALT}-click its thumbnail`} onClick={() => props.onViewMask(layer.id)}><Icon name="image" /><span>View</span></button>
             <button className="mask-tool" disabled={disabled} title="Swap what is hidden and shown" onClick={() => props.onInvertMask(layer.id)}><Icon name="invert" /><span>Invert</span></button>
             <button className="mask-tool" disabled={disabled} title="Delete the mask and show the whole layer" onClick={() => props.onDeleteMask(layer.id)}><Icon name="trash" /><span>Delete</span></button>
           </div>
         </>
         : <button className="layer-mask" disabled={disabled}
-          title={props.canCopySelection ? "Show only the part of this layer inside your selection · Alt: start with everything hidden instead" : "Add a mask that shows the whole layer, then paint parts away · Alt: start with everything hidden"}
+          title={props.canCopySelection ? `Show only the part of this layer inside your selection · ${ALT}: start with everything hidden instead` : `Add a mask that shows the whole layer, then paint parts away · ${ALT}: start with everything hidden`}
           onClick={event => props.onAddMask(layer.id, event.altKey)}><Icon name="plus" />{props.canCopySelection ? "Mask from selection" : "Add mask"}</button>}
       <button className="layer-cutout" disabled={disabled} title="Keep the main subject with soft edges for hair and fur: the mask hides the background, and you can paint it after"
         onClick={() => onRemoveBackground(layer.id)}><Icon name="scissors" />Remove background</button>

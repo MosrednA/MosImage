@@ -6,3 +6,6 @@ export const MOD = IS_MAC ? "⌘" : "Ctrl";
 
 /** How to start the engine by hand when the desktop app is not running. */
 export const START_SCRIPT = IS_MAC ? "./start.sh" : "start.cmd";
+
+/** The Alt key as the keyboard labels it: Option (⌥) on a Mac. */
+export const ALT = IS_MAC ? "⌥" : "Alt";
