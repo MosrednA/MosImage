@@ -172,6 +172,18 @@ class AppleProviderTests(unittest.TestCase):
             Flux2Klein9bAppleProvider().outpaint(form, Path("in.png"), Path("out.png"), MagicMock())
 
 
+class ParentWatchTests(unittest.TestCase):
+    def test_engine_stops_once_the_app_that_started_it_is_gone(self) -> None:
+        from app import main
+
+        with patch.object(main.os, "getppid", side_effect=[41, 41, 1]), patch.object(main.os, "getpid", return_value=99), \
+                patch.object(main.os, "kill") as kill, patch.object(main.os, "_exit") as hard_exit, patch.object(main.time, "sleep") as sleep:
+            main._exit_with_parent(41)
+        kill.assert_called_once_with(99, main.signal.SIGINT)
+        hard_exit.assert_called_once_with(0)
+        self.assertEqual(sleep.call_count, 3)
+
+
 class ResidentTextEncoderTests(unittest.TestCase):
     def test_trimmed_encoder_returns_the_hidden_states_klein_reads(self) -> None:
         from safetensors.torch import save_file

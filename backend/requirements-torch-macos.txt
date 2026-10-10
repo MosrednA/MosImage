@@ -1,0 +1,3 @@
+# Apple silicon: the standard PyPI arm64 wheels include the Metal (MPS) backend.
+torch==2.14.1
+torchvision==0.29.1

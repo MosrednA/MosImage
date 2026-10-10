@@ -66,13 +66,34 @@ export function useViewport(stageRef: RefObject<HTMLDivElement | null>, surfaceR
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
+    // Chromium reports a trackpad pinch as Ctrl + wheel; WebKit (Safari, the
+    // macOS app) sends gesture events with the total scale instead.
+    let pinchFrom: number | null = null;
     const wheel = (event: WheelEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
+      if (pinchFrom !== null) return;
       setZoomRef.current(zoomRef.current * Math.exp(-event.deltaY * 0.0015), { clientX: event.clientX, clientY: event.clientY });
     };
+    const gestureStart = (event: Event) => { event.preventDefault(); pinchFrom = zoomRef.current; };
+    const gestureChange = (event: Event) => {
+      const pinch = event as Event & Partial<{ scale: number; clientX: number; clientY: number }>;
+      event.preventDefault();
+      if (pinchFrom === null || !pinch.scale) return;
+      const anchor = pinch.clientX === undefined || pinch.clientY === undefined ? undefined : { clientX: pinch.clientX, clientY: pinch.clientY };
+      setZoomRef.current(pinchFrom * pinch.scale, anchor);
+    };
+    const gestureEnd = (event: Event) => { event.preventDefault(); pinchFrom = null; };
     stage.addEventListener("wheel", wheel, { passive: false });
-    return () => stage.removeEventListener("wheel", wheel);
+    stage.addEventListener("gesturestart", gestureStart);
+    stage.addEventListener("gesturechange", gestureChange);
+    stage.addEventListener("gestureend", gestureEnd);
+    return () => {
+      stage.removeEventListener("wheel", wheel);
+      stage.removeEventListener("gesturestart", gestureStart);
+      stage.removeEventListener("gesturechange", gestureChange);
+      stage.removeEventListener("gestureend", gestureEnd);
+    };
   }, []);
 
   const panHandlers = {

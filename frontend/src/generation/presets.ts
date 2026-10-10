@@ -1,3 +1,5 @@
+import { ModelInfo } from "../api";
+
 export type GenerationPreset = "quality" | "fast";
 
 export interface GenerationPresetConfig {
@@ -25,7 +27,18 @@ export const GENERATION_PRESETS: Record<GenerationPreset, GenerationPresetConfig
   },
 };
 
-/** Both 4B variants count as Fast; 9B is Quality. */
+/**
+ * Points each preset at the model the engine runs for it: NVFP4 on an RTX 50
+ * series card, the BF16 weights on Apple silicon. Engines that do not say keep the defaults.
+ */
+export function applyPresetModels(models: Pick<ModelInfo, "name" | "preset">[]): void {
+  for (const preset of ["quality", "fast"] as const) {
+    const model = models.find(candidate => candidate.preset === preset);
+    if (model) GENERATION_PRESETS[preset].modelName = model.name;
+  }
+}
+
+/** Every 4B variant counts as Fast; 9B is Quality. */
 export function presetForModel(modelName: string): GenerationPreset {
   return modelName.startsWith("flux2-klein-4b") ? "fast" : "quality";
 }

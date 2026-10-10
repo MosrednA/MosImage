@@ -1,6 +1,7 @@
 import { LayerRecord, fileUrl } from "../api";
 import { ImageBox, maskBounds } from "../canvas/context";
 import { ImageSize } from "../canvas/coordinates";
+import { CANVAS_FILTER, blurChannel } from "./blur";
 import { Placement } from "./geometry";
 
 const images = new Map<string, Promise<HTMLImageElement>>();
@@ -206,11 +207,19 @@ function drawLayer(context: CanvasRenderingContext2D, layer: FlatLayer, opacity:
  * `soften` px, as a greyscale selection mask: what "Blend in" lets the AI redo.
  */
 export async function layerFootprint(size: ImageSize, layer: FlatLayer, grow: number, soften: number): Promise<Blob> {
+  const drawn = blankCanvas(size.width, size.height);
+  // Read back in script where the canvas cannot blur; a draw source otherwise.
+  drawLayer(drawn.getContext("2d", CANVAS_FILTER ? undefined : { willReadFrequently: true })!, layer, 1);
+  if (!CANVAS_FILTER) {
+    const context = drawn.getContext("2d")!;
+    const pixels = context.getImageData(0, 0, size.width, size.height);
+    footprintPixels(pixels.data, size.width, size.height, grow, soften);
+    context.putImageData(pixels, 0, 0);
+    return canvasBlob(drawn);
+  }
   const shape = blankCanvas(size.width, size.height);
   const context = shape.getContext("2d", { willReadFrequently: true })!;
   // Blurring and then keeping every touched pixel grows the shape by about the blur radius.
-  const drawn = blankCanvas(size.width, size.height);
-  drawLayer(drawn.getContext("2d")!, layer, 1);
   context.filter = `blur(${grow / 2}px)`;
   context.drawImage(drawn, 0, 0);
   context.filter = "none";
@@ -225,6 +234,21 @@ export async function layerFootprint(size: ImageSize, layer: FlatLayer, grow: nu
   output.filter = `blur(${soften}px)`;
   output.drawImage(shape, 0, 0);
   return canvasBlob(selection);
+}
+
+/**
+ * `layerFootprint` without canvas filters, for WebKit: turns RGBA layer pixels
+ * in place into the grown and softened greyscale footprint of their alpha.
+ */
+export function footprintPixels(data: Uint8ClampedArray, width: number, height: number, grow: number, soften: number): void {
+  const alpha = new Uint8ClampedArray(width * height);
+  for (let pixel = 0; pixel < alpha.length; pixel += 1) alpha[pixel] = data[pixel * 4 + 3];
+  const grown = blurChannel(alpha, width, height, grow / 2).map(value => value > 8 ? 255 : 0);
+  const footprint = blurChannel(grown, width, height, soften);
+  for (let pixel = 0; pixel < footprint.length; pixel += 1) {
+    data[pixel * 4] = data[pixel * 4 + 1] = data[pixel * 4 + 2] = footprint[pixel];
+    data[pixel * 4 + 3] = 255;
+  }
 }
 
 /** Makes every pixel with more than `cutoff` alpha fully white and the rest transparent. */

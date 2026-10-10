@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import secrets
 import signal
+import threading
+import time
 from contextlib import asynccontextmanager
 from typing import Awaitable, Callable
 
@@ -39,6 +42,8 @@ warm_up_job_id: str | None = None
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     global warm_up_job_id
+    if settings.exit_with_parent and os.name == "posix":
+        threading.Thread(target=_exit_with_parent, args=(os.getppid(),), name="parent-watch", daemon=True).start()
     if settings.warm_up_on_start:
         warm_up_job_id = jobs.submit("load-model", _warm_up_engine).id
     try:
@@ -96,6 +101,19 @@ async def shutdown_engine(x_mosimage_token: str | None = Header(None)) -> dict[s
 def _schedule_exit() -> None:
     # Just after the response is sent; uvicorn then runs the lifespan shutdown.
     asyncio.get_running_loop().call_later(0.1, signal.raise_signal, signal.SIGINT)
+
+
+def _exit_with_parent(parent: int) -> None:
+    """Stops the engine once its parent is gone; POSIX re-parents an orphan, so its parent ID changes.
+
+    Windows has no such signal; the desktop app's job object ends the engine there.
+    """
+    while os.getppid() == parent:
+        time.sleep(1)
+    os.kill(os.getpid(), signal.SIGINT)
+    # A running edit can hold the graceful shutdown; the memory must be released regardless.
+    time.sleep(settings.cancel_grace_seconds + 5)
+    os._exit(0)
 
 
 @app.get("/api/engine", response_model=EngineStatus)

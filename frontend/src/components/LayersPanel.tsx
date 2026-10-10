@@ -3,6 +3,7 @@ import { LayerRecord, fileUrl } from "../api";
 import { MAX_LAYERS, MergeKind, replacementOf, variantIndex } from "../layers/stack";
 import { ContextMenu, MenuEntry } from "./ContextMenu";
 import { Icon } from "./Icon";
+import { MOD } from "../platform";
 
 interface Props {
   layers: LayerRecord[];
@@ -86,13 +87,13 @@ export function LayersPanel(props: Props) {
 
   function menuItems(): MenuEntry[] {
     const merges: MenuEntry[] = [
-      { label: "Merge visible", shortcut: "Ctrl+Shift+E", disabled: !mergeable.visible, title: "Merge every visible layer into one; hidden layers stay", onSelect: () => props.onMerge("visible") },
+      { label: "Merge visible", shortcut: `${MOD}+Shift+E`, disabled: !mergeable.visible, title: "Merge every visible layer into one; hidden layers stay", onSelect: () => props.onMerge("visible") },
       { label: "Flatten image", disabled: !mergeable.flatten, title: "Merge everything into one Background layer; hidden layers are discarded", onSelect: () => props.onMerge("flatten") },
     ];
     if (selected.length > 1) {
       const anyHidden = selected.some(layer => !layer.visible);
       return [
-        { label: "Merge layers", shortcut: "Ctrl+E", disabled: !mergeable.selected, onSelect: () => props.onMerge("selected") },
+        { label: "Merge layers", shortcut: `${MOD}+E`, disabled: !mergeable.selected, onSelect: () => props.onMerge("selected") },
         { label: anyHidden ? "Show layers" : "Hide layers", onSelect: () => props.onSetVisible(selectedIds, anyHidden) },
         { label: `Delete ${selected.length} layers`, shortcut: "Delete", danger: true, onSelect: () => props.onRemove(selectedIds) },
         "separator", ...merges,
@@ -101,17 +102,17 @@ export function LayersPanel(props: Props) {
     const layer = selected[0] ?? null;
     if (!layer) return [
       { label: "Add image…", disabled: full, onSelect: () => picker.current?.click() },
-      { label: "Selection to layer", shortcut: "Ctrl+J", disabled: full || !props.canCopySelection, onSelect: props.onCopySelection },
+      { label: "Selection to layer", shortcut: `${MOD}+J`, disabled: full || !props.canCopySelection, onSelect: props.onCopySelection },
       "separator", ...merges,
     ];
     return [
-      { label: "Select pixels", shortcut: "Ctrl+click thumbnail", onSelect: () => props.onSelectPixels(layer.id) },
+      { label: "Select pixels", shortcut: `${MOD}+click thumbnail`, onSelect: () => props.onSelectPixels(layer.id) },
       { label: layer.visible ? "Hide layer" : "Show layer", onSelect: () => props.onSetVisible([layer.id], !layer.visible) },
       { label: "Rename", onSelect: () => setRenaming(layer.id) },
       { label: "Duplicate layer", disabled: full, onSelect: () => props.onDuplicate(layer.id) },
       { label: "Delete layer", shortcut: "Delete", danger: true, onSelect: () => props.onRemove([layer.id]) },
       "separator",
-      { label: "Merge down", shortcut: "Ctrl+E", disabled: !mergeable.down, title: "Merge onto the next visible layer below", onSelect: () => props.onMerge("down") },
+      { label: "Merge down", shortcut: `${MOD}+E`, disabled: !mergeable.down, title: "Merge onto the next visible layer below", onSelect: () => props.onMerge("down") },
       ...merges,
     ];
   }
@@ -139,7 +140,7 @@ export function LayersPanel(props: Props) {
       onChange={event => { const files = Array.from(event.target.files ?? []); if (files.length) props.onAdd(files); event.target.value = ""; }} />
     <div className="layers-actions">
       <button disabled={disabled || full} title={full ? `Up to ${MAX_LAYERS} layers` : "Add images as layers"} onClick={() => picker.current?.click()}><Icon name="plus" />Add image</button>
-      <button disabled={disabled || full || !props.canCopySelection} title="Copy the selected area to a new layer · Ctrl + J" onClick={props.onCopySelection}><Icon name="scissors" />Selection</button>
+      <button disabled={disabled || full || !props.canCopySelection} title={`Copy the selected area to a new layer · ${MOD} + J`} onClick={props.onCopySelection}><Icon name="scissors" />Selection</button>
       <button className="icon-button" disabled={disabled} aria-haspopup="menu" aria-expanded={!!menu} aria-label="Layer menu" title="Merge, flatten and more · or right-click a layer"
         onClick={event => openMenuAt(event.currentTarget)}><Icon name="more" /></button>
     </div>
@@ -177,7 +178,7 @@ export function LayersPanel(props: Props) {
             <Icon name={layer.visible ? "eye" : "eyeOff"} />
           </button>
           <span className={"layer-thumb" + (layer.id === activeId && !props.masking ? " targeted" : "")}
-            title={(variantIndex(layer) >= 0 ? `Variant ${variantIndex(layer) + 1} of ${layer.variant_paths.length} · , and . switch` : "Layer pixels") + "\nCtrl-click to select them"}
+            title={(variantIndex(layer) >= 0 ? `Variant ${variantIndex(layer) + 1} of ${layer.variant_paths.length} · , and . switch` : "Layer pixels") + `\n${MOD}-click to select them`}
             onClick={event => { if (!(event.ctrlKey || event.metaKey) || disabled) return; event.stopPropagation(); props.onSelectPixels(layer.id); }}>
             <img crossOrigin="anonymous" src={fileUrl(layer.image_url)} alt="" draggable={false} />
             {variantIndex(layer) >= 0 && <span className="variant-badge" aria-hidden="true">{variantIndex(layer) + 1}/{layer.variant_paths.length}</span>}
@@ -209,12 +210,12 @@ function SelectedLayers({ selected, selectedIds, disabled, mergeable, onMerge, o
     <div className="layer-group" role="group" aria-labelledby="layer-group-selected">
       <h3 className="layer-group-title" id="layer-group-selected"><Icon name="layers" />{selected.length} layers</h3>
       <div className="layer-buttons">
-        <button disabled={disabled || !mergeable.selected} title="Merge the visible selected layers into one · Ctrl + E" onClick={() => onMerge("selected")}><Icon name="merge" />Merge</button>
+        <button disabled={disabled || !mergeable.selected} title={`Merge the visible selected layers into one · ${MOD} + E`} onClick={() => onMerge("selected")}><Icon name="merge" />Merge</button>
         <button disabled={disabled} title={anyHidden ? "Show the selected layers" : "Hide the selected layers"} onClick={() => onSetVisible(selectedIds, anyHidden)}>
           <Icon name={anyHidden ? "eye" : "eyeOff"} />{anyHidden ? "Show" : "Hide"}</button>
         <button disabled={disabled} title="Delete the selected layers · Delete" onClick={() => onRemove(selectedIds)}><Icon name="trash" />Delete</button>
       </div>
-      <small className="layer-hint">Ctrl-click adds or removes a layer · Shift-click selects a range</small>
+      <small className="layer-hint">{MOD}-click adds or removes a layer · Shift-click selects a range</small>
     </div>
   </section>;
 }
@@ -282,9 +283,9 @@ function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDup
         <button className="icon-button" disabled={disabled} title="Delete layer · Delete" aria-label="Delete layer" onClick={() => onRemove([layer.id])}><Icon name="trash" /></button>
       </div>
       <div className="layer-buttons">
-        <button disabled={disabled} title="Select where this layer shows, to fill, mask or copy it · Ctrl-click its thumbnail" onClick={() => props.onSelectPixels(layer.id)}>
+        <button disabled={disabled} title={`Select where this layer shows, to fill, mask or copy it · ${MOD}-click its thumbnail`} onClick={() => props.onSelectPixels(layer.id)}>
           <Icon name="rectangle" />Select pixels</button>
-        <button disabled={disabled || !mergeable.down} title={mergeable.down ? "Merge onto the next visible layer below · Ctrl + E" : "Needs a visible layer below, and this one shown"}
+        <button disabled={disabled || !mergeable.down} title={mergeable.down ? `Merge onto the next visible layer below · ${MOD} + E` : "Needs a visible layer below, and this one shown"}
           onClick={() => props.onMerge("down")}><Icon name="merge" />Merge down</button>
       </div>
       <button className="layer-blend" disabled={disabled || !layer.visible} title={layer.visible ? "Let the AI match its light, colours, shadows and edges to the picture" : "Show the layer to blend it in"}

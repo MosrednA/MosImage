@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     cuda_alloc_conf: str = "expandable_segments:True"
     attention_backend: str = "sdpa"
     supervised: bool = False
+    # Set by the desktop app on macOS and Linux: exit when the process that
+    # started the engine is gone, so a crashed app leaves no models in memory.
+    exit_with_parent: bool = False
     cancel_grace_seconds: float = 8.0
     # Inference area budget of a masked edit, as the side of a square.
     inpaint_max_dimension: int = 1024

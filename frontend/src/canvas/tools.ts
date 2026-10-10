@@ -1,4 +1,5 @@
 import { IconName } from "../components/Icon";
+import { MOD } from "../platform";
 
 export type MaskTool = "brush" | "eraser" | "rectangle" | "lasso";
 export type CanvasTool = MaskTool | "move" | "object" | "transform" | "sketch";
@@ -25,7 +26,7 @@ export const TOOLS: Record<CanvasTool, ToolInfo> = {
   rectangle: { label: "Box", icon: "rectangle", key: "M", status: "Drag a box · Alt subtracts" },
   sketch: { label: "Sketch", icon: "pencil", key: "P", status: "Paint rough shapes in colour · Alt erases · [ ] size" },
   transform: { label: "Transform", icon: "transform", key: "V", status: "Click a layer to select it · Drag to move · Handles scale, stretch and rotate" },
-  move: { label: "Pan", icon: "move", key: "H", status: "Drag to pan · Ctrl + scroll zooms" },
+  move: { label: "Pan", icon: "move", key: "H", status: `Drag to pan · ${MOD} + scroll zooms` },
 };
 
 /** What the tools do while masking a layer: they edit its mask instead of the AI selection. */
@@ -37,7 +38,7 @@ export const LAYER_STATUS: Record<CanvasTool, string> = {
   rectangle: "Drag a box to hide or restore it · Alt switches",
   sketch: "Paint rough shapes in colour · Alt erases · [ ] size",
   transform: "Drag to move · Corners scale (Shift stretches) · Edges stretch · Shift snaps rotation",
-  move: "Drag to pan · Ctrl + scroll zooms",
+  move: `Drag to pan · ${MOD} + scroll zooms`,
 };
 
 /** Rail order: selection tools first, navigation last. */

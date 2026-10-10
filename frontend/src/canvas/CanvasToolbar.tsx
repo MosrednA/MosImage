@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { Icon } from "../components/Icon";
 import { SKETCH_COLOURS, SKETCH_SIZE } from "./sketch";
 import { CanvasTool, TOOLS } from "./tools";
+import { MOD } from "../platform";
 
 /** Pencil options: colour, size, drawing or erasing, and the sketch's own undo. */
 export interface SketchControls {
@@ -93,10 +94,10 @@ export function CanvasToolbar(props: Props) {
       <button disabled={disabled || !sketch.canClear} title="Remove the whole sketch" onClick={sketch.onClear}>Clear</button>
     </>}
     <div className="zoom-controls">
-      <button aria-label="Zoom out" title="Zoom out · Ctrl + scroll" onClick={() => props.onZoom(props.zoom / 1.25)}>−</button>
-      <button className={props.fitToStage ? "selected" : ""} title="Fit to window · Ctrl + 0" onClick={props.onFit}>Fit</button>
-      <button className={props.atActualSize ? "selected" : ""} title="Actual pixels · Ctrl + 1" onClick={() => props.onZoom(1)}>100%</button>
-      <button aria-label="Zoom in" title="Zoom in · Ctrl + scroll" onClick={() => props.onZoom(props.zoom * 1.25)}>+</button>
+      <button aria-label="Zoom out" title={`Zoom out · ${MOD} + scroll`} onClick={() => props.onZoom(props.zoom / 1.25)}>−</button>
+      <button className={props.fitToStage ? "selected" : ""} title={`Fit to window · ${MOD} + 0`} onClick={props.onFit}>Fit</button>
+      <button className={props.atActualSize ? "selected" : ""} title={`Actual pixels · ${MOD} + 1`} onClick={() => props.onZoom(1)}>100%</button>
+      <button aria-label="Zoom in" title={`Zoom in · ${MOD} + scroll`} onClick={() => props.onZoom(props.zoom * 1.25)}>+</button>
       <output>{Math.round(props.zoom * 100)}%</output>
     </div>
   </div>;
