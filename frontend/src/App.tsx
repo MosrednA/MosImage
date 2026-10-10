@@ -1,7 +1,7 @@
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import {
   DocumentRecord, Expansion, GenerationRecord, JobStatus, LayerRecord, RevisionRecord,
-  acceptAlternative, copyReferences, createDocument, cropDocument, deleteDocument, deleteGeneration, fileUrl, getDocument, getGeneration,
+  acceptAlternative, adoptReferences, createDocument, cropDocument, deleteDocument, deleteGeneration, fileUrl, getDocument, getGeneration,
   importGeneration, listModels, proposeAlternatives, redoDocument, undoDocument, updateDocument,
 } from "./api";
 import { EditorCanvas } from "./canvas/EditorCanvas";
@@ -84,8 +84,6 @@ export default function App() {
   const [sketchScope, setSketchScope] = useState<SketchScope>("strokes");
   // Crop works on the picture as you see it; the image is a flattened copy, released when crop ends.
   const [crop, setCrop] = useState<{ rect: CropRect; ratio: CropRatio; imageUrl: string } | null>(null);
-  /** Start-screen references behind the proposals under review. */
-  const generationReferences = useRef<number[]>([]);
   const refs = useReferences(document?.id ?? null, setError);
   // Layer saves move the revision on before React re-renders; requests read it here.
   const documentRef = useRef<DocumentRecord | null>(document);
@@ -189,9 +187,11 @@ export default function App() {
     else void perform(() => openFile(file));
   }
   function shortcut(event: KeyboardEvent) {
-    if (isTyping(event)) return;
     const key = event.key.toLowerCase();
     const ctrl = event.ctrlKey || event.metaKey;
+    // Export works from the prompt too, as Save does everywhere.
+    if (ctrl && !event.shiftKey && !event.altKey && key === "s") { event.preventDefault(); if (source && !locked) void exportPicture(); return; }
+    if (isTyping(event)) return;
     if (event.key === "?") { setPanel("shortcuts"); return; }
     if (reviewing && !busy) {
       if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
@@ -208,7 +208,6 @@ export default function App() {
       if (event.key === "Enter") void applyCrop(); else setCrop(null);
       return;
     }
-    if (ctrl && key === "s") { event.preventDefault(); if (source) void exportPicture(); return; }
     // , and . (or < and >) step through the proposals kept in an AI layer.
     const variantStep = { ",": -1, "<": -1, ".": 1, ">": 1 }[event.key];
     if (variantStep && !ctrl && !event.altKey && layers.active && layers.active.variant_paths.length > 1) {
@@ -273,18 +272,20 @@ export default function App() {
   async function openFile(file: File) {
     if (!file.type.startsWith("image/")) throw new Error("Choose a PNG, JPG or WebP image.");
     const record = await createDocument(file);
-    stage(file, record); await refresh();
+    await adoptReferences(record.id);
+    // The stored image, which phone photos reach turned upright.
+    stage(record.current_image_url ? await fileFromUrl(fileUrl(record.current_image_url), record.name) : file, record); await refresh();
   }
   async function openSaved(record: DocumentRecord) {
     const current = await getDocument(record.id);
     if (!current.current_image_url) throw new Error("This document has no image.");
     stage(await fileFromUrl(fileUrl(current.current_image_url), current.name), current);
   }
-  /** Opens a result as a document; start-screen references it used are copied along. */
-  async function openGeneration(generation: GenerationRecord, referenceIds: number[] = []) {
+  /** Opens a result as a new document; the start screen's references move into it. */
+  async function openGeneration(generation: GenerationRecord) {
     const record = await importGeneration(generation.id);
     if (!record.current_image_url) throw new Error("This document has no image.");
-    if (referenceIds.length) await copyReferences(record.id, referenceIds);
+    await adoptReferences(record.id);
     stage(await fileFromUrl(fileUrl(record.current_image_url), record.name), record);
     setSideTab("layers"); collapsePanel(false);
   }
@@ -299,6 +300,8 @@ export default function App() {
   }
   async function travel(direction: "undo" | "redo") {
     if (!document) return;
+    // Crop shows a flattened copy that undo would leave behind.
+    setCrop(null);
     await layers.settled();
     const before = documentRef.current ?? document;
     const record = direction === "undo" ? await undoDocument(before.id) : await redoDocument(before.id);
@@ -507,7 +510,6 @@ export default function App() {
         mask, sketch, sketchScope, editScope, editLayer, expansion, picture: picture.editImage,
         blendLayer: picture.visibleLayers().find(layer => layer.id === blendTarget) ?? null,
       });
-      if (submission.startReferences) generationReferences.current = submission.startReferences;
       jobs.queued(submission.created, submission.operation, submission.extras);
     });
   }
@@ -518,9 +520,7 @@ export default function App() {
         const result = await acceptAlternative(document.id, proposal.id, proposal.alternatives[selected].id);
         await openSaved(result); await refresh();
       } else if (chosen) {
-        // Only references still on the start screen can come along.
-        const used = generationReferences.current.filter(id => refs.references.some(item => item.id === id));
-        await openGeneration(chosen, used); await refresh();
+        await openGeneration(chosen); await refresh();
       }
     });
   }
@@ -646,8 +646,8 @@ export default function App() {
           onSwitchMask={switchLayerMask} onDeleteMask={deleteLayerMask} onAddMask={(id, hideAll) => void addLayerMask(id, hideAll)}
           onVariant={layers.switchVariant} onSeparateVariants={layers.separateVariants} />
         : <ReferencePanel references={refs.references} newImage={!document} activeIds={refs.active.map(item => item.id)} pending={refs.pending} uploading={refs.uploading}
-          disabled={locked || operation === "expand"} note={referenceNote}
-          onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null) chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}
+          disabled={locked || operation === "expand"} busy={busy} note={referenceNote}
+          onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null && !locked && operation !== "expand") chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}
     </SidePanel>
     {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} operation={operation} blending={!!blending} disabled={locked} /></ControlDialog>}
     {panel === "expansion" && size && <ExpansionDialog size={size} expansion={expansion} onChange={setExpansion} disabled={locked} onClose={() => setPanel(null)} />}

@@ -75,10 +75,6 @@ class FaceFixRequest(PromptRequest):
     prompt: str = Field(default="", max_length=500)
 
 
-class CopyReferencesRequest(BaseModel):
-    reference_ids: list[Annotated[int, Field(ge=1)]] = Field(min_length=1, max_length=MAX_REFERENCES_PER_EDIT)
-
-
 class InpaintForm(BaseModel):
     prompt: str = Field(min_length=1)
     negative_prompt: str | None = None

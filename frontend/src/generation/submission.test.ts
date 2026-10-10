@@ -79,12 +79,10 @@ describe("submitJob", () => {
     expect(vi.mocked(fixFaces).mock.calls[0][2]).toBe(mask);
     expect(submission.extras.result).toEqual({ kind: "faces", name: "Fixed faces" });
   });
-  it("keeps start-screen references with a new image", async () => {
+  it("opens a new image from the start screen and adds a layer in a document", async () => {
     const start = await submitJob(input({ operation: "generate", hasDocument: false, source: null, referenceIds: [5] }));
-    expect(start.startReferences).toEqual([5]);
     expect(start.extras.result).toBeUndefined();
     const inDocument = await submitJob(input({ operation: "generate", referenceIds: [5] }));
-    expect(inDocument.startReferences).toEqual([]);
     expect(inDocument.extras.result?.kind).toBe("generation");
     expect(vi.mocked(generateImage).mock.calls[0][0]).toMatchObject({ width: 1024, height: 1024, reference_ids: [5] });
   });

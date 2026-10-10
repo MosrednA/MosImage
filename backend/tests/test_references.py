@@ -96,25 +96,22 @@ class ReferenceStorageTests(unittest.TestCase):
             references.ensure_reference_storage()
             self.assertEqual([references.get_reference(item)["name"] for item in ids], ["Anna", "Reference 2", "Reference 1"])
 
-    def test_loose_references_wait_on_the_start_screen_and_copy_into_a_document(self) -> None:
+    def test_loose_references_wait_on_the_start_screen_and_move_into_the_next_document(self) -> None:
         with isolated_data():
             loose = references.create_reference(None, png(Image.new("RGB", (20, 40), "orange")), "Anna.png")
             self.assertIsNone(loose["document_id"])
             references.set_subject(loose["id"], Image.new("RGB", (10, 10), "red"))
-            document_id = new_document()
+            first, second = new_document(), new_document()
+            other = references.create_reference(second, png(Image.new("RGB", (8, 8))), "Ben.png")
             self.assertEqual([item["id"] for item in references.list_references(None)], [loose["id"]])
-            self.assertEqual(references.list_references(document_id), [])
-            [copy] = references.copy_references([loose["id"]], document_id)
-            self.assertEqual((copy["document_id"], copy["name"]), (document_id, "Anna"))
-            self.assertNotEqual(references.model_image_path(copy["id"]), references.model_image_path(loose["id"]))
-            # Deleting the copy keeps the loose original and its files.
-            references.delete_reference(copy["id"])
-            self.assertTrue(references.model_image_path(loose["id"]).is_file())
-            self.assertTrue(references.original_image_path(loose["id"]).is_file())
-            with self.assertRaises(ValueError):
-                references.copy_references([references.create_reference(document_id, png(Image.new("RGB", (8, 8))), "t.png")["id"]], document_id)
+            [moved] = references.adopt_loose_references(first)
+            self.assertEqual((moved["id"], moved["document_id"], moved["name"]), (loose["id"], first, "Anna"))
+            self.assertTrue(references.model_image_path(moved["id"]).is_file())
+            # The start screen is empty again, and other projects keep their own.
+            self.assertEqual(references.list_references(None), [])
+            self.assertEqual(references.adopt_loose_references(second), [other])
             with self.assertRaises(LookupError):
-                references.copy_references([loose["id"]], document_id + 99)
+                references.adopt_loose_references(second + 99)
 
     def test_older_databases_are_migrated_to_allow_loose_references(self) -> None:
         with isolated_data():
@@ -169,7 +166,7 @@ class ReferenceApiTests(unittest.TestCase):
             self.assertEqual(client.delete(f"/api/v2/references/{reference_id}").status_code, 200)
             self.assertEqual(client.delete(f"/api/v2/references/{reference_id}").status_code, 404)
 
-    def test_loose_references_and_copying_through_the_api(self) -> None:
+    def test_loose_references_move_into_a_new_document_through_the_api(self) -> None:
         with isolated_data():
             client = TestClient(app)
             response = client.post("/api/v2/references", files={"image": ("Anna.png", png(Image.new("RGB", (30, 60))), "image/png")})
@@ -177,12 +174,11 @@ class ReferenceApiTests(unittest.TestCase):
             loose_id = response.json()["id"]
             self.assertEqual([item["id"] for item in client.get("/api/v2/references").json()], [loose_id])
             document_id = new_document()
-            copied = client.post(f"/api/v2/documents/{document_id}/references/copy", json={"reference_ids": [loose_id]})
-            self.assertEqual(copied.status_code, 200)
-            self.assertEqual(copied.json()[0]["document_id"], document_id)
-            self.assertEqual(len(client.get(f"/api/v2/documents/{document_id}/references").json()), 1)
-            self.assertEqual(client.post("/api/v2/documents/999/references/copy", json={"reference_ids": [loose_id]}).status_code, 404)
-            self.assertEqual(client.post(f"/api/v2/documents/{document_id}/references/copy", json={"reference_ids": [copied.json()[0]["id"]]}).status_code, 422)
+            moved = client.post(f"/api/v2/documents/{document_id}/references/adopt")
+            self.assertEqual(moved.status_code, 200)
+            self.assertEqual([(item["id"], item["document_id"]) for item in moved.json()], [(loose_id, document_id)])
+            self.assertEqual(client.get("/api/v2/references").json(), [])
+            self.assertEqual(client.post("/api/v2/documents/999/references/adopt").status_code, 404)
 
     def test_isolation_reports_when_no_subject_is_found(self) -> None:
         with isolated_data():

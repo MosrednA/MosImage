@@ -7,7 +7,7 @@ from sqlite3 import Connection, Row
 from typing import Any
 from uuid import uuid4
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from . import layers as layer_store
 from . import storage
@@ -611,8 +611,25 @@ def _save_document_image(content: bytes, filename: str | None) -> Path:
     suffix = _safe_suffix(filename)
     path = settings.document_dir / f"document-{uuid4().hex}{suffix}"
     path.write_bytes(content)
-    _image_size(path)
+    try:
+        _image_size(path)
+        _apply_orientation(path)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
     return path
+
+
+def _apply_orientation(path: Path) -> None:
+    """Turns phone photos upright once, as browsers show them, so every tool sees the same pixels."""
+    with Image.open(path) as image:
+        if image.getexif().get(0x0112, 1) == 1:
+            return
+        upright = ImageOps.exif_transpose(image)
+        exif = upright.getexif()
+        exif.pop(0x0112, None)
+        options = {"quality": 95, "exif": exif.tobytes()} if image.format == "JPEG" else {}
+        upright.save(path, image.format or "PNG", **options)
 
 
 def _save_revision_image(content: bytes, filename: str | None, prefix: str) -> Path:

@@ -11,7 +11,10 @@ interface Props {
   activeIds: readonly number[];
   pending: ReadonlySet<number>;
   uploading: number;
+  /** Picking is off while a proposal waits or in Expand. */
   disabled: boolean;
+  /** Adding, removing and isolating are off only while the engine works. */
+  busy: boolean;
   note: string | null;
   onUse: (id: number) => void;
   onAdd: (files: File[]) => void;
@@ -20,19 +23,19 @@ interface Props {
 }
 
 export function ReferencePanel(props: Props) {
-  const { references, activeIds, pending, uploading, disabled } = props;
+  const { references, activeIds, pending, uploading, disabled, busy: engineBusy } = props;
   const full = activeIds.length >= MAX_ACTIVE_REFERENCES;
   const picker = useRef<HTMLInputElement>(null);
   const [dropping, setDropping] = useState(false);
 
   function drop(event: DragEvent<HTMLElement>) {
     event.preventDefault(); event.stopPropagation(); setDropping(false);
-    if (disabled) return;
+    if (engineBusy) return;
     const files = Array.from(event.dataTransfer.files);
     if (files.length) props.onAdd(files);
   }
   const dragHandlers = {
-    onDragOver: (event: DragEvent<HTMLElement>) => { event.preventDefault(); event.stopPropagation(); if (!disabled) setDropping(true); },
+    onDragOver: (event: DragEvent<HTMLElement>) => { event.preventDefault(); event.stopPropagation(); if (!engineBusy) setDropping(true); },
     onDragLeave: (event: DragEvent<HTMLElement>) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false); },
     onDrop: drop,
   };
@@ -42,12 +45,12 @@ export function ReferencePanel(props: Props) {
   return <div className={"reference-panel" + (dropping ? " dropping" : "")} {...dragHandlers}>
     <header>
       <div><small>{references.length > 1 ? `Pick up to ${MAX_ACTIVE_REFERENCES} to place in your image` : references.length ? "Pick it to place it in your image" : "People, pets or objects"}</small></div>
-      <button className="icon-button" title="Add reference images" aria-label="Add reference images" disabled={disabled} onClick={() => picker.current?.click()}><Icon name="plus" /></button>
+      <button className="icon-button" title="Add reference images" aria-label="Add reference images" disabled={engineBusy} onClick={() => picker.current?.click()}><Icon name="plus" /></button>
     </header>
     {input}
     {props.note && <p className="reference-note">{props.note}</p>}
     <div className="reference-list">
-      {!references.length && !uploading && <button className="reference-empty" disabled={disabled} onClick={() => picker.current?.click()}>
+      {!references.length && !uploading && <button className="reference-empty" disabled={engineBusy} onClick={() => picker.current?.click()}>
         <Icon name="person" />
         <strong>Bring someone in</strong>
         <span>{props.newImage ? "Add photos of people, pets or objects. Pick up to three, then describe the scene they are in." : "Add a photo of a person, pet or object. Pick it, select where it goes, then describe what it does."}</span>
@@ -64,15 +67,15 @@ export function ReferencePanel(props: Props) {
           </button>
           <div className="reference-meta">
             <span title={item.name}>{item.name}</span>
-            <button className="icon-button" aria-pressed={isolated} disabled={disabled || busy}
+            <button className="icon-button" aria-pressed={isolated} disabled={engineBusy || busy}
               title={isolated ? "Use the full image again" : "Isolate subject: remove the background"} aria-label={isolated ? "Use the full image" : "Isolate subject"}
               onClick={() => props.onIsolate(item.id, !isolated)}><Icon name="scissors" /></button>
-            <button className="icon-button" disabled={disabled || busy} title="Remove reference" aria-label={`Remove ${item.name}`} onClick={() => props.onRemove(item.id)}><Icon name="trash" /></button>
+            <button className="icon-button" disabled={engineBusy || busy} title="Remove reference" aria-label={`Remove ${item.name}`} onClick={() => props.onRemove(item.id)}><Icon name="trash" /></button>
           </div>
         </div>;
       })}
       {Array.from({ length: uploading }, (_, index) => <div key={"upload-" + index} className="reference-card uploading"><span className="reference-spinner" aria-label="Uploading" /></div>)}
-      {references.length > 0 && <button className="reference-add" disabled={disabled} onClick={() => picker.current?.click()}><Icon name="plus" />Add more</button>}
+      {references.length > 0 && <button className="reference-add" disabled={engineBusy} onClick={() => picker.current?.click()}><Icon name="plus" />Add more</button>}
     </div>
     {dropping && <div className="reference-drop">Drop to add references</div>}
   </div>;

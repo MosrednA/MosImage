@@ -1,14 +1,13 @@
 """Concept images used as appearance references.
 
-Most belong to a document. Loose ones, without a document, wait on the start
-screen for a new image; using them copies them into the document it becomes.
+Each belongs to a document. Loose ones, without a document, wait on the start
+screen and move into the next new document, so every project keeps its own.
 """
 from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
 import re
-from shutil import copyfile
 import sqlite3
 from sqlite3 import Row
 from typing import Any
@@ -156,47 +155,16 @@ def create_reference(document_id: int | None, content: bytes, filename: str | No
     return get_reference(reference_id) or {}
 
 
-def copy_references(reference_ids: list[int], document_id: int) -> list[dict[str, Any]]:
-    """Copies loose references into a document, with their own files.
-
-    The loose originals stay available for the next new image; separate files
-    keep deleting either copy from removing the other's image.
-    """
-    sources = [get_reference(reference_id) for reference_id in dict.fromkeys(reference_ids)]
-    if any(source is None for source in sources):
-        raise LookupError("Reference not found")
-    if any(source["document_id"] is not None for source in sources):
-        raise ValueError("Only references from the start screen can be copied")
+def adopt_loose_references(document_id: int) -> list[dict[str, Any]]:
+    """Moves the start screen's references into a new document, up to its limit; ids stay the same."""
     with storage.connect() as db:
-        count = _count(db, document_id)
-    if count + len(sources) > MAX_REFERENCES:
-        raise ValueError(f"A document can hold up to {MAX_REFERENCES} references")
-    copied: list[int] = []
-    created: list[Path] = []
-    try:
-        for source in sources:
-            paths: dict[str, str] = {}
-            for column, prefix in (("image_path", "reference"), ("subject_path", "subject")):
-                if source[column]:
-                    target = settings.reference_dir / f"{prefix}-{uuid4().hex}.png"
-                    copyfile(_absolute(source[column]), target)
-                    created.append(target)
-                    paths[column] = storage.to_relative(target)
-            with storage.connect() as db:
-                cursor = db.execute(
-                    "INSERT INTO document_references (document_id, name, image_path, subject_path, width, height) VALUES (?, ?, ?, ?, ?, ?)",
-                    (document_id, source["name"], paths["image_path"], paths.get("subject_path"), source["width"], source["height"]),
-                )
-                db.commit()
-                copied.append(int(cursor.lastrowid))
-    except BaseException:
-        with storage.connect() as db:
-            db.executemany("DELETE FROM document_references WHERE id = ?", [(reference_id,) for reference_id in copied])
-            db.commit()
-        for path in created:
-            path.unlink(missing_ok=True)
-        raise
-    return [record for record in (get_reference(reference_id) for reference_id in copied) if record]
+        room = MAX_REFERENCES - _count(db, document_id)
+        ids = [row["id"] for row in db.execute(
+            "SELECT id FROM document_references WHERE document_id IS NULL ORDER BY id LIMIT ?", (max(room, 0),)
+        )]
+        db.executemany("UPDATE document_references SET document_id = ? WHERE id = ?", [(document_id, item) for item in ids])
+        db.commit()
+    return list_references(document_id)
 
 
 def set_subject(reference_id: int, subject: Image.Image) -> dict[str, Any]:

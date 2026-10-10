@@ -30,8 +30,6 @@ export interface Submission {
   /** Expand proposes new revisions; everything else comes back as a layer or a new image. */
   operation: "outpaint" | null;
   extras: JobExtras;
-  /** Start-screen references behind a new image, copied along when it opens. */
-  startReferences?: number[];
 }
 
 export interface SubmissionInput {
@@ -122,8 +120,8 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
   }
   if (task === "text-to-image") {
     const created = await generateImage({ ...withReferences, width: settings.width, height: settings.height });
-    if (!input.hasDocument) return { created, operation: null, extras: {}, startReferences: referenceIds };
-    return { ...asLayer(created, { kind: "generation", name: resultName(null, operation, prompt) }), startReferences: [] };
+    if (!input.hasDocument) return { created, operation: null, extras: {} };
+    return asLayer(created, { kind: "generation", name: resultName(null, operation, prompt) });
   }
   if (task === "edit") {
     withReferences.consistency_lora = refinements.consistency_lora;

@@ -142,6 +142,19 @@ class DocumentPersistenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             documents.crop(document["id"], grown["current_revision_id"], 200, 0, 50, 50)
 
+    def test_phone_photos_are_stored_upright(self) -> None:
+        buffer = io.BytesIO()
+        exif = Image.Exif()
+        exif[0x0112] = 6  # Rotated 90° clockwise, as many phones save portrait photos.
+        Image.new("RGB", (96, 64), (10, 20, 30)).save(buffer, "JPEG", exif=exif.tobytes())
+
+        document = documents.create_from_upload("Phone", buffer.getvalue(), "phone.jpg")
+
+        self.assertEqual((document["canvas_width"], document["canvas_height"]), (64, 96))
+        with Image.open(settings.data_dir / document["current_image_url"].replace("/files/", "")) as image:
+            self.assertEqual(image.size, (64, 96))
+            self.assertEqual(image.getexif().get(0x0112, 1), 1)
+
     def test_delete_document_removes_records_and_files(self) -> None:
         document = documents.create_from_upload("ToDelete", png_bytes((10, 10, 10)), "delete.png")
         doc_id = document["id"]

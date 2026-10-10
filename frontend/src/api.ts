@@ -369,13 +369,9 @@ export async function listReferences(documentId: number | null): Promise<Referen
   return request(documentId === null ? "/api/v2/references" : `/api/v2/documents/${documentId}/references`);
 }
 
-/** Copies start-screen references into the document a new image became. */
-export async function copyReferences(documentId: number, referenceIds: number[]): Promise<ReferenceRecord[]> {
-  return request(`/api/v2/documents/${documentId}/references/copy`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reference_ids: referenceIds }),
-  });
+/** Moves the start screen's references into a new document, so each project keeps its own. */
+export async function adoptReferences(documentId: number): Promise<ReferenceRecord[]> {
+  return request(`/api/v2/documents/${documentId}/references/adopt`, { method: "POST" });
 }
 
 export async function uploadLayerAsset(documentId: number, image: Blob, kind: "image" | "mask", filename = "layer.png"): Promise<LayerAsset> {

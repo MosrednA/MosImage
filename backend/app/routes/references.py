@@ -6,7 +6,7 @@ from PIL import Image
 
 from .. import references
 from ..jobs import jobs
-from ..schemas import CopyReferencesRequest, ReferenceRecord
+from ..schemas import ReferenceRecord
 from ..selection import selector
 from .common import http_errors, read_uploaded_image
 
@@ -28,10 +28,11 @@ async def add_loose_reference(image: UploadFile = File(...)) -> dict:
         return references.create_reference(None, content, image.filename)
 
 
-@router.post("/documents/{document_id}/references/copy", response_model=list[ReferenceRecord])
-def copy_references_to_document(document_id: int, request: CopyReferencesRequest) -> list[dict]:
-    with http_errors({**NOT_FOUND, **UNREADABLE}):
-        return references.copy_references(request.reference_ids, document_id)
+@router.post("/documents/{document_id}/references/adopt", response_model=list[ReferenceRecord])
+def adopt_start_references(document_id: int) -> list[dict]:
+    """Moves the start screen's references into a new document."""
+    with http_errors(NOT_FOUND):
+        return references.adopt_loose_references(document_id)
 
 
 @router.get("/documents/{document_id}/references", response_model=list[ReferenceRecord])
