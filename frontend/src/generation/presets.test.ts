@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { GENERATION_PRESETS, presetForModel } from "./presets";
+import { GENERATION_PRESETS, presetForModel, startingPreset } from "./presets";
 
 describe("generation presets", () => {
   it("uses the distilled FLUX.2 Klein settings for both presets", () => {
@@ -12,5 +12,14 @@ describe("generation presets", () => {
     expect(presetForModel("flux2-klein-9b-nvfp4")).toBe("quality");
     expect(presetForModel("flux2-klein-4b-nvfp4")).toBe("fast");
     expect(presetForModel("flux2-klein-4b")).toBe("fast");
+  });
+
+  it("starts on the preset of the model the engine warms up", () => {
+    const mac = [{ name: "flux2-klein-9b", preset: "quality" as const }, { name: "flux2-klein-4b", preset: "fast" as const }];
+    expect(startingPreset(mac, "flux2-klein-4b")).toBe("fast");
+    expect(startingPreset(mac, "flux2-klein-9b")).toBe("quality");
+    // An older engine, or a warm-up model without a preset, leaves the default.
+    expect(startingPreset(mac, undefined)).toBeNull();
+    expect(startingPreset([{ name: "flux2-klein-4b", preset: null }], "flux2-klein-4b")).toBeNull();
   });
 });

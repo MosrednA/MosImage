@@ -16,6 +16,11 @@ export const defaultSettings: EditorSettings = {
   context_padding: 320, scene_context: "",
   consistency_lora: false, specialized_outpaint: false, detail_crop: false,
 };
+/** The settings with a preset's model, steps and guidance. */
+export function withPreset(settings: EditorSettings, value: GenerationPreset): EditorSettings {
+  const config = GENERATION_PRESETS[value];
+  return { ...settings, preset: value, model_name: config.modelName, steps: config.steps, guidance: config.guidance };
+}
 export function qualityOptions(settings: EditorSettings, operation: Operation, blending: boolean) {
   const specialized_outpaint = operation === "expand" && settings.specialized_outpaint;
   // Specialized outpaint is a Fast LoRA; the detail enhancer exists for Quality only.
@@ -50,8 +55,7 @@ export function SettingsControls({ settings, onChange, models, operation, blendi
   const consistencyAvailable = options.model_name === GENERATION_PRESETS.quality.modelName;
   const presetLocked = options.specialized_outpaint || operation === "enhance";
   function preset(value: GenerationPreset) {
-    const config = GENERATION_PRESETS[value];
-    onChange({ ...settings, preset: value, model_name: config.modelName, steps: config.steps, guidance: config.guidance });
+    onChange(withPreset(settings, value));
   }
   return <fieldset className="settings-controls" disabled={disabled}>
     <div className="prompt-options">

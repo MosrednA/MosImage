@@ -77,7 +77,7 @@ Three steps on one picture, each about 3–10 seconds on an RTX 5070 Ti (7–15 
 | Node.js | A current LTS release | A current LTS release |
 | Optional | Rust and the Tauri prerequisites, for the desktop app | Rust (`brew install rust`) and the Xcode command-line tools, for the desktop app |
 
-Other NVIDIA GPUs can use FLUX.2 Klein 4B (BF16) under Generation settings → Advanced controls. A Mac runs the BF16 weights the NVFP4 builds come from, or quantizes them to 8 or 4 bits in MLX: from 64 GB of memory it uses BF16, from 48 GB 8-bit, below that 4-bit (`MOSIMAGE_APPLE_WEIGHTS` overrides this). Below 36 GB the engine warms up Fast, and Fast is the better choice in the editor too.
+Other NVIDIA GPUs can use FLUX.2 Klein 4B (BF16) under Generation settings → Advanced controls. A Mac runs the BF16 weights the NVFP4 builds come from, or quantizes them to 8 or 4 bits in MLX: from 64 GB of memory it uses BF16, from 48 GB 8-bit, below that 4-bit (`MOSIMAGE_APPLE_WEIGHTS` overrides this). Below 36 GB the engine warms up Fast, the editor starts on Fast, and the VAE works in 512 px tiles to save memory.
 
 ## Quick start
 

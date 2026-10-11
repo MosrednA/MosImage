@@ -38,6 +38,11 @@ export function applyPresetModels(models: Pick<ModelInfo, "name" | "preset">[]):
   }
 }
 
+/** The editor starts on the preset whose model the engine warms up, which suits the device. */
+export function startingPreset(models: Pick<ModelInfo, "name" | "preset">[], warmUpModel?: string): GenerationPreset | null {
+  return models.find(model => model.name === warmUpModel)?.preset ?? null;
+}
+
 /** Every 4B variant counts as Fast; 9B is Quality. */
 export function presetForModel(modelName: string): GenerationPreset {
   return modelName.startsWith("flux2-klein-4b") ? "fast" : "quality";

@@ -103,7 +103,8 @@ On macOS the defaults switch to the Apple silicon profile (`MOSIMAGE_PREFERRED_D
 - Consistency and the detail enhancer work with Quality, as on Windows.
 - CPU and GPU share one memory, so every component stays resident and the memory usage setting is hidden: offloading would only copy weights around. Switching between Quality and Fast releases the other.
 - `MOSIMAGE_APPLE_WEIGHTS` sets how the transformer and text encoder hold their weights. `bf16` runs them in PyTorch on MPS. `q8` and `q4` run them in MLX, quantized to 8 or 4 bits at load. Masked edits, references and every LoRA work the same in all three, and the model menu shows the choice ("FLUX.2 Klein 9B (8-bit)"). Left empty, it follows unified memory: BF16 from 64 GB, 8-bit from 48 GB, 4-bit below that.
-- Quality warms up at start when its peak fits with about 12 GB to spare (BF16 from 64 GB, 8-bit from 48 GB, 4-bit from 36 GB); otherwise Fast warms up, and you should choose Fast in the editor as well. `MOSIMAGE_WARM_UP_MODEL` overrides the choice.
+- Quality warms up at start when its peak fits with about 12 GB to spare (BF16 from 64 GB, 8-bit from 48 GB, 4-bit from 36 GB); otherwise Fast warms up. The editor starts on the preset of the model that warms up. `MOSIMAGE_WARM_UP_MODEL` overrides the choice.
+- Where Quality does not fit, the VAE also works in 512 px tiles: one 1024² decode then takes about 1.3 GiB instead of 6.5 GiB. Tiles can shift colour slightly against each other, so larger Macs decode untiled. `MOSIMAGE_APPLE_VAE_TILING=true` or `false` overrides this. See the [measurements](notes/2026-10-11-apple-vae-tiles.md).
 - After every edit the engine hands PyTorch's and MLX's GPU caches back to macOS, so memory use falls back between jobs.
 - `PYTORCH_ENABLE_MPS_FALLBACK=1` is set before PyTorch loads, so an operator Metal lacks runs on the CPU instead of failing.
 

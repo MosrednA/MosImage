@@ -15,8 +15,8 @@ import { errorMessage } from "./errors";
 import { EditScope, EnhanceLevel, FaceMode, Operation, SketchScope, isWholeImage } from "./generation/operation";
 import { CommandState, canSubmit, commandHint } from "./generation/commandState";
 import { LayerResult, submitJob } from "./generation/submission";
-import { GENERATION_PRESETS } from "./generation/presets";
-import { SettingsControls, defaultSettings, settingsSummary } from "./components/EditorSettings";
+import { GENERATION_PRESETS, startingPreset } from "./generation/presets";
+import { SettingsControls, defaultSettings, settingsSummary, withPreset } from "./components/EditorSettings";
 import { Icon } from "./components/Icon";
 import { ControlDialog } from "./components/ControlDialog";
 import { LibraryDrawer } from "./components/LibraryDrawer";
@@ -65,11 +65,17 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const engine = useEngine(setError);
   const { models, setModels, system, online, deviceBlocked, refresh } = engine;
+  // Start once on the preset the engine warms up: Quality, or Fast on a Mac without room for it.
+  const presetChosen = useRef(false);
   // The preset models differ per device (NVFP4 or Apple silicon BF16); follow the engine's.
   useEffect(() => {
-    if (models.length) setSettings(current => models.some(model => model.name === current.model_name) ? current
+    if (!models.length) return;
+    const start = system && !presetChosen.current ? startingPreset(models, system.warm_up_model) : null;
+    if (system) presetChosen.current = true;
+    setSettings(current => start ? withPreset(current, start)
+      : models.some(model => model.name === current.model_name) ? current
       : { ...current, model_name: GENERATION_PRESETS[current.preset].modelName });
-  }, [models]);
+  }, [models, system]);
   const [document, setDocument] = useState<DocumentRecord | null>(null);
   const [pending, setPending] = useState(false);
   const [source, setSource] = useState<File | null>(null);

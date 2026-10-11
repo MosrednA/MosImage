@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from PIL import Image
 
 from app.compositing import FAST_PNG
-from app.config import settings
+from app.config import APPLE_VAE_TILE, settings
 from app.jobs import JobControl
 from app.models.flux2_klein import SHARED_COMPONENTS, Flux2KleinProvider, PipelineTask, _fit_area
 from app.models.flux2_klein_nvfp4 import BASE_REPO, BASE_REPO_9B, BASE_REVISION, BASE_REVISION_9B
@@ -85,6 +85,14 @@ class Flux2KleinAppleProvider(Flux2KleinProvider):
         control.raise_if_cancelled()
         image.resize(size, Image.Resampling.LANCZOS).save(output_path, **FAST_PNG)
         return seed, size[0]
+
+    def _configure_memory(self, pipe: Any) -> None:
+        super()._configure_memory(pipe)
+        vae = getattr(pipe, "vae", None)
+        if settings.apple_vae_tiling and isinstance(getattr(vae, "tile_sample_min_size", None), int):
+            # Keep the VAE's pixel-to-latent scale (8) for the smaller tiles.
+            scale = vae.tile_sample_min_size // vae.tile_latent_min_size
+            vae.tile_sample_min_size, vae.tile_latent_min_size = APPLE_VAE_TILE, APPLE_VAE_TILE // scale
 
     def _create_pipeline(self, task: PipelineTask, control: JobControl) -> Any:
         from diffusers import Flux2KleinInpaintPipeline, Flux2KleinPipeline

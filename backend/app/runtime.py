@@ -139,6 +139,8 @@ def system_info() -> dict[str, Any]:
         "cuda_alloc_conf": settings.cuda_alloc_conf,
         "quality_model": settings.quality_model,
         "fast_model": settings.fast_model,
+        # The editor starts on this model's preset, which suits the device.
+        "warm_up_model": settings.warm_up_model,
     }
     if torch.cuda.is_available():
         props = torch.cuda.get_device_properties(0)
@@ -157,7 +159,7 @@ def system_info() -> dict[str, Any]:
     if settings.apple_silicon:
         chip, memory = _apple_chip()
         info.update({"mps_available": mps_available(torch), "device_name": chip, "unified_memory_gb": memory,
-                     "apple_weights": settings.apple_weights})
+                     "apple_weights": settings.apple_weights, "apple_vae_tiling": settings.apple_vae_tiling})
         if not info["mps_available"]:
             info["setup_hint"] = (
                 "Metal (MPS) is unavailable to PyTorch. MosImage needs an Apple silicon Mac with "

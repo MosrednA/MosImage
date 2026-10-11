@@ -100,6 +100,8 @@ export interface SystemInfo {
   unified_memory_gb?: number;
   quality_model?: string;
   fast_model?: string;
+  /** Loaded while the UI opens: Quality, or Fast on a Mac without room for it. */
+  warm_up_model?: string;
   setup_hint?: string;
   error?: string;
 }

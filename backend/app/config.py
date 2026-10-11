@@ -26,6 +26,9 @@ APPLE_Q8_MEMORY_GB = 48
 # See benchmarks/MLX_KLEIN_2026-10-11.md.
 APPLE_QUALITY_PEAK_GB: dict[str, float] = {"bf16": 43, "q8": 31, "q4": 24}
 APPLE_HEADROOM_GB = 12
+# Side (px) of the VAE tiles on a Mac without that room. Untiled, a 1024²
+# decode takes 6.5 GiB of unified memory; in these tiles 1.3 GiB.
+APPLE_VAE_TILE = 512
 
 
 def physical_memory_gb() -> float | None:
@@ -67,6 +70,10 @@ class Settings(BaseSettings):
     # group-wise to 8 or 4 bits. Masked edits, references and LoRAs work with all
     # three. Empty picks by unified memory (default_apple_weights).
     apple_weights: Literal["", "bf16", "q8", "q4"] = ""
+    # Apple silicon: decode and encode the VAE in APPLE_VAE_TILE tiles. Saves
+    # about 5 GiB at 1024², at the cost of faint colour shifts between tiles.
+    # Unset turns it on where Quality's peak does not fit (as warm_up_model).
+    apple_vae_tiling: bool | None = None
     enable_tf32: bool = True
     allow_cpu_generation: bool = False
     cuda_memory_fraction: float | None = None
@@ -111,10 +118,12 @@ class Settings(BaseSettings):
         memory = physical_memory_gb() if self.apple_silicon else None
         if not self.apple_weights:
             self.apple_weights = default_apple_weights(memory)
+        room = APPLE_QUALITY_PEAK_GB[self.apple_weights] + APPLE_HEADROOM_GB
+        small = memory is not None and memory < room
         if not self.warm_up_model:
-            room = APPLE_QUALITY_PEAK_GB[self.apple_weights] + APPLE_HEADROOM_GB
-            small = memory is not None and memory < room
             self.warm_up_model = self.fast_model if small else self.quality_model
+        if self.apple_vae_tiling is None:
+            self.apple_vae_tiling = small
         return self
 
     @property

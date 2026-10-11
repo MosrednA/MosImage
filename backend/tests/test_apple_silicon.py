@@ -53,6 +53,15 @@ class AppleProfileTests(unittest.TestCase):
         with patch("app.config.physical_memory_gb", return_value=None):
             self.assertEqual(Settings(_env_file=None, preferred_device="mps").warm_up_model, "flux2-klein-9b")
 
+    def test_a_mac_without_room_for_quality_tiles_the_vae(self) -> None:
+        # An M4 MacBook Air with 16 GB runs 4-bit Fast; untiled, one decode would need 6.5 GiB more.
+        for memory, tiling in ((16, True), (32, True), (36, False), (128, False)):
+            with patch("app.config.physical_memory_gb", return_value=memory):
+                self.assertEqual(Settings(_env_file=None, preferred_device="mps").apple_vae_tiling, tiling, memory)
+        with patch("app.config.physical_memory_gb", return_value=16):
+            self.assertFalse(Settings(_env_file=None, preferred_device="mps", apple_vae_tiling=False).apple_vae_tiling)
+            self.assertFalse(Settings(_env_file=None, preferred_device="cuda").apple_vae_tiling)
+
     @unittest.skipUnless(sys.platform == "darwin", "macOS only")
     def test_metal_fallback_is_set_before_torch_loads(self) -> None:
         # torch reads it at import, and SAM can import torch before runtime.torch_module() runs.
@@ -110,6 +119,13 @@ class AppleRuntimeTests(unittest.TestCase):
         self.assertTrue(info["mps_available"])
         self.assertNotIn("setup_hint", info)
 
+    def test_system_info_names_the_model_the_editor_starts_on(self) -> None:
+        with apple_profile(), patch.object(settings, "warm_up_model", "flux2-klein-4b"), patch.object(settings, "apple_vae_tiling", True), \
+                patch.object(runtime, "torch_module", return_value=SimpleNamespace(**vars(fake_torch(mps=True)), __version__="2")), \
+                patch.object(runtime, "_apple_chip", return_value=("Apple M4", 16)):
+            info = runtime.system_info()
+        self.assertEqual((info["warm_up_model"], info["fast_model"], info["apple_vae_tiling"]), ("flux2-klein-4b", "flux2-klein-4b", True))
+
 
 class AppleProviderTests(unittest.TestCase):
     def test_pipelines_stay_resident_in_unified_memory(self) -> None:
@@ -121,6 +137,23 @@ class AppleProviderTests(unittest.TestCase):
             provider._place_pipeline(pipe, "mps")
         pipe.to.assert_called_once_with("mps")
         pipe.enable_model_cpu_offload.assert_not_called()
+
+    def test_a_small_mac_decodes_in_512_px_tiles(self) -> None:
+        from diffusers import AutoencoderKLFlux2
+
+        def tiny_vae() -> AutoencoderKLFlux2:
+            # Klein's VAE layout (four blocks, 8x scale, 1024 px tiles) with few channels.
+            return AutoencoderKLFlux2(block_out_channels=(8, 8, 8, 8), layers_per_block=1, norm_num_groups=4, latent_channels=4).eval()
+
+        latents = torch.zeros(1, 4, 72, 72)  # 576 px: one tile at 1024 px, four at 512 px
+        for tiling, sizes, tiled in ((True, (512, 64), True), (False, (1024, 128), False)):
+            vae = tiny_vae()
+            with patch.object(settings, "apple_vae_tiling", tiling):
+                Flux2KleinAppleProvider()._configure_memory(SimpleNamespace(vae=vae))
+            self.assertEqual((vae.tile_sample_min_size, vae.tile_latent_min_size), sizes)
+            with patch.object(vae, "tiled_decode", wraps=vae.tiled_decode) as tiled_decode, torch.inference_mode():
+                self.assertEqual(vae.decode(latents).sample.shape, (1, 3, 576, 576))
+            self.assertEqual(tiled_decode.called, tiled)
 
     def test_9b_loads_pinned_bf16_weights_with_the_trimmed_encoder(self) -> None:
         provider = Flux2Klein9bAppleProvider()
