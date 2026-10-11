@@ -1,6 +1,10 @@
 # Improving image quality across MosImage — 9 October 2026
 
-Status: research snapshot completed before implementation. The investigation inspected the checkout, installed Diffusers 0.41.0, existing benchmark reports and two retained 9B outputs; checked primary online sources; ran a CPU workspace probe. It did not change the runtime or perform new diffusion renders or LoRA training.
+Status: Historical
+Last verified: 2026-10-11
+Current state: [Guide](../guide.md) and [roadmap](../roadmap.md).
+
+**Original scope:** Research snapshot completed before implementation. The investigation inspected the checkout, installed Diffusers 0.41.0, existing benchmark reports and two retained 9B outputs; checked primary online sources; ran a CPU workspace probe. It did not change the runtime or perform new diffusion renders or LoRA training.
 
 **Implementation follow-up, 9 October:** the first two recommendations are implemented: 32 model-pixel generation overlap for expansion with the existing 16 native-pixel final blend, and separate opaque generation coverage / soft final alpha for inpaint. The [paired implementation report](../../benchmarks/EDIT_MASK_RESULTS_2026-10-09.md) retains 30 Klein 9B renders, protected-pixel checks and visual limitations. The shirt fringe remains; broader quality acceptance is open. Reversible LoRA residuals now work on the native NVFP4 transformer, and the [candidate evaluation](../../benchmarks/QUALITY_CANDIDATES_2026-10-09.md) records Consistency V2 and the specialized outpaint/detail follow-up. Remaining proposals below retain their original research context. Pipeline descriptions below record the pre-change snapshot; the [guide](../guide.md) describes current app behaviour.
 

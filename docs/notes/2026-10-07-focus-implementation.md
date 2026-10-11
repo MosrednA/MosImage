@@ -1,6 +1,10 @@
 # Focus implementation and validation
 
-**Status:** Delivered locally, 7 October 2026; runtime maintenance updated 8 October 2026. This is the current implementation reference, linked from [README](../../README.md). The [model research](2026-10-07-direction.md) preserves the starting snapshot and longer-term recommendations; the [v2 roadmap](../roadmap.md) records remaining scope.
+Status: Historical
+Last verified: 2026-10-11
+Current state: [Guide](../guide.md) and [roadmap](../roadmap.md).
+
+**Delivery log:** 7–10 October 2026. The sections below preserve implementation and validation evidence from their delivery date; earlier interface and model descriptions can be superseded by later entries. Use the [guide](../guide.md) and [architecture](../architecture.md) for the current implementation. The [model research](2026-10-07-direction.md) preserves the starting snapshot and longer-term recommendations; the [v2 roadmap](../roadmap.md) owns remaining scope.
 
 ## Overall interface
 
