@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+from typing import Literal
 
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,8 +16,16 @@ if APPLE_SILICON:
 # The Quality and Fast models of each profile, by registry name.
 CUDA_MODELS = {"quality": "flux2-klein-9b-nvfp4", "fast": "flux2-klein-4b-nvfp4"}
 APPLE_MODELS = {"quality": "flux2-klein-9b", "fast": "flux2-klein-4b"}
-# Quality on Apple silicon takes about 30 GB; below this, warm up Fast instead.
-APPLE_QUALITY_MEMORY_GB = 48
+AppleWeights = Literal["bf16", "q8", "q4"]
+# Unified memory (GB) from which a Mac runs Klein in BF16 by default, and from
+# which in 8-bit; below that, in 4-bit.
+APPLE_BF16_MEMORY_GB = 64
+APPLE_Q8_MEMORY_GB = 48
+# Quality's peak footprint (GiB) per weight format on an M5 Max, and the room
+# macOS and the UI need beside it; without that room, warm up Fast instead.
+# See benchmarks/MLX_KLEIN_2026-10-11.md.
+APPLE_QUALITY_PEAK_GB: dict[str, float] = {"bf16": 43, "q8": 31, "q4": 24}
+APPLE_HEADROOM_GB = 12
 
 
 def physical_memory_gb() -> float | None:
@@ -24,6 +33,12 @@ def physical_memory_gb() -> float | None:
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**3
     except (ValueError, OSError, AttributeError):
         return None
+
+
+def default_apple_weights(memory_gb: float | None) -> AppleWeights:
+    if memory_gb is None or memory_gb >= APPLE_BF16_MEMORY_GB:
+        return "bf16"
+    return "q8" if memory_gb >= APPLE_Q8_MEMORY_GB else "q4"
 
 
 class Settings(BaseSettings):
@@ -47,6 +62,11 @@ class Settings(BaseSettings):
     # cuda, mps (Apple silicon) or cpu.
     preferred_device: str = "mps" if APPLE_SILICON else "cuda"
     preferred_dtype: str = "bfloat16"
+    # Apple silicon: how the Klein transformer and text encoder hold their weights.
+    # bf16 runs them in PyTorch on MPS; q8 and q4 run them in MLX, quantized
+    # group-wise to 8 or 4 bits. Masked edits, references and LoRAs work with all
+    # three. Empty picks by unified memory (default_apple_weights).
+    apple_weights: Literal["", "bf16", "q8", "q4"] = ""
     enable_tf32: bool = True
     allow_cpu_generation: bool = False
     cuda_memory_fraction: float | None = None
@@ -74,7 +94,7 @@ class Settings(BaseSettings):
     job_retention_seconds: float = 600.0
     # Load and warm the Quality model and SAM while the UI opens.
     warm_up_on_start: bool = True
-    # Empty means the Quality model of the device profile (Fast on a Mac with less than 48 GB).
+    # Empty means the Quality model of the device profile (Fast on a Mac without room for it).
     warm_up_model: str = ""
     # Set by the desktop app that started this engine, so only it can stop it.
     shutdown_token: str | None = Field(default=None, repr=False)
@@ -87,10 +107,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MOSIMAGE_", env_file=".env")
 
     @model_validator(mode="after")
-    def _default_warm_up_model(self) -> "Settings":
+    def _device_defaults(self) -> "Settings":
+        memory = physical_memory_gb() if self.apple_silicon else None
+        if not self.apple_weights:
+            self.apple_weights = default_apple_weights(memory)
         if not self.warm_up_model:
-            memory = physical_memory_gb() if self.apple_silicon else None
-            small = memory is not None and memory < APPLE_QUALITY_MEMORY_GB
+            room = APPLE_QUALITY_PEAK_GB[self.apple_weights] + APPLE_HEADROOM_GB
+            small = memory is not None and memory < room
             self.warm_up_model = self.fast_model if small else self.quality_model
         return self
 

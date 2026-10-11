@@ -15,6 +15,8 @@ huggingface_hub[hf_xet]==1.33.0
 diffusers==0.41.0
 # Native Blackwell NVFP4 kernels; validated Windows cp312-abi3 wheel.
 comfy-kitchen==0.2.37; sys_platform == "win32"
+# Quantized Klein on Apple silicon (MOSIMAGE_APPLE_WEIGHTS=q8 or q4).
+mlx==0.32.3; sys_platform == "darwin"
 # Security-sensitive transitive dependencies: do not regress on a fresh install.
 anyio==4.15.1
 fsspec==2026.9.0

@@ -70,12 +70,12 @@ Three steps on one picture, each about 3–10 seconds on an RTX 5070 Ti (7–15 
 |---|---|---|
 | OS | Windows 11 | macOS 27; macOS 14 or newer on Apple silicon |
 | GPU | NVIDIA RTX 5070 Ti 16 GB; NVFP4 needs a Blackwell GPU and CUDA 13 | Apple M5 Max, 40-core GPU, through Metal (MPS) |
-| Memory | 32 GB RAM (the 9B text encoder keeps about 6 GB in RAM) | 128 GB unified memory; Quality uses about 30 GB, Fast about 16 GB |
+| Memory | 32 GB RAM (the 9B text encoder keeps about 6 GB in RAM) | 128 GB unified memory; Quality uses about 30 GB in BF16, 19 GB in 8-bit and 13 GB in 4-bit |
 | Python | 3.13 or 3.12 | 3.13 or 3.12, from Homebrew or uv |
 | Node.js | A current LTS release | A current LTS release |
 | Optional | Rust and the Tauri prerequisites, for the desktop app | Rust (`brew install rust`) and the Xcode command-line tools, for the desktop app |
 
-Other NVIDIA GPUs can use FLUX.2 Klein 4B (BF16) under Generation settings → Advanced controls. A Mac runs the BF16 weights the NVFP4 builds come from; with less than 48 GB of memory the engine warms up Fast, and Fast is the better choice in the editor too.
+Other NVIDIA GPUs can use FLUX.2 Klein 4B (BF16) under Generation settings → Advanced controls. A Mac runs the BF16 weights the NVFP4 builds come from, or quantizes them to 8 or 4 bits in MLX: from 64 GB of memory it uses BF16, from 48 GB 8-bit, below that 4-bit (`MOSIMAGE_APPLE_WEIGHTS` overrides this). Below 36 GB the engine warms up Fast, and Fast is the better choice in the editor too.
 
 ## Quick start
 

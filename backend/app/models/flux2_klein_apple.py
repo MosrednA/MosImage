@@ -3,6 +3,10 @@
 NVFP4 needs Blackwell tensor cores, so a Mac runs the BF16 checkpoints the
 NVFP4 builds were quantized from. CPU and GPU share one memory there, so every
 component stays resident: no model offload and no streamed text encoder.
+
+With ``apple_weights`` set to q8 or q4, the transformer and text encoder run in
+MLX instead, quantized at load (``klein_mlx``); the pipeline around them, with
+its masks, references and VAE, stays the same.
 """
 from __future__ import annotations
 
@@ -24,19 +28,25 @@ if TYPE_CHECKING:
     from app.models.klein_lora import KleinLora
 
 OUTPAINT_PROMPT = "Fill the green spaces according to the image"
+# Shown after the model name, so the editor says which weights run.
+WEIGHT_LABELS = {"q8": " (8-bit)", "q4": " (4-bit)"}
 
 
 class Flux2KleinAppleProvider(Flux2KleinProvider):
     """Klein 4B, the Fast model on a Mac, with the specialized outpaint LoRA."""
 
     name = "flux2-klein-4b"
-    display_name = "FLUX.2 Klein 4B"
+    base_display_name = "FLUX.2 Klein 4B"
     model_id = BASE_REPO
     revision = BASE_REVISION
 
     def __init__(self) -> None:
         super().__init__()
         self._outpaint_adapter: KleinLora | None = None
+
+    @property
+    def display_name(self) -> str:  # type: ignore[override]
+        return self.base_display_name + WEIGHT_LABELS.get(settings.apple_weights, "")
 
     def unload(self) -> None:
         self._outpaint_adapter = None
@@ -79,12 +89,34 @@ class Flux2KleinAppleProvider(Flux2KleinProvider):
     def _create_pipeline(self, task: PipelineTask, control: JobControl) -> Any:
         from diffusers import Flux2KleinInpaintPipeline, Flux2KleinPipeline
 
+        if settings.apple_weights != "bf16":
+            return self._create_mlx_pipeline(task, control)
         control.raise_if_cancelled()
         pipeline_class = Flux2KleinInpaintPipeline if task == "inpaint" else Flux2KleinPipeline
         return pipeline_class.from_pretrained(
             self.model_id, revision=self.revision, torch_dtype=selected_dtype(), low_cpu_mem_usage=True,
             token=settings.huggingface_token, use_safetensors=True,
         )
+
+    def _create_mlx_pipeline(self, task: PipelineTask, control: JobControl) -> Any:
+        """The diffusers pipeline with its transformer and text encoder quantized in MLX."""
+        from diffusers import Flux2KleinInpaintPipeline, Flux2KleinPipeline
+        from huggingface_hub import snapshot_download
+        from app.models.klein_mlx import load_text_encoder, load_transformer
+
+        control.raise_if_cancelled()
+        pipeline_class = Flux2KleinInpaintPipeline if task == "inpaint" else Flux2KleinPipeline
+        pipe = pipeline_class.from_pretrained(
+            self.model_id, revision=self.revision, transformer=None, text_encoder=None, torch_dtype=selected_dtype(),
+            low_cpu_mem_usage=True, token=settings.huggingface_token, use_safetensors=True,
+        )
+        control.raise_if_cancelled()
+        root = Path(snapshot_download(self.model_id, revision=self.revision, allow_patterns=["transformer/*", "text_encoder/*"],
+                                      token=settings.huggingface_token))
+        components = {name: getattr(pipe, name) for name in SHARED_COMPONENTS}
+        components["transformer"] = load_transformer(root / "transformer", settings.apple_weights, control.raise_if_cancelled)
+        components["text_encoder"] = load_text_encoder(root / "text_encoder", settings.apple_weights, control.raise_if_cancelled)
+        return pipeline_class(**components, is_distilled=pipe.config.get("is_distilled", False))
 
 
 class Flux2Klein9bAppleProvider(Flux2KleinAppleProvider):
@@ -96,7 +128,7 @@ class Flux2Klein9bAppleProvider(Flux2KleinAppleProvider):
     """
 
     name = "flux2-klein-9b"
-    display_name = "FLUX.2 Klein 9B"
+    base_display_name = "FLUX.2 Klein 9B"
     model_id = BASE_REPO_9B
     revision = BASE_REVISION_9B
     supports_edit_adapters = True
@@ -110,6 +142,8 @@ class Flux2Klein9bAppleProvider(Flux2KleinAppleProvider):
         from huggingface_hub import snapshot_download
         from app.models.klein_text_encoder import load_resident_text_encoder
 
+        if settings.apple_weights != "bf16":
+            return self._create_mlx_pipeline(task, control)
         control.raise_if_cancelled()
         pipeline_class = Flux2KleinInpaintPipeline if task == "inpaint" else Flux2KleinPipeline
         # Skip the full encoder; the trimmed one is attached below.
