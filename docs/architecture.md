@@ -39,17 +39,21 @@ MosImage is two local processes: a FastAPI engine that owns the models, the job 
 
 ### Jobs
 
-`jobs.py` runs two single-worker lanes: one for GPU work (generation and editing) and one for CPU work (SAM selection, Grounding DINO, ViTMatte). Selecting therefore never waits behind a render. Each job gets a `JobControl` for progress and cooperative cancellation. Finished jobs are retained for `MOSIMAGE_JOB_RETENTION_SECONDS`. Under `start.cmd` or the desktop app, a supervisor restarts the engine when a cancelled CUDA call does not yield within eight seconds.
+`jobs.py` runs two single-worker lanes: one for GPU work (generation and editing) and one for CPU work (SAM selection, Grounding DINO, ViTMatte). Selecting therefore never waits behind a render. Each job gets a `JobControl` for progress and cooperative cancellation. Finished jobs are retained for `MOSIMAGE_JOB_RETENTION_SECONDS`. Under `start.cmd`, `start.sh` or the desktop app, a supervisor restarts the engine when a cancelled GPU call does not yield within eight seconds.
 
 ### Model providers (`models/`)
 
-Every runtime sits behind the `ImageModelProvider` protocol in `base.py`. `registry.py` keeps one large pipeline resident at a time to fit 16 GB of VRAM. All three models are FLUX.2 Klein and support every task: generation, whole-picture edits, masked edits and expansion.
+Every runtime sits behind the `ImageModelProvider` protocol in `base.py`. `registry.py` keeps one large pipeline resident at a time to fit 16 GB of VRAM. Every model is FLUX.2 Klein and supports every task: generation, whole-picture edits, masked edits and expansion.
 
 | Provider | File | Role |
 |---|---|---|
 | FLUX.2 Klein 9B NVFP4 | `flux2_klein_nvfp4.py`, `klein_text_encoder.py` | Quality preset |
 | FLUX.2 Klein 4B NVFP4 | `flux2_klein_nvfp4.py` | Fast preset; commercially licensed |
 | FLUX.2 Klein 4B BF16 | `flux2_klein.py` | For GPUs without NVFP4 support |
+| FLUX.2 Klein 9B BF16 | `flux2_klein_apple.py`, `klein_text_encoder.py` | Quality preset on Apple silicon |
+| FLUX.2 Klein 4B BF16 | `flux2_klein_apple.py` | Fast preset on Apple silicon; Specialized outpaint |
+
+The device profile decides which of these the registry offers. `config.py` defaults to the CUDA profile, or on macOS to the Apple silicon profile (`preferred_device=mps`), and names each profile's Quality and Fast model; request defaults, validators and the `preset` field of `/api/models` follow it, and the UI maps its presets to the models the engine reports. `runtime.py` selects CUDA, Metal (MPS) or the CPU, with bfloat16 on either GPU. On Apple silicon CPU and GPU share memory, so the providers keep every component resident, the 9B text encoder stays in BF16 on the GPU (trimmed to the layers Klein reads) and LoRAs attach to loaded weights.
 
 `nvfp4_runtime.py` loads the native CUDA NVFP4 transformer, shared with the benchmark tools.
 
@@ -97,6 +101,8 @@ All files live under `data/`. Only `data/images/` is served over HTTP.
 
 Most of the logic in `generation/`, `masks/` and `layers/` is pure and covered by Vitest tests next to each module.
 
+The UI runs in Chromium (WebView2 on Windows) and in WebKit (Safari, and the macOS app). Two WebKit differences matter for pixels: its `createImageBitmap` dithers, which turned black selection pixels into faint noise, so `decodeImage` in `layers/bitmaps.ts` decodes files through an `<img>`, which is exact in both engines; and its 2D canvas has no `filter`, so layer footprints blur in script (`layers/blur.ts`) there. A trackpad pinch arrives as Ctrl + wheel in Chromium and as gesture events in WebKit; `useViewport` zooms on both. `platform.ts` labels shortcuts with ⌘ and ⌥ on a Mac; the handlers accept Ctrl and Cmd everywhere.
+
 ## Desktop shell (`frontend/src-tauri/`)
 
-The Tauri app starts the engine from `backend/.venv` without a console window and logs to `data/logs/engine.log`. If an engine is already running on port 8000, the app reuses it. It restarts the engine after a crash or hard cancel. On close it shuts the engine down through `/api/shutdown`, using a per-launch token. A Windows job object also ends the engine if the app itself crashes.
+The Tauri app starts the engine from `backend/.venv` without a console window and logs to `data/logs/engine.log`. If an engine is already running on port 8000, the app reuses it. It restarts the engine after a crash or hard cancel. On close it shuts the engine down through `/api/shutdown`, using a per-launch token. A Windows job object also ends the engine if the app itself crashes; on macOS and Linux the engine watches its parent process (`MOSIMAGE_EXIT_WITH_PARENT`) and exits once it is gone.

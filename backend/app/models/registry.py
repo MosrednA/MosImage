@@ -1,22 +1,29 @@
 from __future__ import annotations
 
+from app.config import settings
 from app.models.base import ImageModelProvider
 from app.jobs import JobControl
 from app.models.flux2_klein import Flux2KleinProvider
+from app.models.flux2_klein_apple import Flux2Klein9bAppleProvider, Flux2KleinAppleProvider
 from app.models.flux2_klein_nvfp4 import Flux2Klein9bNvfp4Provider, Flux2KleinNvfp4Provider
 from app.schemas import LoadModelRequest, ModelInfo
 
 
+def _providers() -> list[ImageModelProvider]:
+    """The models this device can run: NVFP4 needs Blackwell CUDA, a Mac runs the BF16 weights."""
+    if settings.apple_silicon:
+        return [Flux2Klein9bAppleProvider(), Flux2KleinAppleProvider()]
+    return [Flux2Klein9bNvfp4Provider(), Flux2KleinNvfp4Provider(), Flux2KleinProvider()]
+
+
 class ModelRegistry:
     def __init__(self) -> None:
-        self._providers: dict[str, ImageModelProvider] = {
-            "flux2-klein-9b-nvfp4": Flux2Klein9bNvfp4Provider(),
-            "flux2-klein-4b-nvfp4": Flux2KleinNvfp4Provider(),
-            "flux2-klein-4b": Flux2KleinProvider(),
-        }
+        self._providers: dict[str, ImageModelProvider] = {provider.name: provider for provider in _providers()}
 
     def list(self) -> list[ModelInfo]:
-        return [provider.info() for provider in self._providers.values()]
+        presets = {settings.quality_model: "quality", settings.fast_model: "fast"}
+        return [info.model_copy(update={"preset": presets.get(info.name)})
+                for info in (provider.info() for provider in self._providers.values())]
 
     def get(self, name: str) -> ImageModelProvider:
         try:

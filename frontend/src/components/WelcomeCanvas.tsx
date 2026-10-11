@@ -1,4 +1,5 @@
 import { Icon } from "./Icon";
+import { MOD } from "../platform";
 
 export function WelcomeCanvas({ disabled, onOpen, onBlank }: { disabled: boolean; onOpen: () => void; onBlank: () => void }) {
   return <div className="welcome-canvas">
@@ -10,6 +11,6 @@ export function WelcomeCanvas({ disabled, onOpen, onBlank }: { disabled: boolean
       <button disabled={disabled} onClick={onOpen}><Icon name="upload" />Open an image</button>
       <button disabled={disabled} title="Start from a white canvas and sketch your idea" onClick={onBlank}><Icon name="pencil" />Blank canvas</button>
     </div>
-    <small>Drop an image here · or paste with Ctrl + V</small>
+    <small>Drop an image here · or paste with {MOD} + V</small>
   </div>;
 }

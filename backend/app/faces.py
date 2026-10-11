@@ -117,7 +117,7 @@ def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | 
     provider = registry.activate(request.model_name)
     # The detail LoRA exists for the Quality model only; Fast redraws faithfully without it.
     faithful = {"steps": min(request.steps * 2, 100), "strength": FAITHFUL_STRENGTH,
-                "detail": FAITHFUL_DETAIL if request.model_name == "flux2-klein-9b-nvfp4" else 0} if request.faithful else {}
+                "detail": FAITHFUL_DETAIL if request.model_name == settings.quality_model else 0} if request.faithful else {}
     input_path = _save_bytes(image_bytes, settings.input_dir, "input", image_name)
     mask_path: Path | None = None
     output_paths: list[Path] = []

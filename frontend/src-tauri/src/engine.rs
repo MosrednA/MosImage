@@ -117,6 +117,8 @@ impl Supervised {
             .env("MOSIMAGE_SHUTDOWN_TOKEN", &self.token)
             // Enables the hard cancel, which exits with a non-zero code and relies on a restart.
             .env("MOSIMAGE_SUPERVISED", "true")
+            // macOS and Linux: the engine exits if this app dies, the job object's role on Windows.
+            .env("MOSIMAGE_EXIT_WITH_PARENT", "true")
             .env("PYTHONUNBUFFERED", "1")
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)

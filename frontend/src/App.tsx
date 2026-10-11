@@ -15,6 +15,7 @@ import { errorMessage } from "./errors";
 import { EditScope, EnhanceLevel, FaceMode, Operation, SketchScope, isWholeImage } from "./generation/operation";
 import { CommandState, canSubmit, commandHint } from "./generation/commandState";
 import { LayerResult, submitJob } from "./generation/submission";
+import { GENERATION_PRESETS } from "./generation/presets";
 import { SettingsControls, defaultSettings, settingsSummary } from "./components/EditorSettings";
 import { Icon } from "./components/Icon";
 import { ControlDialog } from "./components/ControlDialog";
@@ -32,7 +33,7 @@ import { ReferencePanel } from "./components/ReferencePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { SidePanel, SideTab } from "./components/SidePanel";
 import { LayerStage } from "./layers/LayerStage";
-import { blankCanvas, canvasBlob, cutSelection, fileFromUrl, invertMask, layerFootprint, layerSelection, loadImage, loadMask, selectionPatch, selectionToLayerMask, shownMask, solidMask } from "./layers/bitmaps";
+import { blankCanvas, canvasBlob, cutSelection, decodeImage, fileFromUrl, invertMask, layerFootprint, layerSelection, loadImage, loadMask, selectionPatch, selectionToLayerMask, shownMask, solidMask } from "./layers/bitmaps";
 import { generationPlacement, initialPlacement } from "./layers/geometry";
 import { MergeKind } from "./layers/stack";
 import { useLayers } from "./hooks/useLayers";
@@ -44,6 +45,7 @@ import { useFaceDetection } from "./hooks/useFaceDetection";
 import { useResultPreview } from "./hooks/useResultPreview";
 import { useSelectionTools } from "./hooks/useSelectionTools";
 import { isTyping, useWindowEvents } from "./hooks/useWindowEvents";
+import { MOD } from "./platform";
 
 const initialExpansion: Expansion = { left: 128, top: 0, right: 128, bottom: 0 };
 const PANEL_COLLAPSED_KEY = "mosimage.sidePanelCollapsed";
@@ -62,7 +64,12 @@ export default function App() {
   // A short confirmation, such as where an export was saved.
   const [notice, setNotice] = useState<string | null>(null);
   const engine = useEngine(setError);
-  const { models, setModels, system, online, cudaBlocked, refresh } = engine;
+  const { models, setModels, system, online, deviceBlocked, refresh } = engine;
+  // The preset models differ per device (NVFP4 or Apple silicon BF16); follow the engine's.
+  useEffect(() => {
+    if (models.length) setSettings(current => models.some(model => model.name === current.model_name) ? current
+      : { ...current, model_name: GENERATION_PRESETS[current.preset].modelName });
+  }, [models]);
   const [document, setDocument] = useState<DocumentRecord | null>(null);
   const [pending, setPending] = useState(false);
   const [source, setSource] = useState<File | null>(null);
@@ -480,7 +487,7 @@ export default function App() {
       const merged = await layers.merge(kind);
       if (!merged) return;
       selectLayer(merged.id);
-      if (kind === "flatten" && merged.discarded) setNotice(`Flattened. ${merged.discarded} hidden layer${merged.discarded > 1 ? "s were" : " was"} discarded; Ctrl + Z brings ${merged.discarded > 1 ? "them" : "it"} back.`);
+      if (kind === "flatten" && merged.discarded) setNotice(`Flattened. ${merged.discarded} hidden layer${merged.discarded > 1 ? "s were" : " was"} discarded; ${MOD} + Z brings ${merged.discarded > 1 ? "them" : "it"} back.`);
     });
   }
   /** Selects where a layer shows on the picture, like Ctrl-clicking its thumbnail in Photoshop. */
@@ -510,8 +517,7 @@ export default function App() {
     await perform(async () => {
       await layers.settled();
       // The selected part of the picture as you see it, as Copy Merged does.
-      const seen = await createImageBitmap(await picture.editImage());
-      const cut = await cutSelection(seen, size, mask).finally(() => seen.close());
+      const cut = await cutSelection(await decodeImage(await picture.editImage()), size, mask);
       if (!cut) throw new Error("Select the area you want on its own layer first.");
       const layer = await layers.addImage(cut.blob, "Selection.png", { x: cut.box.x + cut.box.width / 2, y: cut.box.y + cut.box.height / 2 });
       if (!layer) return;
@@ -556,7 +562,7 @@ export default function App() {
 
   /** Runs the operation, or `chosen` straight from the selection bar. */
   async function submit(chosen: Operation = operation) {
-    if (locked || !online || cudaBlocked) return;
+    if (locked || !online || deviceBlocked) return;
     if (chosen !== operation) setOperation(chosen);
     await perform(async () => {
       await layers.settled();
@@ -635,7 +641,7 @@ export default function App() {
     expansionValid: !!size && validExpansion(size, expansion), editScope, editLayerName: editLayer?.name ?? null, sketchScope, faceMode, facePicks: faceFinder.picks,
     referenceNames: references.map(item => item.name), tool, activeLayerName: activeLayer?.name ?? null, layerMasking, blendingName: blending?.name ?? null,
   };
-  const submittable = !locked && online && !cudaBlocked && canSubmit(command);
+  const submittable = !locked && online && !deviceBlocked && canSubmit(command);
   const referenceNote = operation === "expand" ? "References are used for Replace edits. Leave Expand to place one."
     : operation === "remove" && refs.active.length ? "Switch to Replace to place the selected references." : null;
 
@@ -689,8 +695,8 @@ export default function App() {
         <span>{notice}</span>
         <button className="icon-button" aria-label="Dismiss message" onClick={() => setNotice(null)}><Icon name="close" /></button>
       </div>}
-      {(cudaBlocked || error) && <div className="error-notice" role="alert">
-        <span>{error ?? system?.setup_hint ?? "CUDA is unavailable. Check the local PyTorch installation."}</span>
+      {(deviceBlocked || error) && <div className="error-notice" role="alert">
+        <span>{error ?? system?.setup_hint ?? "The GPU is unavailable. Check the local PyTorch installation."}</span>
         {!online && !engine.connecting && <button onClick={() => void engine.connect()}>Reconnect</button>}
         {error && <button className="icon-button" aria-label="Dismiss message" onClick={() => setError(null)}><Icon name="close" /></button>}
       </div>}
@@ -712,7 +718,7 @@ export default function App() {
           disabled={locked || operation === "expand"} busy={busy} note={referenceNote}
           onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null && !locked && operation !== "expand") chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}
     </SidePanel>
-    {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} operation={operation} blending={!!blending} disabled={locked} /></ControlDialog>}
+    {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} operation={operation} blending={!!blending} disabled={locked} unifiedMemory={system?.selected_device === "mps"} /></ControlDialog>}
     {panel === "expansion" && size && <ExpansionDialog size={size} expansion={expansion} onChange={setExpansion} disabled={locked} onClose={() => setPanel(null)} />}
     {panel === "shortcuts" && <ShortcutsDialog onClose={() => setPanel(null)} />}
     {libraryOpen && <LibraryDrawer documents={engine.documents} history={engine.history} onClose={() => setLibraryOpen(false)}

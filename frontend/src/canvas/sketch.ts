@@ -1,4 +1,4 @@
-import { blankCanvas, canvasBlob } from "../layers/bitmaps";
+import { blankCanvas, canvasBlob, decodeImage } from "../layers/bitmaps";
 import { refineAlpha } from "../masks/maskRefine";
 import { signedDistanceFieldAsync } from "../masks/fieldWorker";
 import { ImageBox, maskBounds } from "./context";
@@ -42,9 +42,7 @@ export async function sketchedPicture(picture: Blob, sketch: Blob, size: ImageSi
   const canvas = blankCanvas(size.width, size.height);
   const context = canvas.getContext("2d")!;
   for (const layer of [picture, sketch]) {
-    const bitmap = await createImageBitmap(layer);
-    context.drawImage(bitmap, 0, 0, size.width, size.height);
-    bitmap.close();
+    context.drawImage(await decodeImage(layer), 0, 0, size.width, size.height);
   }
   return new File([await canvasBlob(canvas)], "sketch.png", { type: "image/png" });
 }
@@ -52,8 +50,6 @@ export async function sketchedPicture(picture: Blob, sketch: Blob, size: ImageSi
 async function pixels(image: Blob, size: ImageSize): Promise<Uint8ClampedArray> {
   const canvas = blankCanvas(size.width, size.height);
   const context = canvas.getContext("2d", { willReadFrequently: true })!;
-  const bitmap = await createImageBitmap(image);
-  context.drawImage(bitmap, 0, 0, size.width, size.height);
-  bitmap.close();
+  context.drawImage(await decodeImage(image), 0, 0, size.width, size.height);
   return context.getImageData(0, 0, size.width, size.height).data;
 }

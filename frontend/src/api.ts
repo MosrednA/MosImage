@@ -10,6 +10,8 @@ export interface ModelInfo {
   capabilities: TaskKind[];
   loaded: boolean;
   loaded_pipelines: string[];
+  /** The model this device runs for the Quality or Fast preset: NVFP4 on an RTX 50, BF16 on Apple silicon. */
+  preset?: "quality" | "fast" | null;
 }
 
 export interface GenerationRecord {
@@ -92,6 +94,12 @@ export interface SystemInfo {
   cuda_version?: string;
   vram_gb?: number;
   cuda_memory_fraction?: number;
+  /** The GPU or Apple chip, as the engine names it. */
+  device_name?: string;
+  mps_available?: boolean;
+  unified_memory_gb?: number;
+  quality_model?: string;
+  fast_model?: string;
   setup_hint?: string;
   error?: string;
 }

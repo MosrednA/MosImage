@@ -76,16 +76,56 @@ cd backend
 
 The final command must print `True` for CUDA availability before generation will run. Install the CUDA requirements before the application requirements; the latter pin Torch to the CUDA build so a resolver cannot silently replace it with CPU-only Torch.
 
-### Hugging Face login (optional)
+### macOS (Apple silicon)
 
-Every model MosImage uses is public and works without a Hugging Face token. Logging in only raises the download limits:
+Fast path from the repository root:
+
+```bash
+./start.sh
+```
+
+It does what `start.cmd` does: it creates `backend/.venv` with Python 3.13 or 3.12 (`python3.13` from Homebrew, or uv when that is installed), installs `requirements-torch-macos.txt` and `requirements.txt`, checks that PyTorch can use Metal, installs the frontend dependencies and starts the supervised engine and Vite. `./start.sh --no-install` skips the checks. Ctrl+C, closing the terminal or a plain `kill` stops both and waits for the engine to unload; the engine also exits by itself if the script is killed outright (`MOSIMAGE_WATCH_PID`). A second `./start.sh` stops again when the ports are taken, and leaves the first one running.
+
+Manual setup:
+
+```bash
+cd backend
+python3.13 -m venv .venv
+.venv/bin/python -m pip install -r requirements-torch-macos.txt
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+On macOS the defaults switch to the Apple silicon profile (`MOSIMAGE_PREFERRED_DEVICE=mps`, `MOSIMAGE_HARDWARE_PROFILE=apple-silicon`); no `.env` setting is needed. NVFP4 needs Blackwell tensor cores, so a Mac runs the original BF16 weights the NVFP4 builds were quantized from, on the GPU through Metal (MPS):
+
+- `Quality` is FLUX.2 Klein 9B (`flux2-klein-9b`, `black-forest-labs/FLUX.2-klein-9B`). Its Qwen3-8B text encoder loads without the layers Klein never reads and stays resident in BF16, about 12 GB.
+- `Fast` is FLUX.2 Klein 4B (`flux2-klein-4b`), which also runs Specialized outpaint.
+- Consistency and the detail enhancer work with Quality, as on Windows.
+- CPU and GPU share one memory, so every component stays resident and the memory usage setting is hidden: offloading would only copy weights around. Quality takes about 30 GB, Fast about 16 GB; switching between them releases the other.
+- `PYTORCH_ENABLE_MPS_FALLBACK=1` is set before PyTorch loads, so an operator Metal lacks runs on the CPU instead of failing.
+- With less than 48 GB of unified memory the engine warms up Fast instead of Quality at start; choose Fast in the editor as well. `MOSIMAGE_WARM_UP_MODEL` overrides the choice.
+
+Measured warm through the API on an M5 Max (40-core GPU, 128 GB), macOS 27, PyTorch 2.14.1:
+
+| | Quality 9B | Fast 4B |
+|---|---|---|
+| Generate 1024 × 1024 | 7.0 s | 3.7 s |
+| Edit the whole 832 × 1216 picture | 14.5 s | 7.6 s |
+| Replace a selection | 11.0 s | 5.8 s |
+| Load and warm up from the local cache | 10–25 s | 5 s |
+
+Float16 ran no faster than bfloat16 on the M5 Max, so the profile keeps bfloat16.
+
+### Hugging Face login
+
+FLUX.2 Klein 9B, the Quality model, is gated on Hugging Face: open [its model page](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B) while logged in and accept the licence (approval is automatic), then log in once on this machine:
 
 ```powershell
 cd backend
-.\.venv\Scripts\hf.exe auth login
+.\.venv\Scripts\hf.exe auth login   # macOS: .venv/bin/hf auth login
 ```
 
-Use a read-only token. Hugging Face stores it in the normal user cache and the model loaders automatically use that login. `HF_TOKEN` or `MOSIMAGE_HF_TOKEN` is also supported for temporary environments; never commit a real token.
+The other models are public; for them a login only raises the download limits. Use a read-only token. Hugging Face stores it in the normal user cache and the model loaders automatically use that login. `HF_TOKEN` or `MOSIMAGE_HF_TOKEN` (in `backend/.env`) is also supported; never commit a real token.
 
 ## Frontend
 
@@ -188,7 +228,7 @@ While a job is queued, loading or generating, **Cancel** replaces the primary Ge
 
 Completed, failed and cancelled jobs freeze their elapsed time at completion, so later status checks do not inflate generation time.
 
-When launched with `start.cmd`, the backend runs under a local supervisor. Cancel first uses the model's cooperative diffusion callback; if native CUDA code does not yield within eight seconds, the worker is replaced automatically so GPU memory is released. The UI tolerates the brief reconnection and the cancelled job disappearing from the replacement worker, then restores the editing controls. A cancelled queued job can finish immediately; a running job reports `cancelling` until its callback and cleanup return.
+When launched with `start.cmd`, `start.sh` or the desktop app, the backend runs under a local supervisor. Cancel first uses the model's cooperative diffusion callback; if native CUDA code does not yield within eight seconds, the worker is replaced automatically so GPU memory is released. The UI tolerates the brief reconnection and the cancelled job disappearing from the replacement worker, then restores the editing controls. A cancelled queued job can finish immediately; a running job reports `cancelling` until its callback and cleanup return.
 
 The Quality app adapter loads the official `black-forest-labs/FLUX.2-klein-9b-nvfp4` distilled transformer with native Comfy Kitchen CUDA kernels and the BF16 VAE. Its 16 GB Qwen3-8B text encoder is trimmed to the 28 layers Klein reads, stored as per-row FP8 in pinned RAM (about 6 GB) and copied to the GPU for each new prompt, which takes about 0.4 s; the transformer and VAE stay resident. Measured through the provider, a 1024 × 1024 generation took 3.2 s and a full-frame 832 × 1216 edit 7.3–7.8 s, at a peak of 11 GiB PyTorch allocation. In the side-by-side comparison, 9B gave cleaner reference inserts, held-object swaps and two-person scenes than 4B at about 1.6× its time; see the [model comparison](../benchmarks/MODEL_COMPARISON_2026-10-09.md).
 
@@ -224,7 +264,9 @@ npm run tauri:build  # mosimage.exe plus MSI and NSIS installers under src-tauri
 
 The app starts the engine itself from `backend/.venv` in the checkout it was built from (override with `MOSIMAGE_ROOT`), without a console window; output goes to `data/logs/engine.log`. If an engine is already listening on port 8000, for example from `start.cmd`, the app uses it and leaves it running. Like `backend/supervisor.ps1`, the app restarts its engine after a hard cancel or crash. On close it asks the engine to cancel jobs and unload models through `/api/shutdown`, guarded by a per-launch token, and ends it after 20 s if needed. A Windows job object ends the engine as well if the app itself crashes, so no Python process keeps RAM or GPU memory.
 
-For everyday use, start the app from a desktop shortcut to `frontend\src-tauri\target\release\mosimage.exe` instead of installing the MSI. `npm run tauri:build` replaces that file in place, so the shortcut always opens the newest build:
+On a Mac, `npm run tauri:build:mac` builds `MosImage.app` and installs it in `/Applications`; open it from Launchpad, Spotlight or the Dock. Run `./start.sh` once first, because the app uses `backend/.venv`. The same rules apply as on Windows: backend changes need only a restart of the app, frontend changes a rebuild. Quit with Cmd+Q, which unloads the models; if the app crashes or is force-quit, the engine notices that its parent is gone and exits by itself (`MOSIMAGE_EXIT_WITH_PARENT`). The app finds the engine through the checkout it was built from, so rebuild it after moving the repository. The window lets the page handle dropped files, so images can be dragged onto the canvas, and the standard Edit menu provides Cut, Copy, Paste and Select All in text fields. Shortcuts use Cmd where Windows uses Ctrl, and the labels show ⌘ and ⌥.
+
+For everyday use on Windows, start the app from a desktop shortcut to `frontend\src-tauri\target\release\mosimage.exe` instead of installing the MSI. `npm run tauri:build` replaces that file in place, so the shortcut always opens the newest build:
 
 - Backend changes apply the next time the app starts, without a rebuild, because the engine runs from the checkout.
 - Frontend changes are embedded in the executable, so they need `npm run tauri:build`.

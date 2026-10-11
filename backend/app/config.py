@@ -1,12 +1,34 @@
+import os
+import sys
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Apple silicon runs the BF16 weights on Metal (MPS); everywhere else the
+# defaults target the RTX 5070 Ti profile with native NVFP4 on CUDA.
+APPLE_SILICON = sys.platform == "darwin"
+if APPLE_SILICON:
+    # PyTorch reads this once, when it is imported: an operator Metal lacks
+    # then runs on the CPU instead of failing the edit.
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+# The Quality and Fast models of each profile, by registry name.
+CUDA_MODELS = {"quality": "flux2-klein-9b-nvfp4", "fast": "flux2-klein-4b-nvfp4"}
+APPLE_MODELS = {"quality": "flux2-klein-9b", "fast": "flux2-klein-4b"}
+# Quality on Apple silicon takes about 30 GB; below this, warm up Fast instead.
+APPLE_QUALITY_MEMORY_GB = 48
+
+
+def physical_memory_gb() -> float | None:
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024**3
+    except (ValueError, OSError, AttributeError):
+        return None
 
 
 class Settings(BaseSettings):
     app_name: str = "MosImage"
-    hardware_profile: str = "rtx5070ti-16gb"
+    hardware_profile: str = "apple-silicon" if APPLE_SILICON else "rtx5070ti-16gb"
     project_root: Path = Path(__file__).resolve().parents[2]
     data_dir: Path = project_root / "data"
     db_path: Path = data_dir / "app.db"
@@ -22,7 +44,8 @@ class Settings(BaseSettings):
     max_loaded_pipelines: int = 1
     enable_cpu_offload: bool = True
     runtime_mode: str = "balanced"
-    preferred_device: str = "cuda"
+    # cuda, mps (Apple silicon) or cpu.
+    preferred_device: str = "mps" if APPLE_SILICON else "cuda"
     preferred_dtype: str = "bfloat16"
     enable_tf32: bool = True
     allow_cpu_generation: bool = False
@@ -30,6 +53,12 @@ class Settings(BaseSettings):
     cuda_alloc_conf: str = "expandable_segments:True"
     attention_backend: str = "sdpa"
     supervised: bool = False
+    # Set by the desktop app on macOS and Linux: exit when the process that
+    # started the engine is gone, so a crashed app leaves no models in memory.
+    exit_with_parent: bool = False
+    # Also exit once this process is gone: start.sh passes its own PID, since
+    # the engine's parent is the supervisor loop.
+    watch_pid: int | None = None
     cancel_grace_seconds: float = 8.0
     # Inference area budget of a masked edit, as the side of a square.
     inpaint_max_dimension: int = 1024
@@ -45,7 +74,8 @@ class Settings(BaseSettings):
     job_retention_seconds: float = 600.0
     # Load and warm the Quality model and SAM while the UI opens.
     warm_up_on_start: bool = True
-    warm_up_model: str = "flux2-klein-9b-nvfp4"
+    # Empty means the Quality model of the device profile (Fast on a Mac with less than 48 GB).
+    warm_up_model: str = ""
     # Set by the desktop app that started this engine, so only it can stop it.
     shutdown_token: str | None = Field(default=None, repr=False)
     huggingface_token: str | None = Field(
@@ -55,6 +85,27 @@ class Settings(BaseSettings):
     )
 
     model_config = SettingsConfigDict(env_prefix="MOSIMAGE_", env_file=".env")
+
+    @model_validator(mode="after")
+    def _default_warm_up_model(self) -> "Settings":
+        if not self.warm_up_model:
+            memory = physical_memory_gb() if self.apple_silicon else None
+            small = memory is not None and memory < APPLE_QUALITY_MEMORY_GB
+            self.warm_up_model = self.fast_model if small else self.quality_model
+        return self
+
+    @property
+    def apple_silicon(self) -> bool:
+        """The Metal profile: BF16 Klein models in unified memory."""
+        return self.preferred_device == "mps"
+
+    @property
+    def quality_model(self) -> str:
+        return (APPLE_MODELS if self.apple_silicon else CUDA_MODELS)["quality"]
+
+    @property
+    def fast_model(self) -> str:
+        return (APPLE_MODELS if self.apple_silicon else CUDA_MODELS)["fast"]
 
     @property
     def input_dir(self) -> Path:

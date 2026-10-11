@@ -3,7 +3,7 @@ import { FaceBox, FaceCandidate, detectFaces } from "../api";
 import { ImageSize } from "../canvas/coordinates";
 import { errorMessage } from "../errors";
 import { FacePicks, MAX_FACES, centresInside, defaultPicks, flipFace, pickedBoxes, pickedFaces } from "../generation/faces";
-import { blankCanvas } from "../layers/bitmaps";
+import { blankCanvas, decodeImage } from "../layers/bitmaps";
 
 interface FaceDetectionOptions {
   /** Fix faces is the operation, so the faces are shown on the canvas. */
@@ -49,11 +49,10 @@ export function useFaceDetection({ active, picture, source, layers, mask, size, 
     setFlipped(new Set());
     if (!mask || !found || !size) { setInside(null); return; }
     let alive = true;
-    createImageBitmap(mask).then(bitmap => {
+    decodeImage(mask).then(image => {
       const canvas = blankCanvas(size.width, size.height);
       const context = canvas.getContext("2d", { willReadFrequently: true })!;
-      context.drawImage(bitmap, 0, 0, size.width, size.height);
-      bitmap.close();
+      context.drawImage(image, 0, 0, size.width, size.height);
       const values = centresInside(found.faces, (x, y) => context.getImageData(Math.min(x, size.width - 1), Math.min(y, size.height - 1), 1, 1).data[3]);
       if (alive) setInside({ mask, values });
     }).catch(err => { if (alive) setError(errorMessage(err)); });

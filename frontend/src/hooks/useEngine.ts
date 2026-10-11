@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { DocumentRecord, GenerationRecord, ModelInfo, SystemInfo, getSystemInfo, listDocuments, listHistory, listModels } from "../api";
+import { applyPresetModels } from "../generation/presets";
+import { START_SCRIPT } from "../platform";
 import { useEngineWarmUp } from "./useEngineWarmUp";
 
 /** Python and model imports take a while on a cold start. */
@@ -26,11 +28,12 @@ export function useEngine(setError: (message: string | null) => void) {
     for (;;) {
       try {
         const [nextModels, nextSystem] = await Promise.all([listModels(), getSystemInfo(), refresh()]);
+        applyPresetModels(nextModels);
         setModels(nextModels); setSystem(nextSystem); setOnline(true); setError(null);
         break;
       } catch {
         if (Date.now() < deadline) { await new Promise(resolve => window.setTimeout(resolve, ENGINE_RETRY_INTERVAL)); continue; }
-        setOnline(false); setError("The local engine is unavailable. Reopen the MosImage app or run start.cmd, then reconnect.");
+        setOnline(false); setError(`The local engine is unavailable. Reopen the MosImage app or run ${START_SCRIPT}, then reconnect.`);
         break;
       }
     }
@@ -39,7 +42,9 @@ export function useEngine(setError: (message: string | null) => void) {
   // The desktop app starts the engine alongside the window, so give it time to come up.
   useEffect(() => { void connect(ENGINE_START_PATIENCE); }, []);
   const warmUp = useEngineWarmUp(online, setModels);
-  const cudaBlocked = !!system && (!system.torch_available || (system.preferred_device === "cuda" && !system.cuda_available && !system.allow_cpu_generation));
+  // The engine runs, but PyTorch cannot reach the GPU it is set up for: CUDA, or Metal on a Mac.
+  const deviceBlocked = !!system && (!system.torch_available
+    || (system.preferred_device !== "cpu" && system.selected_device === "cpu" && !system.allow_cpu_generation));
 
-  return { models, setModels, system, online, setOnline, connecting, connect, warmUp, cudaBlocked, history, documents, setDocuments, refresh };
+  return { models, setModels, system, online, setOnline, connecting, connect, warmUp, deviceBlocked, history, documents, setDocuments, refresh };
 }

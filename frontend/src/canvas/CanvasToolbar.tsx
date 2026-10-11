@@ -2,6 +2,7 @@ import { FormEvent, useState } from "react";
 import { Icon } from "../components/Icon";
 import { SKETCH_COLOURS, SKETCH_SIZE } from "./sketch";
 import { CanvasTool, TOOLS } from "./tools";
+import { ALT, MOD } from "../platform";
 
 /** Pencil options: colour, size, drawing or erasing, and the sketch's own undo. */
 export interface SketchControls {
@@ -59,7 +60,7 @@ export function CanvasToolbar(props: Props) {
     </label>}
     {!reviewing && (tool === "rectangle" || tool === "lasso") && <div className="segmented compact" aria-label="Selection mode">
       <button aria-pressed={!props.subtract} disabled={disabled} onClick={() => props.onSubtract(false)}>{props.modeLabels?.[0] ?? "Add"}</button>
-      <button aria-pressed={props.subtract} disabled={disabled} title="Or hold Alt" onClick={() => props.onSubtract(true)}>{props.modeLabels?.[1] ?? "Subtract"}</button>
+      <button aria-pressed={props.subtract} disabled={disabled} title={`Or hold ${ALT}`} onClick={() => props.onSubtract(true)}>{props.modeLabels?.[1] ?? "Subtract"}</button>
     </div>}
     {!reviewing && tool === "object" && <>
       <form className="find-object" onSubmit={find} title="Select everything that matches, in English">
@@ -87,16 +88,16 @@ export function CanvasToolbar(props: Props) {
       </label>
       <div className="segmented compact" aria-label="Pencil mode">
         <button aria-pressed={!sketch.erase} disabled={disabled} onClick={() => sketch.onErase(false)}>Draw</button>
-        <button aria-pressed={sketch.erase} disabled={disabled} title="Or hold Alt" onClick={() => sketch.onErase(true)}>Erase</button>
+        <button aria-pressed={sketch.erase} disabled={disabled} title={`Or hold ${ALT}`} onClick={() => sketch.onErase(true)}>Erase</button>
       </div>
       <button disabled={disabled || !sketch.canUndo} title="Undo the last stroke" onClick={sketch.onUndo}>Undo stroke</button>
       <button disabled={disabled || !sketch.canClear} title="Remove the whole sketch" onClick={sketch.onClear}>Clear</button>
     </>}
     <div className="zoom-controls">
-      <button aria-label="Zoom out" title="Zoom out · Ctrl + scroll" onClick={() => props.onZoom(props.zoom / 1.25)}>−</button>
-      <button className={props.fitToStage ? "selected" : ""} title="Fit to window · Ctrl + 0" onClick={props.onFit}>Fit</button>
-      <button className={props.atActualSize ? "selected" : ""} title="Actual pixels · Ctrl + 1" onClick={() => props.onZoom(1)}>100%</button>
-      <button aria-label="Zoom in" title="Zoom in · Ctrl + scroll" onClick={() => props.onZoom(props.zoom * 1.25)}>+</button>
+      <button aria-label="Zoom out" title={`Zoom out · ${MOD} + scroll`} onClick={() => props.onZoom(props.zoom / 1.25)}>−</button>
+      <button className={props.fitToStage ? "selected" : ""} title={`Fit to window · ${MOD} + 0`} onClick={props.onFit}>Fit</button>
+      <button className={props.atActualSize ? "selected" : ""} title={`Actual pixels · ${MOD} + 1`} onClick={() => props.onZoom(1)}>100%</button>
+      <button aria-label="Zoom in" title={`Zoom in · ${MOD} + scroll`} onClick={() => props.onZoom(props.zoom * 1.25)}>+</button>
       <output>{Math.round(props.zoom * 100)}%</output>
     </div>
   </div>;

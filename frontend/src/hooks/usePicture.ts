@@ -2,7 +2,7 @@ import { MutableRefObject, useEffect, useRef, useState } from "react";
 import { DocumentRecord, LayerRecord, fileUrl } from "../api";
 import { ImageSize } from "../canvas/coordinates";
 import { errorMessage } from "../errors";
-import { FlatLayer, fileFromUrl, flatten, loadImage, shownMask, withTransparencyOf } from "../layers/bitmaps";
+import { FlatLayer, decodeImage, fileFromUrl, flatten, loadImage, shownMask, withTransparencyOf } from "../layers/bitmaps";
 import { fillsCanvas, isShown } from "../layers/stack";
 import { saveFile } from "../saveFile";
 
@@ -35,8 +35,7 @@ export function usePicture(source: File | null, size: ImageSize | null, sourceUr
   /** These layers on the canvas, as PNG. */
   async function flattenLayers(visible: LayerRecord[]): Promise<Blob> {
     if (!source || !size) throw new Error("Open an image first.");
-    const background = await createImageBitmap(source);
-    try { return await flattenVisible(background, size, visible); } finally { background.close(); }
+    return flattenVisible(await decodeImage(source), size, visible);
   }
   /** What the AI works on: the picture as you see it, with its visible layers. */
   async function editImage(): Promise<File> {

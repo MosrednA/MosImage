@@ -2,6 +2,7 @@ import { DocumentRecord, JobStatus, SystemInfo } from "../api";
 import { describeJob } from "../generation/progress";
 import { isActiveJob } from "../hooks/useJobPolling";
 import { Icon } from "./Icon";
+import { MOD } from "../platform";
 
 interface Props {
   document: DocumentRecord | null;
@@ -30,19 +31,19 @@ export function TopBar({ document, onRename, online, connecting, system, warmUp,
     </div>
     <div className="topbar-actions">
       <div className="document-actions">
-        <button className="icon-button" aria-label="Undo edit" title="Undo edit · Ctrl + Z" disabled={locked || !document?.can_undo} onClick={onUndo}><Icon name="undo" /></button>
-        <button className="icon-button" aria-label="Redo edit" title="Redo edit · Ctrl + Shift + Z" disabled={locked || !document?.can_redo} onClick={onRedo}><Icon name="redo" /></button>
-        <button className="quiet-button" aria-label="Open image" title="Open image · Ctrl + O" disabled={locked} onClick={onOpen}><Icon name="upload" /><span>Open</span></button>
+        <button className="icon-button" aria-label="Undo edit" title={`Undo edit · ${MOD} + Z`} disabled={locked || !document?.can_undo} onClick={onUndo}><Icon name="undo" /></button>
+        <button className="icon-button" aria-label="Redo edit" title={`Redo edit · ${MOD} + Shift + Z`} disabled={locked || !document?.can_redo} onClick={onRedo}><Icon name="redo" /></button>
+        <button className="quiet-button" aria-label="Open image" title={`Open image · ${MOD} + O`} disabled={locked} onClick={onOpen}><Icon name="upload" /><span>Open</span></button>
       </div>
       <EngineStatus online={online} connecting={connecting} system={system} warmUp={warmUp} />
       <button className="quiet-button" aria-label="Library" disabled={locked} onClick={onLibrary}><Icon name="library" /><span>Library</span></button>
-      <button className="export-button" aria-label="Export image" title="Save the picture as an image file (Ctrl+S)" disabled={!canExport || locked} onClick={onExport}><Icon name="download" /><span>Export</span></button>
+      <button className="export-button" aria-label="Export image" title={`Save the picture as an image file (${MOD}+S)`} disabled={!canExport || locked} onClick={onExport}><Icon name="download" /><span>Export</span></button>
     </div>
   </header>;
 }
 
 function EngineStatus({ online, connecting, system, warmUp }: { online: boolean; connecting: boolean; system: SystemInfo | null; warmUp: JobStatus | null }) {
-  const device = system?.cuda_device ?? "Local engine";
+  const device = system?.device_name ?? system?.cuda_device ?? "Local engine";
   if (!online && connecting) return <span className="engine-status warming" role="status" title="Starting the local engine…"><i />Starting</span>;
   if (!online) return <span className="engine-status offline" title={device}><i />Offline</span>;
   if (warmUp && isActiveJob(warmUp)) {

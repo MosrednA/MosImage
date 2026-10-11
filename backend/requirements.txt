@@ -1,5 +1,6 @@
-# Tested Windows/Python 3.13 baseline, 2026-10-07.
-# Install requirements-torch-cu130.txt first. CUDA wheels stay pinned there.
+# Tested Windows/Python 3.13 baseline, 2026-10-07; macOS 27 on Apple silicon, 2026-10-11.
+# Install requirements-torch-cu130.txt (Windows) or requirements-torch-macos.txt
+# (Apple silicon) first. The torch wheels stay pinned there.
 fastapi==0.142.2
 uvicorn[standard]==0.54.0
 pydantic-settings==2.15.0
@@ -13,11 +14,14 @@ safetensors==0.8.0
 huggingface_hub[hf_xet]==1.33.0
 diffusers==0.41.0
 # Native Blackwell NVFP4 kernels; validated Windows cp312-abi3 wheel.
-comfy-kitchen==0.2.37
+comfy-kitchen==0.2.37; sys_platform == "win32"
 # Security-sensitive transitive dependencies: do not regress on a fresh install.
 anyio==4.15.1
 fsspec==2026.9.0
 urllib3==2.8.0
 setuptools==84.0.0
-torch==2.14.1+cu130
-torchvision==0.29.1+cu130
+# Keeps pip from replacing the torch build installed first.
+torch==2.14.1+cu130; sys_platform == "win32"
+torchvision==0.29.1+cu130; sys_platform == "win32"
+torch==2.14.1; sys_platform == "darwin"
+torchvision==0.29.1; sys_platform == "darwin"

@@ -14,14 +14,15 @@ from app.compositing import FAST_PNG
 from app.config import settings
 from app.jobs import JobCancelled, JobControl
 from app.models.base import ModelReference
-from app.runtime import require_generation_device, selected_device, selected_dtype, torch_module
+from app.runtime import empty_cache, require_generation_device, selected_device, selected_dtype, torch_module
 from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, OutpaintForm, RuntimeMode, TextToImageRequest
 
 if TYPE_CHECKING:
     from app.models.klein_lora import KleinLora
 
 
-Placement = Literal["cuda", "offload"]
+# Resident on the GPU, in unified memory on Apple silicon, or offloaded to RAM between uses.
+Placement = Literal["cuda", "mps", "cpu", "offload"]
 PipelineTask = Literal["text-to-image", "inpaint"]
 
 # Several references share a token budget: two at this size cost what one
@@ -199,6 +200,8 @@ class Flux2KleinProvider:
     name = "flux2-klein-4b"
     display_name = "FLUX.2 Klein 4B (BF16)"
     model_id = "black-forest-labs/FLUX.2-klein-4B"
+    # The Consistency and detail-enhancer LoRAs were trained on the distilled 9B.
+    supports_edit_adapters = False
 
     def __init__(self) -> None:
         self._pipes: dict[PipelineTask, Any] = {}
@@ -390,8 +393,8 @@ class Flux2KleinProvider:
 
         Each loads on first use and stays attached at scale zero until the other one is needed.
         """
-        if (enabled or detail) and self.name != "flux2-klein-9b-nvfp4":
-            raise ValueError("Consistency and Enhance require the distilled Quality 9B NVFP4 model.")
+        if (enabled or detail) and not self.supports_edit_adapters:
+            raise ValueError("Consistency and Enhance require the distilled Quality 9B model.")
         if enabled and detail:
             raise ValueError("Consistency and the detail enhancer cannot be combined.")
         if (enabled and self._consistency_adapter is None) or (detail and self._detail_adapter is None):
@@ -517,7 +520,7 @@ class Flux2KleinProvider:
             else:
                 pipe.to("cuda")
         else:
-            pipe.to("cpu")
+            pipe.to(device)
 
     def _configure_memory(self, pipe: Any) -> None:
         vae = getattr(pipe, "vae", None)
@@ -531,6 +534,9 @@ class Flux2KleinProvider:
                 transformer.set_attention_backend(settings.attention_backend)
 
     def _placement_for(self, runtime_mode: RuntimeMode) -> Placement:
+        if settings.apple_silicon:
+            # CPU and GPU share one memory, so offloading would only copy weights around.
+            return "mps"
         if runtime_mode == "performance" or not settings.enable_cpu_offload:
             return "cuda"
         # The official 4B recipe recommends model offload. It keeps the 16 GB
@@ -539,5 +545,5 @@ class Flux2KleinProvider:
 
     def _collect(self) -> None:
         gc.collect()
-        if self._torch is not None and self._torch.cuda.is_available():
-            self._torch.cuda.empty_cache()
+        if self._torch is not None:
+            empty_cache(self._torch)

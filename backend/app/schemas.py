@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .config import settings
+
 
 TaskKind = Literal["text-to-image", "edit", "inpaint", "outpaint", "select", "load-model"]
 JobState = Literal["queued", "running", "cancelling", "cancelled", "completed", "failed"]
@@ -21,10 +23,16 @@ class ModelInfo(BaseModel):
     capabilities: list[TaskKind]
     loaded: bool
     loaded_pipelines: list[str] = []
+    # The model this device runs for the Quality or Fast preset, if any.
+    preset: Literal["quality", "fast"] | None = None
+
+
+def _quality_model() -> str:
+    return settings.quality_model
 
 
 class LoadModelRequest(BaseModel):
-    model_name: str = "flux2-klein-9b-nvfp4"
+    model_name: str = Field(default_factory=_quality_model)
     task: Literal["text-to-image", "inpaint"] = "text-to-image"
     runtime_mode: RuntimeMode = "balanced"
     width: int = Field(default=1024, ge=256, le=2048)
@@ -35,7 +43,7 @@ class LoadModelRequest(BaseModel):
 class PromptRequest(BaseModel):
     prompt: str = Field(min_length=1)
     negative_prompt: str | None = None
-    model_name: str = "flux2-klein-9b-nvfp4"
+    model_name: str = Field(default_factory=_quality_model)
     seed: int | None = None
     runtime_mode: RuntimeMode = "balanced"
     steps: int = Field(default=4, ge=1, le=100)
@@ -73,9 +81,9 @@ class EditRequest(PromptRequest):
 
     @model_validator(mode="after")
     def compatible_options(self) -> "EditRequest":
-        if self.consistency_lora and (self.model_name != "flux2-klein-9b-nvfp4" or self.mode != "edit"):
+        if self.consistency_lora and (self.model_name != settings.quality_model or self.mode != "edit"):
             raise ValueError("Consistency is available for Quality image edits only.")
-        if self.detail and (self.model_name != "flux2-klein-9b-nvfp4" or self.mode not in ("face", "enhance")):
+        if self.detail and (self.model_name != settings.quality_model or self.mode not in ("face", "enhance")):
             raise ValueError("The detail enhancer is available for Quality Enhance and Fix faces only.")
         if self.strength < 1 and self.mode not in ("face", "enhance"):
             raise ValueError("Partial redraws are available for Enhance and Fix faces only.")
@@ -124,7 +132,7 @@ class EnhanceRequest(PromptRequest):
 
     @model_validator(mode="after")
     def quality_model(self) -> "EnhanceRequest":
-        if self.model_name != "flux2-klein-9b-nvfp4":
+        if self.model_name != settings.quality_model:
             raise ValueError("Enhance requires the Quality model.")
         return self
 
@@ -132,7 +140,7 @@ class EnhanceRequest(PromptRequest):
 class InpaintForm(BaseModel):
     prompt: str = Field(min_length=1)
     negative_prompt: str | None = None
-    model_name: str = "flux2-klein-9b-nvfp4"
+    model_name: str = Field(default_factory=_quality_model)
     seed: int | None = None
     runtime_mode: RuntimeMode = "balanced"
     steps: int = Field(default=4, ge=1, le=100)
@@ -155,7 +163,7 @@ class InpaintForm(BaseModel):
 
     @model_validator(mode="after")
     def compatible_quality_options(self) -> "InpaintForm":
-        if self.consistency_lora and (self.model_name != "flux2-klein-9b-nvfp4" or self.edit_operation != "replace"):
+        if self.consistency_lora and (self.model_name != settings.quality_model or self.edit_operation != "replace"):
             raise ValueError("Consistency is available for Quality replacement and expansion only.")
         if self.detail_crop and (self.edit_operation != "replace" or self.strength != 1):
             raise ValueError("Fine detail requires Replace at full strength.")
@@ -177,8 +185,8 @@ class OutpaintForm(InpaintForm):
             raise ValueError("Add space on at least one side of the image")
         if self.detail_crop:
             raise ValueError("Fine detail is available for selected replacements only.")
-        if self.specialized_outpaint and (self.model_name != "flux2-klein-4b-nvfp4" or self.steps != 4 or self.guidance != 1 or self.strength != 1):
-            raise ValueError("Specialized outpaint requires Fast NVFP4 at four steps and guidance one.")
+        if self.specialized_outpaint and (self.model_name != settings.fast_model or self.steps != 4 or self.guidance != 1 or self.strength != 1):
+            raise ValueError("Specialized outpaint requires the Fast model at four steps and guidance one.")
         return self
 
 

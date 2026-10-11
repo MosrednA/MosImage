@@ -141,6 +141,7 @@ class Flux2Klein9bNvfp4Provider(Flux2KleinNvfp4Provider):
     name = "flux2-klein-9b-nvfp4"
     display_name = "FLUX.2 Klein 9B NVFP4"
     model_id = QUANT_REPO_9B
+    supports_edit_adapters = True
     base_repo = BASE_REPO_9B
     base_revision = BASE_REVISION_9B
     quant_repo = QUANT_REPO_9B

@@ -1,6 +1,7 @@
 import { LayerRecord, fileUrl } from "../api";
 import { ImageBox, maskBounds } from "../canvas/context";
 import { ImageSize } from "../canvas/coordinates";
+import { CANVAS_FILTER, blurChannel } from "./blur";
 import { Placement } from "./geometry";
 
 const images = new Map<string, Promise<HTMLImageElement>>();
@@ -20,6 +21,24 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
     images.set(url, loading);
   }
   return loading;
+}
+
+/**
+ * Decodes an image file exactly, ready to draw. WebKit's createImageBitmap
+ * dithers (black mask pixels come back as 1, so a thresholded selection
+ * covers the whole canvas); an <img> decodes exactly in every engine, and
+ * keeps drawing after its object URL is revoked.
+ */
+export async function decodeImage(file: Blob): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /** A stored greyscale layer mask as an editable canvas that keeps coverage in alpha. */
@@ -111,7 +130,7 @@ export function renderLayer(target: HTMLCanvasElement, image: CanvasImageSource,
 
 /** A selection on the picture (coverage in alpha) as a mask in a layer's own pixels. */
 export async function selectionToLayerMask(selection: Blob, size: ImageSize, layer: Placement): Promise<HTMLCanvasElement> {
-  const bitmap = await createImageBitmap(selection);
+  const bitmap = await decodeImage(selection);
   const mask = blankCanvas(layer.width, layer.height);
   const context = mask.getContext("2d")!;
   // The inverse of the layer's placement: canvas pixels into layer pixels.
@@ -120,7 +139,6 @@ export async function selectionToLayerMask(selection: Blob, size: ImageSize, lay
   context.rotate((-layer.rotation * Math.PI) / 180);
   context.translate(-layer.x, -layer.y);
   context.drawImage(bitmap, 0, 0, size.width, size.height);
-  bitmap.close();
   return mask;
 }
 
@@ -206,11 +224,19 @@ function drawLayer(context: CanvasRenderingContext2D, layer: FlatLayer, opacity:
  * `soften` px, as a greyscale selection mask: what "Blend in" lets the AI redo.
  */
 export async function layerFootprint(size: ImageSize, layer: FlatLayer, grow: number, soften: number): Promise<Blob> {
+  const drawn = blankCanvas(size.width, size.height);
+  // Read back in script where the canvas cannot blur; a draw source otherwise.
+  drawLayer(drawn.getContext("2d", CANVAS_FILTER ? undefined : { willReadFrequently: true })!, layer, 1);
+  if (!CANVAS_FILTER) {
+    const context = drawn.getContext("2d")!;
+    const pixels = context.getImageData(0, 0, size.width, size.height);
+    footprintPixels(pixels.data, size.width, size.height, grow, soften);
+    context.putImageData(pixels, 0, 0);
+    return canvasBlob(drawn);
+  }
   const shape = blankCanvas(size.width, size.height);
   const context = shape.getContext("2d", { willReadFrequently: true })!;
   // Blurring and then keeping every touched pixel grows the shape by about the blur radius.
-  const drawn = blankCanvas(size.width, size.height);
-  drawLayer(drawn.getContext("2d")!, layer, 1);
   context.filter = `blur(${grow / 2}px)`;
   context.drawImage(drawn, 0, 0);
   context.filter = "none";
@@ -225,6 +251,21 @@ export async function layerFootprint(size: ImageSize, layer: FlatLayer, grow: nu
   output.filter = `blur(${soften}px)`;
   output.drawImage(shape, 0, 0);
   return canvasBlob(selection);
+}
+
+/**
+ * `layerFootprint` without canvas filters, for WebKit: turns RGBA layer pixels
+ * in place into the grown and softened greyscale footprint of their alpha.
+ */
+export function footprintPixels(data: Uint8ClampedArray, width: number, height: number, grow: number, soften: number): void {
+  const alpha = new Uint8ClampedArray(width * height);
+  for (let pixel = 0; pixel < alpha.length; pixel += 1) alpha[pixel] = data[pixel * 4 + 3];
+  const grown = blurChannel(alpha, width, height, grow / 2).map(value => value > 8 ? 255 : 0);
+  const footprint = blurChannel(grown, width, height, soften);
+  for (let pixel = 0; pixel < footprint.length; pixel += 1) {
+    data[pixel * 4] = data[pixel * 4 + 1] = data[pixel * 4 + 2] = footprint[pixel];
+    data[pixel * 4 + 3] = 255;
+  }
 }
 
 /** Makes every pixel with more than `cutoff` alpha fully white and the rest transparent. */
@@ -243,11 +284,10 @@ export interface Patch { image: Blob; mask: Blob; box: ImageBox }
  * layer mask keeps its footprint without applying that blend a second time.
  */
 export async function selectionPatch(result: CanvasImageSource, size: ImageSize, selection: Blob): Promise<Patch | null> {
-  const mask = await createImageBitmap(selection);
+  const mask = await decodeImage(selection);
   const maskCanvas = blankCanvas(size.width, size.height);
   const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true })!;
   maskContext.drawImage(mask, 0, 0, size.width, size.height);
-  mask.close();
   const coverage = maskContext.getImageData(0, 0, size.width, size.height);
   // AI selections are opaque greyscale PNGs, not alpha masks.
   luminanceToAlpha(coverage.data);
@@ -267,11 +307,10 @@ export interface Cutout { blob: Blob; box: ImageBox }
 
 /** The selected part of the background as a transparent PNG, cropped to the selection. */
 export async function cutSelection(background: CanvasImageSource, size: ImageSize, selection: Blob): Promise<Cutout | null> {
-  const mask = await createImageBitmap(selection);
+  const mask = await decodeImage(selection);
   const maskCanvas = blankCanvas(size.width, size.height);
   const maskContext = maskCanvas.getContext("2d", { willReadFrequently: true })!;
   maskContext.drawImage(mask, 0, 0, size.width, size.height);
-  mask.close();
   const box = maskBounds(maskContext.getImageData(0, 0, size.width, size.height));
   if (!box) return null;
   const cut = blankCanvas(box.width, box.height);
