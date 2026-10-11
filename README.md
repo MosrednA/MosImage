@@ -34,7 +34,7 @@ Three steps on one picture, each about 3–10 seconds on an RTX 5070 Ti (7–15 
 
 ## Why MosImage
 
-- 🔒 **Private by design.** Images, prompts and history stay on your disk. No account and no uploads; the only network traffic is the one-time model download from Hugging Face.
+- 🔒 **Private by design.** Images, prompts and history stay on your disk. No account and no image uploads; models and optional adapters download from Hugging Face on first use.
 - ⚡ **Fast.** FLUX.2 Klein in NVFP4 runs a 1024 × 1024 image in about 3 seconds on a 16 GB card, and in BF16 in about 7 seconds on an M5 Max.
 - 🎯 **Precise.** Edits stay inside your selection, and every result lands as a layer you can mask, move or undo.
 - 🧩 **A real editor.** Layers, revision history, proposals to compare, and brush, lasso, box and click selection.
@@ -49,8 +49,10 @@ Three steps on one picture, each about 3–10 seconds on an RTX 5070 Ti (7–15 
 **Edit**
 - **Replace** or **Remove** a selected area. Pixels outside the selection stay exact.
 - **Edit** the whole picture or a single layer with an instruction, such as "make it a snowy night".
-- **Fix faces**: finds faces and redraws them sharper, optionally matching a reference photo.
+- **Fix faces**: pick the detected faces to sharpen. **Faithful** keeps expression and lighting closer; **Redraw** restores very blurry faces and can change their expression. A reference can guide likeness.
+- **Enhance** adds fine detail to the whole picture or a selection, with **Subtle** and **Strong** settings. Large areas render in tiles at their original resolution; small details can change.
 - **Expand** the canvas in any direction, with format presets.
+- **Crop** resizes the canvas without AI, with ratios and exact dimensions. Use C for Crop and Shift+C for Expand.
 
 **Select**
 - **Object**: click to select with SAM 2.1 Tiny, Alt+click (⌥-click on a Mac) to exclude.
@@ -105,14 +107,14 @@ For manual setup, troubleshooting a CPU-only PyTorch install and every runtime o
 | Model | Used for | Notes |
 |---|---|---|
 | FLUX.2 Klein 9B NVFP4 | Quality preset on Windows: every AI tool | Non-commercial licence |
-| FLUX.2 Klein 4B NVFP4 | Fast preset on Windows: every AI tool, quicker and lighter | Use this for commercial work |
+| FLUX.2 Klein 4B NVFP4 | Fast preset on Windows: generation and editing, quicker and lighter | Commercially licensed; Enhance always uses Quality |
 | FLUX.2 Klein 9B BF16 | Quality preset on a Mac | Non-commercial licence |
 | FLUX.2 Klein 4B BF16 | Fast preset on a Mac; on Windows for GPUs without NVFP4 support | Advanced controls on Windows |
 | SAM 2.1 Tiny | Click selection and layer cut-outs | Runs on the CPU |
 | Grounding DINO tiny | Find, Subject and face detection | Runs on the CPU |
 | ViTMatte small | Soft edges for Subject and Remove background | Runs on the CPU |
 
-One FLUX.2 Klein model does all the AI work: generate, edit, replace, remove, sketch, fix faces and expand. The CPU models handle selection. On the target GPU a 1024 × 1024 generation takes about 3 s, a full-frame edit about 8 s, and widening a 1254 px photo by half about 10 s. On an M5 Max, Quality takes about 7 s to generate, 11 s to replace a selection and 15 s for a full-frame edit; Fast about half that. The engine warms up the Quality model in the background at start-up. See the [model comparison](benchmarks/MODEL_COMPARISON_2026-10-09.md) for measurements.
+FLUX.2 Klein does all the AI work: generate, edit, replace, remove, sketch, fix faces, enhance and expand. Enhance always uses Quality 9B with its non-commercial detail-enhancer adapter. The CPU models handle selection. With the model loaded on the target GPU, a 1024 × 1024 generation takes about 3 s, a full-frame edit about 8 s, and widening a 1254 px photo by half about 10 s. Enhance takes about ten seconds per tile. On an M5 Max, Quality takes about 7 s to generate, 11 s to replace a selection and 15 s for a full-frame edit; Fast about half that. The engine warms up the Quality model in the background at start-up; downloads and loading add time. See the [model comparison](benchmarks/MODEL_COMPARISON_2026-10-09.md) and [Enhance evaluation](docs/notes/2026-10-10-quality-speed-sweep.md#enhance) for measurements.
 
 ## Desktop app
 
@@ -164,7 +166,7 @@ cd backend
 .\.venv\Scripts\python.exe -m compileall app
 
 # Frontend tests, type check and build
-cd frontend
+cd ..\frontend
 npm test
 npm run build
 ```

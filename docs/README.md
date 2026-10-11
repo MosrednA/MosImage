@@ -1,5 +1,10 @@
 # MosImage documentation
 
+Status: Current reference
+Last verified: 2026-10-11
+
+The guide and architecture describe the current implementation. The roadmap owns remaining scope and next steps. Dated notes and benchmark reports preserve historical decisions and measurements; their timings and acceptance results apply to the recorded fixtures and runtime.
+
 ## Using and running MosImage
 
 - [Guide](guide.md): installation, runtime modes, hot loading, storage limits, the desktop shell and a detailed reference for every tool.
@@ -30,7 +35,7 @@ These notes are dated snapshots. They record what was tried, measured and decide
 
 - [Quality, speed and UX sweep, 10 October 2026](notes/2026-10-10-quality-speed-sweep.md): hidden token growth, tolerant ring seam matching, grain matching, area-based model size, automatic edges, unload policy and faster polling, with before/after timings and a ComfyUI community check.
 - [Image quality across generation, inpaint and outpaint, 9 October 2026](notes/2026-10-09-image-quality-research.md): pre-change pipeline findings, CPU overlap/resolution probe, LoRA candidates and proposed evaluation stages, with a link to the implemented first slice.
-- [Focus implementation and validation](notes/2026-10-07-focus-implementation.md): delivery log and regression evidence, updated through 9 October.
+- [Focus implementation and validation](notes/2026-10-07-focus-implementation.md): historical delivery log and regression evidence through 10 October; use the guide for current behaviour.
 - [Inpainting, context crops and blending](notes/2026-10-07-inpainting.md): the inpainting route, with controlled experiments on:
   - [scale-aware placement](notes/2026-10-07-inpainting.md#scale-aware-placement-research)
   - [Anna/park settings](notes/2026-10-07-inpainting.md#controlled-annapark-experiments)

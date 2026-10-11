@@ -1,8 +1,12 @@
 # MosImage: modelonderzoek en productrichting
 
-Onderzocht op **7 oktober 2026**. Status: **onderzoekssnapshot en voorstel**, met inmiddels deels uitgevoerde aanbevelingen. De beginsituatie hieronder beschrijft de inspectie voor implementatie. De actuele Engelse Focus-UI, dependency-upgrades, SAM 2.1-klikselectie en edge-outpainting staan in [Focus-implementatie en validatie](2026-10-07-focus-implementation.md) en [V2_REFACTOR_PLAN.md](../roadmap.md).
+Status: Historical
+Last verified: 2026-10-11
+Current state: [Guide](../guide.md) and [roadmap](../roadmap.md).
 
-De regionale Klein-route is daarna vervangen door native mask conditioning, met een zichtbare contextrechthoek en instelbare blending. De huidige route behoudt zachte maskerwaarden ook tijdens sampling en gebruikt standaard 320 px context en 16 px inward blend. De oorspronkelijke observatie dat Klein het masker negeerde blijft hieronder bewaard als beginsituatie; [inpainting-implementatie en proeven](2026-10-07-inpainting.md) beschrijft de huidige route en negatieve referentie-experimenten.
+Onderzocht op **7 oktober 2026**. Status: **onderzoekssnapshot en voorstel**, met inmiddels deels uitgevoerde aanbevelingen. De beginsituatie hieronder beschrijft de inspectie voor implementatie. De huidige functies staan in de [guide](../guide.md); [Focus-implementatie en validatie](2026-10-07-focus-implementation.md) bewaart de leveringsgeschiedenis en de [roadmap](../roadmap.md) beschrijft resterend werk.
+
+De regionale Klein-route is daarna vervangen door native mask conditioning, met een zichtbare contextrechthoek en instelbare blending. De toenmalige route behield zachte maskerwaarden tijdens sampling en gebruikte 320 px context en 16 px inward blend. Sinds 9–10 oktober gebruikt de productiecode aparte generation- en blendmaskers, automatisch ingestelde edges en verborgen generation-overlap; de guide beschrijft die actuele instellingen. De oorspronkelijke observatie dat Klein het masker negeerde blijft hieronder bewaard als beginsituatie; [inpainting-implementatie en proeven](2026-10-07-inpainting.md) bewaart die implementatie en negatieve referentie-experimenten.
 
 ## Advies
 
