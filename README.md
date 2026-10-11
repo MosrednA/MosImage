@@ -72,12 +72,12 @@ Three steps on one picture, each about 3–10 seconds on an RTX 5070 Ti (7–15 
 |---|---|---|
 | OS | Windows 11 | macOS 27; macOS 14 or newer on Apple silicon |
 | GPU | NVIDIA RTX 5070 Ti 16 GB; NVFP4 needs a Blackwell GPU and CUDA 13 | Apple M5 Max, 40-core GPU, through Metal (MPS) |
-| Memory | 32 GB RAM (the 9B text encoder keeps about 6 GB in RAM) | 128 GB unified memory; Quality uses about 30 GB, Fast about 16 GB |
+| Memory | 32 GB RAM (the 9B text encoder keeps about 6 GB in RAM) | 128 GB unified memory; Quality uses about 30 GB in BF16, 19 GB in 8-bit and 13 GB in 4-bit |
 | Python | 3.13 or 3.12 | 3.13 or 3.12, from Homebrew or uv |
 | Node.js | A current LTS release | A current LTS release |
 | Optional | Rust and the Tauri prerequisites, for the desktop app | Rust (`brew install rust`) and the Xcode command-line tools, for the desktop app |
 
-Other NVIDIA GPUs can use FLUX.2 Klein 4B (BF16) under Generation settings → Advanced controls. A Mac runs the BF16 weights the NVFP4 builds come from; with less than 48 GB of memory the engine warms up Fast, and Fast is the better choice in the editor too.
+Other NVIDIA GPUs can use FLUX.2 Klein 4B (BF16) under Generation settings → Advanced controls. A Mac runs the BF16 weights the NVFP4 builds come from, or quantizes them to 8 or 4 bits in MLX: from 64 GB of memory it uses BF16, from 48 GB 8-bit, below that 4-bit (`MOSIMAGE_APPLE_WEIGHTS` overrides this). Below 36 GB the engine warms up Fast, and Fast is the better choice in the editor too.
 
 ## Quick start
 
@@ -108,8 +108,9 @@ For manual setup, troubleshooting a CPU-only PyTorch install and every runtime o
 |---|---|---|
 | FLUX.2 Klein 9B NVFP4 | Quality preset on Windows: every AI tool | Non-commercial licence |
 | FLUX.2 Klein 4B NVFP4 | Fast preset on Windows: generation and editing, quicker and lighter | Commercially licensed; Enhance always uses Quality |
-| FLUX.2 Klein 9B BF16 | Quality preset on a Mac | Non-commercial licence |
-| FLUX.2 Klein 4B BF16 | Fast preset on a Mac; on Windows for GPUs without NVFP4 support | Advanced controls on Windows |
+| FLUX.2 Klein 9B (BF16, 8-bit or 4-bit) | Quality preset on a Mac | Non-commercial licence |
+| FLUX.2 Klein 4B (BF16, 8-bit or 4-bit) | Fast preset on a Mac | Commercially licensed |
+| FLUX.2 Klein 4B BF16 | On Windows for GPUs without NVFP4 support | Advanced controls |
 | SAM 2.1 Tiny | Click selection and layer cut-outs | Runs on the CPU |
 | Grounding DINO tiny | Find, Subject and face detection | Runs on the CPU |
 | ViTMatte small | Soft edges for Subject and Remove background | Runs on the CPU |

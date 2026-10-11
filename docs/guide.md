@@ -96,16 +96,26 @@ python3.13 -m venv .venv
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-On macOS the defaults switch to the Apple silicon profile (`MOSIMAGE_PREFERRED_DEVICE=mps`, `MOSIMAGE_HARDWARE_PROFILE=apple-silicon`); no `.env` setting is needed. NVFP4 needs Blackwell tensor cores, so a Mac runs the original BF16 weights the NVFP4 builds were quantized from, on the GPU through Metal (MPS):
+On macOS the defaults switch to the Apple silicon profile (`MOSIMAGE_PREFERRED_DEVICE=mps`, `MOSIMAGE_HARDWARE_PROFILE=apple-silicon`); no `.env` setting is needed. NVFP4 needs Blackwell tensor cores, so a Mac runs the original BF16 weights the NVFP4 builds were quantized from, on the GPU through Metal (MPS), or quantizes them in MLX:
 
-- `Quality` is FLUX.2 Klein 9B (`flux2-klein-9b`, `black-forest-labs/FLUX.2-klein-9B`). Its Qwen3-8B text encoder loads without the layers Klein never reads and stays resident in BF16, about 12 GB.
+- `Quality` is FLUX.2 Klein 9B (`flux2-klein-9b`, `black-forest-labs/FLUX.2-klein-9B`). Its Qwen3-8B text encoder loads without the layers Klein never reads.
 - `Fast` is FLUX.2 Klein 4B (`flux2-klein-4b`), which also runs Specialized outpaint.
 - Consistency and the detail enhancer work with Quality, as on Windows.
-- CPU and GPU share one memory, so every component stays resident and the memory usage setting is hidden: offloading would only copy weights around. Quality takes about 30 GB, Fast about 16 GB; switching between them releases the other.
+- CPU and GPU share one memory, so every component stays resident and the memory usage setting is hidden: offloading would only copy weights around. Switching between Quality and Fast releases the other.
+- `MOSIMAGE_APPLE_WEIGHTS` sets how the transformer and text encoder hold their weights. `bf16` runs them in PyTorch on MPS. `q8` and `q4` run them in MLX, quantized to 8 or 4 bits at load. Masked edits, references and every LoRA work the same in all three, and the model menu shows the choice ("FLUX.2 Klein 9B (8-bit)"). Left empty, it follows unified memory: BF16 from 64 GB, 8-bit from 48 GB, 4-bit below that.
+- Quality warms up at start when its peak fits with about 12 GB to spare (BF16 from 64 GB, 8-bit from 48 GB, 4-bit from 36 GB); otherwise Fast warms up, and you should choose Fast in the editor as well. `MOSIMAGE_WARM_UP_MODEL` overrides the choice.
+- After every edit the engine hands PyTorch's and MLX's GPU caches back to macOS, so memory use falls back between jobs.
 - `PYTORCH_ENABLE_MPS_FALLBACK=1` is set before PyTorch loads, so an operator Metal lacks runs on the CPU instead of failing.
-- With less than 48 GB of unified memory the engine warms up Fast instead of Quality at start; choose Fast in the editor as well. `MOSIMAGE_WARM_UP_MODEL` overrides the choice.
 
-Measured warm through the API on an M5 Max (40-core GPU, 128 GB), macOS 27, PyTorch 2.14.1:
+Memory on an M5 Max, as Activity Monitor counts it (the [MLX comparison](../benchmarks/MLX_KLEIN_2026-10-11.md)):
+
+| Weights | Quality: after load / peak | Fast: after load / peak | Time against BF16 | Pictures against BF16 |
+|---|---|---|---|---|
+| BF16 | 30 / 36–42 GiB | 17 / 23–27 GiB | | |
+| 8-bit (q8) | 19 / 24–30 GiB | 11 / 19 GiB | 4–13% longer | the same; fine details differ about as much as between two BF16 runtimes |
+| 4-bit (q4) | 13 / 18–24 GiB | 8 / 16 GiB | 2–6% longer | the same scene, more changed detail |
+
+Measured warm through the API on an M5 Max (40-core GPU, 128 GB), macOS 27, PyTorch 2.14.1, with BF16 weights:
 
 | | Quality 9B | Fast 4B |
 |---|---|---|

@@ -50,10 +50,12 @@ Every runtime sits behind the `ImageModelProvider` protocol in `base.py`. `regis
 | FLUX.2 Klein 9B NVFP4 | `flux2_klein_nvfp4.py`, `klein_text_encoder.py` | Quality preset |
 | FLUX.2 Klein 4B NVFP4 | `flux2_klein_nvfp4.py` | Fast preset; commercially licensed |
 | FLUX.2 Klein 4B BF16 | `flux2_klein.py` | For GPUs without NVFP4 support |
-| FLUX.2 Klein 9B BF16 | `flux2_klein_apple.py`, `klein_text_encoder.py` | Quality preset on Apple silicon |
-| FLUX.2 Klein 4B BF16 | `flux2_klein_apple.py` | Fast preset on Apple silicon; Specialized outpaint |
+| FLUX.2 Klein 9B (BF16, 8-bit or 4-bit) | `flux2_klein_apple.py`, `klein_text_encoder.py`, `klein_mlx.py` | Quality preset on Apple silicon |
+| FLUX.2 Klein 4B (BF16, 8-bit or 4-bit) | `flux2_klein_apple.py`, `klein_mlx.py` | Fast preset on Apple silicon; Specialized outpaint |
 
 The device profile decides which of these the registry offers. `config.py` defaults to the CUDA profile, or on macOS to the Apple silicon profile (`preferred_device=mps`), and names each profile's Quality and Fast model; request defaults, validators and the `preset` field of `/api/models` follow it, and the UI maps its presets to the models the engine reports. `runtime.py` selects CUDA, Metal (MPS) or the CPU, with bfloat16 on either GPU. On Apple silicon CPU and GPU share memory, so the providers keep every component resident, the 9B text encoder stays in BF16 on the GPU (trimmed to the layers Klein reads) and LoRAs attach to loaded weights.
+
+`apple_weights` chooses how a Mac holds the two large components; by default it follows unified memory (BF16 from 64 GB, 8-bit from 48 GB, else 4-bit). With `bf16` the diffusers pipelines run on MPS as above. With `q8` or `q4`, `klein_mlx.py` loads the transformer and the trimmed Qwen3 encoder in MLX and quantizes their block linears at load (affine, groups of 64); embedders, modulation and the output projection stay BF16. Two torch-shaped wrappers take their place in the same diffusers pipelines, so references, masks, the scheduler and the VAE are untouched, and tensors cross between PyTorch and MLX without a copy (DLPack). The MLX modules carry diffusers' layer names, so `KleinLora` attaches the same adapters as a low-rank residual beside the quantized weights, at any scale and detachable. PyTorch and MLX each cache freed Metal buffers; on a Mac the job runner releases both after every GPU job (`runtime.release_cached_memory`).
 
 `nvfp4_runtime.py` loads the native CUDA NVFP4 transformer, shared with the benchmark tools.
 

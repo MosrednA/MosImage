@@ -257,6 +257,21 @@ class JobProgressDetailTests(unittest.TestCase):
             release.set()
             manager.shutdown()
 
+    def test_gpu_caches_are_released_after_every_gpu_job_but_not_after_selection(self) -> None:
+        manager = JobManager()
+        try:
+            with patch("app.jobs.release_cached_memory") as release:
+                selection = manager.submit("select", lambda control: None)
+                wait_for_status(manager, selection.id, "completed")
+                release.assert_not_called()
+                edit = manager.submit("inpaint", lambda control: 1)
+                wait_for_status(manager, edit.id, "completed")
+                failed = manager.submit("edit", lambda control: 1 / 0)
+                wait_for_status(manager, failed.id, "failed")
+                self.assertEqual(release.call_count, 2)
+        finally:
+            manager.shutdown()
+
     def test_run_cpu_executes_on_cpu_worker_lane(self) -> None:
         manager = JobManager()
         try:

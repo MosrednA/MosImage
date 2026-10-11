@@ -8,6 +8,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from .config import settings
+from .runtime import release_cached_memory
 from .schemas import JobPhase, JobState, JobStatus, TaskKind
 
 
@@ -278,6 +279,9 @@ class JobManager:
                 return
             self._update(job_id, status="failed", progress=1.0, error=str(exc), completed_at=now)
             return
+        finally:
+            if _lane(job.kind) == "gpu":
+                release_cached_memory()
         selection = result if isinstance(result, SelectionResult) else None
         generation_ids = result if isinstance(result, list) else ([result] if isinstance(result, int) else [])
         with self._lock:

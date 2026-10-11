@@ -2,6 +2,8 @@
 
 This deliberately supports the two evaluated ai-toolkit/PEFT Flux2 exports.
 Packed base weights are never merged, cast or dequantized. No PEFT dependency.
+The MLX transformer of a Mac (``klein_mlx``) takes the same adapters through
+its own linear layers.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from app.models.nvfp4_runtime import Nvfp4Linear
 
 if TYPE_CHECKING:
     from app.jobs import JobControl
+    from app.models.klein_mlx import MlxLoraTarget
 
 
 @dataclass(frozen=True)
@@ -102,11 +105,24 @@ class LoraTarget:
     leaf: str
     layer: LoraLinear
 
+    def current(self) -> nn.Module:
+        return getattr(self.parent, self.leaf)
+
+    def attach(self) -> None:
+        setattr(self.parent, self.leaf, self.layer)
+
+    def restore(self) -> None:
+        setattr(self.parent, self.leaf, self.layer.base)
+
+    @property
+    def storage_bytes(self) -> int:
+        return sum(t.numel() * t.element_size() for t in (self.layer.down, self.layer.up))
+
 
 class KleinLora:
     """One attached adapter. All targets validate before the model is mutated."""
 
-    def __init__(self, targets: tuple[LoraTarget, ...]) -> None:
+    def __init__(self, targets: tuple[LoraTarget | MlxLoraTarget, ...]) -> None:
         self.targets = targets
         self.attached = True
 
@@ -133,24 +149,28 @@ class KleinLora:
             if not separator or suffix not in ("A.weight", "B.weight"):
                 raise ValueError(f"Unsupported LoRA tensor: {key}")
             pairs.setdefault(module, {})[suffix[0]] = value
-        targets: list[LoraTarget] = []
-        for name, pair in pairs.items():
-            check_cancelled()
-            if set(pair) != {"A", "B"}:
-                raise ValueError(f"Incomplete LoRA pair: {name}")
-            base = model.get_submodule(name)
-            if not isinstance(base, (nn.Linear, Nvfp4Linear)):
-                raise ValueError(f"Unsupported or already adapted LoRA target: {name}")
-            parent, _, leaf = name.rpartition(".")
-            targets.append(LoraTarget(model.get_submodule(parent) if parent else model, leaf,
-                                      LoraLinear(base, pair["A"], pair["B"])))
+        targets: list[LoraTarget | MlxLoraTarget] = []
+        if hasattr(model, "lora_targets"):
+            # The MLX transformer: the same layer names, its own linear layers.
+            targets.extend(model.lora_targets(pairs, check_cancelled))
+        else:
+            for name, pair in pairs.items():
+                check_cancelled()
+                if set(pair) != {"A", "B"}:
+                    raise ValueError(f"Incomplete LoRA pair: {name}")
+                base = model.get_submodule(name)
+                if not isinstance(base, (nn.Linear, Nvfp4Linear)):
+                    raise ValueError(f"Unsupported or already adapted LoRA target: {name}")
+                parent, _, leaf = name.rpartition(".")
+                targets.append(LoraTarget(model.get_submodule(parent) if parent else model, leaf,
+                                          LoraLinear(base, pair["A"], pair["B"])))
         if not targets:
             raise ValueError("The LoRA contains no linear targets.")
         check_cancelled()
         # No cancellation or I/O during publication; a cancelled preparation
         # leaves every original module intact.
         for target in targets:
-            setattr(target.parent, target.leaf, target.layer)
+            target.attach()
         return cls(tuple(targets))
 
     def set_scale(self, scale: float) -> None:
@@ -164,13 +184,12 @@ class KleinLora:
     def detach(self) -> None:
         if not self.attached:
             return
-        if any(getattr(t.parent, t.leaf) is not t.layer for t in self.targets):
+        if any(t.current() is not t.layer for t in self.targets):
             raise RuntimeError("A LoRA target was replaced while the adapter was attached.")
         for target in self.targets:
-            setattr(target.parent, target.leaf, target.layer.base)
+            target.restore()
         self.attached = False
 
     @property
     def storage_bytes(self) -> int:
-        return sum(t.numel() * t.element_size() for target in self.targets
-                   for t in (target.layer.down, target.layer.up))
+        return sum(target.storage_bytes for target in self.targets)
