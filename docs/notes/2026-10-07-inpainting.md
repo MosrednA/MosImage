@@ -1,6 +1,10 @@
 # Regional inpainting and blending
 
-**Status:** Core editing path implemented locally, 7 October 2026; visual reliability remains experimental. Current behavior for the English Focus editor; linked from [README](../../README.md), [Focus validation](2026-10-07-focus-implementation.md) and the [v2 roadmap](../roadmap.md).
+Status: Historical
+Last verified: 2026-10-11
+Current state: [Guide](../guide.md) and [roadmap](../roadmap.md).
+
+**Recorded scope:** The 7 October core editing implementation and subsequent experiments. Visual reliability remains experimental. Model choices, mask coverage, context and blending below describe each recorded cohort; later production changes are documented in the [guide](../guide.md), [paired mask report](../../benchmarks/EDIT_MASK_RESULTS_2026-10-09.md) and [10 October quality/speed sweep](2026-10-10-quality-speed-sweep.md).
 
 ## Root cause and correction
 

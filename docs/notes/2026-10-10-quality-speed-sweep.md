@@ -1,6 +1,10 @@
 # Quality, speed and UX sweep, 10 October 2026
 
-Status: implemented and measured on the default profile (RTX 5070 Ti 16 GB, Quality = Klein 9B NVFP4, four steps). Timings are end-to-end API times from upload to finished job, with the model already loaded. Visual review used fixed seeds and side-by-side crops; outputs stayed in a local scratch folder and are not part of the repository.
+Status: Historical
+Last verified: 2026-10-11
+Current state: [Guide](../guide.md) and [roadmap](../roadmap.md).
+
+**Recorded scope:** Implemented and measured on the default profile (RTX 5070 Ti 16 GB, Quality = Klein 9B NVFP4, four steps). Timings are end-to-end API times from upload to finished job, with the model already loaded. Visual review used fixed seeds and side-by-side crops; outputs stayed in a local scratch folder and are not part of the repository.
 
 ## What changed
 

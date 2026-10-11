@@ -1,5 +1,8 @@
 # Architecture
 
+Status: Current reference
+Last verified: 2026-10-11
+
 MosImage is two local processes: a FastAPI engine that owns the models, the job queue and all files, and a React UI that talks to it over HTTP on `127.0.0.1:8000`. The optional Tauri shell starts the engine itself and shows the same UI in a desktop window.
 
 ```txt
@@ -86,14 +89,14 @@ All files live under `data/`. Only `data/images/` is served over HTTP.
 
 ## Frontend (`frontend/src/`)
 
-`App.tsx` composes the editor out of hooks and components; it holds no model or canvas logic itself.
+`App.tsx` coordinates editor commands, keyboard handling, crop/application flow and document state through hooks and components. Model execution stays in the backend; canvas, mask and layer helpers live in their own modules.
 
 | Folder | Contents |
 |---|---|
 | `api.ts` | Typed client for every endpoint |
 | `hooks/` | State and side effects: engine connection and warm-up (`useEngine`), job submission and polling (`useJobRunner`), the visible picture and exports (`usePicture`), selection tools (`useSelectionTools`), layers, references, result preview and keyboard/paste handling |
 | `generation/` | Pure logic: what a command submits (`submission.ts`), when it can run and what the hint says (`commandState.ts`), operations, presets, aspect ratios and progress text |
-| `canvas/` | Editor canvas, viewport, mask and sketch layers, expansion canvas and the selection bar |
+| `canvas/` | Editor canvas, viewport, mask and sketch layers, crop and expansion canvases, selection and mask-brush bars |
 | `layers/` | Layer stack, transform geometry, bitmap helpers (mask display, selection to layer mask) and the soft mask brush (`brush.ts`) |
 | `masks/` | Mask operations and refinement. The signed distance field for soft edges runs in a Web Worker (`maskWorker.ts` via `fieldWorker.ts`), with a synchronous fallback |
 | `components/` | Panels, dialogs, top bar, tool rail, proposal tray and library |

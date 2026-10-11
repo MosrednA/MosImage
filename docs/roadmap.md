@@ -1,6 +1,9 @@
 # MosImage v2 — Refactor and Upgrade Plan
 
-**Status:** In progress\
+Status: Active
+Last verified: 2026-10-11
+Review by: 2026-11-11
+
 **Target:** Windows desktop, local-first\
 **Primary hardware:** Ryzen 7 9700X, 32 GB RAM, RTX 5070 Ti 16 GB VRAM
 
@@ -9,13 +12,15 @@
 
 **Quality candidates, 9 October 2026:** reversible NVFP4/BF16 LoRA residuals and a local comparison runner are implemented; 78 cohort images and two equivalence renders are complete. Consistency V2 trades preservation against edit compliance. FAL outpaint works experimentally on distilled Fast4 in about 6–7 seconds; the 157–180-second Base route was stopped by the user's latency requirement. Selected detail crops show more local texture at about 8 seconds, with possible invented materials. All 60 selected outputs preserve protected RGBA pixels. See the [candidate report](../benchmarks/QUALITY_CANDIDATES_2026-10-09.md). Optional Consistency, Specialized outpaint and Fine detail editor switches are implemented and initially off; broader real-photo quality validation remains open. The [guide](guide.md#runtime-modes) describes their scope and model switching.
 
-**Current delivery:** [Focus implementation and validation, October 7, 2026](notes/2026-10-07-focus-implementation.md). [Model research and product direction](notes/2026-10-07-direction.md) preserves the initial research snapshot and longer-term proposals.
+**Current behaviour:** [Guide](guide.md) and [architecture](architecture.md). [Focus implementation and validation](notes/2026-10-07-focus-implementation.md) preserves the dated delivery log through 10 October. [Model research and product direction](notes/2026-10-07-direction.md) preserves the initial research snapshot and longer-term proposals.
 
 ## Implementation status
 
 **Quantized Klein on a Mac, 11 October 2026:** Klein's transformer and text encoder can run in MLX with 8-bit or 4-bit weights (`MOSIMAGE_APPLE_WEIGHTS`), inside the same diffusers pipelines, so masked edits, references and every LoRA keep working. On an M5 Max, 8-bit lowers Quality's peak from 36–42 GiB to 24–30 GiB and 4-bit to 18–24 GiB, at 4–7% more time. The default follows unified memory (BF16 from 64 GB, 8-bit from 48 GB, else 4-bit), and GPU caches are released after every job. Next: smaller VAE tiles on Apple silicon, which would cut another 5–10 GiB from every peak. See the [comparison](../benchmarks/MLX_KLEIN_2026-10-11.md).
 
 **macOS port, 11 October 2026:** MosImage runs on Apple silicon. On macOS the engine selects Metal (MPS) with bfloat16 and offers the BF16 Klein 9B (Quality) and 4B (Fast), since NVFP4 needs Blackwell CUDA; Consistency, the detail enhancer and Specialized outpaint work as on Windows. `start.sh` sets up and supervises the engine like `start.cmd`, and `npm run tauri:build:mac` installs `MosImage.app` in `/Applications`. The UI was checked in WebKit, where `createImageBitmap` dithering turned face and object selections into full-canvas noise masks (fixed by decoding through `<img>`) and the canvas lacks `filter` (layer footprints blur in script). On an M5 Max a warm 1024² Quality generation takes 7 s, a full-frame edit 14.5 s. See the [guide](guide.md#macos-apple-silicon).
+
+**Quality and editor updates, 10 October 2026:** Enhance adds detail with Subtle/Strong settings and native-resolution tiling; Fix faces defaults to Faithful, offers Redraw and shows detected faces for manual picking. Crop (C) changes the canvas without AI; Shift+C opens Expand, and desktop Export opens Save As. The Background is an ordinary layer, with multi-selection, Merge down, Merge visible, Flatten image and Select pixels. Expansion uses the visible layer composite and preserves separate layer placement. See the [guide](guide.md#frontend) for current controls and the [quality/speed evaluation](notes/2026-10-10-quality-speed-sweep.md) for measured tradeoffs. Enhance is implemented; generative 2x upscaling remains experimental.
 
 **SAM 3 selection and refinement evaluation completed, 10 October 2026:** [seven frozen default point/text cases](../benchmarks/SAM3_SELECTION_2026-10-10.md) compare the existing SAM 2.1 Tiny/Grounding DINO CPU routes against official SAM 3 on CPU FP32 and GPU BF16. The [real-photo follow-up](../benchmarks/SAM3_REFINEMENT_2026-10-10.md) adds six calibration and twelve separate pedestrian evaluation cases, equal correction clicks/boxes, mask feedback and absent-concept controls. Feedback mean annotation IoU is 0.929 for SAM 3 versus 0.925 for current selection; incomplete/ambiguous annotations limit ranking. SAM 3 rejects absent `astronaut` on all twelve street photos, where current default text selection returns ordinary people. Warmed GPU new-image selection takes about 0.12 s for points and 0.16 s for text in the follow-up, after a 16–18 s first load/inference; CUDA tensor peaks are 1.20/2.12 GiB per separately loaded route. Targeted prompts or positive boxes recover original poster/brooch misses. All 593 follow-up masks were verified and 276 repetitions were identical. Retain the CPU default pending broader annotation-complete object, soft-cutout and loaded-Klein acceptance; no provider switch is integrated.
 
@@ -31,7 +36,7 @@ Latest editing-mask evidence: [9 October paired implementation comparison](../be
 
 **Layer masks, 10 October 2026:** Photoshop-style mask thumbnails in the layer row (click paints, Shift switches off, Alt views alone), a mask brush that paints any grey from white to black with Softness and Opacity (B and E on a selected layer, X swaps), Layer and Mask groups in the panel, a red `\` overlay of hidden parts, and Add mask / Mask from selection. Sliders no longer swallow shortcuts. See [implementation and validation](notes/2026-10-07-focus-implementation.md#photoshop-style-layer-masks-10-october-2026).
 
-**Selection bar and variants, 10 October 2026:** a floating bar beside each selection (Generate, Remove, Faces, To layer, Mask layer, invert, deselect), the mode following the selection, proposals kept as switchable variants of one layer (`,` and `.`) or split into layers, and Photoshop tool keys (W, V/Ctrl+T, H, Ctrl+D). See [implementation and validation](notes/2026-10-07-focus-implementation.md#selection-bar-variants-and-photoshop-shortcuts-10-october-2026).
+**Selection bar and variants, 10 October 2026:** a floating bar beside each selection (Generate, Remove, Faces, Enhance, To layer, Mask layer, invert, deselect), the mode following the selection, proposals kept as switchable variants of one layer (`,` and `.`) or split into layers, and Photoshop tool keys (W, V/Ctrl+T, H, Ctrl+D). See [implementation and validation](notes/2026-10-07-focus-implementation.md#selection-bar-variants-and-photoshop-shortcuts-10-october-2026).
 
 **Layer workflow, 9 October 2026:** Generate in an open document adds a full image layer fitted to the existing canvas. Replace and Remove always add a selected-region layer, including empty or hidden-only stacks. Apply preserves the background, opens Layers and selects Transform; preview placement, mask footprints, undo/redo and persistence are verified. New starts a separate document; Expand retains its background/dimension workflow. See [implementation and validation](notes/2026-10-07-focus-implementation.md#ai-results-as-layers-9-october-2026).
 **Quality model, 9 October 2026:** FLUX.2 Klein 9B NVFP4 replaces 4B NVFP4 as the Quality default. Its Qwen3-8B encoder is trimmed to 28 layers, stored as FP8 in pinned RAM and streamed to the GPU per prompt, so transformer and VAE stay resident within 16 GB. 4B NVFP4 and BF16 remain selectable. See the [model comparison](../benchmarks/MODEL_COMPARISON_2026-10-09.md).
@@ -46,12 +51,13 @@ Latest editing-mask evidence: [9 October paired implementation comparison](../be
 | 3 — Documents and revisions | Complete | Persistent v2 documents, revisions, alternatives, metadata autosave, document undo/redo, close/reopen, and non-destructive v1-generation import. |
 | 4 — Object selection | Partial | SAM 2.1 Tiny point selection and positive/negative refinement, cached CPU image embeddings, and manual mask correction. SAM 3 CPU/GPU, real-photo refinement, threshold and negative-control evaluation are complete; integration awaits broader object, soft-cutout and loaded-Klein validation. |
 | 5 — Inpainting | Core implemented; quality validation open | Native mask-conditioned Klein default, visible padded context rectangles, soft latent masks, inward edge blending, scene notes, sequential alternatives, in-place preview, explicit accept, and protected-pixel regression coverage. An eight-seed check found missing subjects and weak integrations. A fixed four-scene suite and 24-output BF16/NVFP4 comparison now exist: NVFP4 reduced median edit time by 36%, with similar visual limitations. NVFP4 app integration is complete, including generation, masked edits and the BF16 comparison option. Broad editing-quality validation remains open; see the [experiment](../benchmarks/NVFP4_RESULTS_2026-10-07.md). |
-| 6 — Generation and presets | Complete | FLUX.2 Klein 9B NVFP4 Quality, 4B NVFP4 Fast and selectable 4B BF16, product-first controls, Advanced technical settings, aspect presets, and one-to-four sequential alternatives. Krea 2 Turbo was evaluated but remains disabled pending a measured 16 GB quantized path and the license-required safety controls. |
-| 7 — Outpainting | Complete for standard edge expansion | Draggable edges, format presets, exact margins, native masked Klein expansion with seam matching, protected RGBA compositing, sequential proposals and revision dimension undo/redo. Arbitrary interior transparent regions and a broad quality benchmark remain follow-up work. |
+| 6 — Generation and presets | Complete | FLUX.2 Klein 9B NVFP4 Quality, 4B NVFP4 Fast and selectable 4B BF16, product-first controls, Advanced technical settings, aspect presets, and one-to-four sequential alternatives. Krea 2 Turbo remains unintegrated pending a measured 16 GB quantized path and the license-required safety controls. |
+| 7 — Outpainting | Complete for standard edge expansion | Draggable edges, format presets, exact margins, native masked Klein expansion of the visible layers with seam matching, protected RGBA compositing, sequential proposals and revision dimension undo/redo. Arbitrary interior transparent regions and a broad quality benchmark remain follow-up work. |
+| 8 — Desktop packaging and recovery | Partial | Tauri builds the executable and MSI/NSIS installers; the shell starts or reuses the checkout engine, supervises restart and shutdown, and exports through Save As. A self-contained Python/CUDA package, download/disk-space UI and first-install recovery acceptance remain open. |
 
-Phase 4 is partially delivered; phase 5 still needs visual reliability validation, and phase 8 remains roadmap work. The English canvas-first Focus shell applies to new generation, selection, editing, expansion, and proposal review. Phase completion here refers to each phase's own exit criterion, not the full v2 definition of done. Sections below describe the target design where it extends beyond this implementation table.
+Phases 4 and 8 are partially delivered; phase 5 still needs visual reliability validation. The English canvas-first Focus shell applies to new generation, selection, editing, expansion, and proposal review. Phase completion here refers to each phase's own exit criterion, not the full v2 definition of done. Sections below describe the target design where it extends beyond this implementation table.
 
-**Runtime maintenance, 8 October 2026:** Named SQLite migrations/WAL, bounded upload reads, image-only file serving, finished-job retention, typed revision conflicts, serialized CPU subject isolation and Library deletion are implemented. Review fixes preserve the Z-Image runtime dtype and clean unused layer assets across revision history. See [maintenance validation and limits](notes/2026-10-07-focus-implementation.md#runtime-refactor-validation-8-october-2026); broader editing-quality and phase 8 work remain open.
+**Runtime maintenance, 8 October 2026:** Named SQLite migrations/WAL, bounded upload reads, image-only file serving, finished-job retention, typed revision conflicts, serialized CPU subject isolation and Library deletion are implemented. The dated review fixed dtype reuse in the then-active Z-Image provider and cleaned unused layer assets across revision history. See [maintenance validation and limits](notes/2026-10-07-focus-implementation.md#runtime-refactor-validation-8-october-2026); broader editing-quality and phase 8 work remain open.
 
 **Phase 5 follow-up, 7 October 2026:** [Scale-aware placement research](notes/2026-10-07-inpainting.md#scale-aware-placement-research) diagnoses the supplied garden/reference edit and proposes separate subject placement geometry, deliberate scene context, optional local visual planning and controlled renderer comparisons. The [controlled Anna/park tests](notes/2026-10-07-inpainting.md#controlled-annapark-experiments) retain 72 completed outputs, including 18 prompt renders, nine visual-guide renders and six paired mask-shape rerenders. The user rejected all earlier 39 images for size, seated pose and ground contact. Smaller-crop NVFP4 remains a fast diagnostic baseline; Base at 28/50 steps offers no convincing advantage. Explicit parallel-leg prompts improve pose but do not reliably solve fit, scale or contact. The visual seated-layout comparison with role-aware identity/structure references is complete: whole-body fit improves at about 2.6 s per local render, while exact pose/scale/contact remain open. The curved/soft mask crosses baseline faces; a same-crop box restores complete faces in 3/3 seeds while expanding the visible edit footprint. Prioritize an opaque subject core, independent placement geometry and mask-fit preview before broader model sweeps. Bench-first/person-second construction and learned pose/depth conditioning remain candidates; see the [community leads](notes/2026-10-07-inpainting.md#comfyui-community-leads-checked-7-october-2026). Automatic scale/layout planning remains proposed, and the encoder-separated runtime requires wider quality and end-to-end UI validation before integration.
 
@@ -79,22 +85,22 @@ This is an incremental upgrade of the current repository, not a clean rewrite.
 
 ## 3. Current foundation
 
-MosImage v1 already provides:
+The current checkout provides:
 
 - React and TypeScript frontend.
 - Vite development and production builds.
-- Tauri desktop shell scaffold.
+- Tauri desktop shell with checkout-engine supervision and Windows installer builds.
 - FastAPI backend.
 - Typed request and response schemas.
 - Model provider interface and registry.
-- Z-Image Turbo text-to-image and inpainting pipelines.
+- FLUX.2 Klein 9B/4B NVFP4 and 4B BF16 generation, edit, inpaint and outpaint pipelines.
 - CUDA, BF16, TF32, CPU-offload, and one-pipeline residency controls.
 - A serialized single-worker GPU job queue.
 - Local image, mask, and output storage.
 - SQLite generation metadata and history.
 - Startup scripts tuned for the target machine.
 
-These parts should be retained and extended unless a milestone explicitly replaces them.
+These are the current foundations to retain. The initial v1 Z-Image provider and later FLUX Fill adapter have been removed; their earlier use is preserved in the dated implementation notes.
 
 ## 4. Main differences from v1
 
@@ -160,22 +166,13 @@ These parts should be retained and extended unless a milestone explicitly replac
 
 ### Generation
 
-**Default:** FLUX.2 Klein 4B
+**Quality default:** FLUX.2 Klein 9B Distilled NVFP4 at four steps and guidance 1, with its FP8 text encoder streamed from RAM on the target 16 GB GPU.
 
-- Interactive four-step generation.
-- Suitable for the target 16 GB GPU.
-- Supports generation and image editing.
-- Apache 2.0 weights.
+**Fast:** FLUX.2 Klein 4B Distilled NVFP4 at four steps and guidance 1. Its Apache 2.0 weights permit commercial use; the 9B weights and detail-enhancer adapter are non-commercial.
 
-**Fast alternative:** Z-Image Turbo
+**Advanced comparison:** FLUX.2 Klein 4B BF16 for GPUs without native NVFP4 support. All three providers support generation and editing; Enhance requires Quality 9B.
 
-- Preserve the existing provider.
-- Use for fast photorealistic iteration and batch alternatives.
-
-**Optional quality preset:** Krea 2 Turbo in a validated FP8 or NVFP4 format.
-
-- Load on demand.
-- Keep disabled by default until runtime and licensing are validated.
+The original plan proposed Klein 4B as the default, Z-Image Turbo as Fast and Krea 2 Turbo as an optional quality candidate. The Klein-only lineup supersedes those choices: Z-Image is removed, Krea is unintegrated, and the later Qwen comparison did not lead to integration. Preserve the [original direction research](notes/2026-10-07-direction.md) and [model comparison](../benchmarks/MODEL_COMPARISON_2026-10-09.md) as decision evidence.
 
 ### Segmentation
 
@@ -187,15 +184,13 @@ These parts should be retained and extended unless a milestone explicitly replac
 
 ### Inpainting and outpainting
 
-**Initial specialist:** FLUX.1 Fill Dev
+**Current default:** Native mask-conditioned FLUX.2 Klein editing and expansion through Diffusers 0.41.0. Quality uses 9B NVFP4; Fast uses 4B NVFP4, with 4B BF16 selectable.
 
-- Use for native image-plus-mask fill operations.
-- Validate licensing before commercial distribution.
+- Inpaint uses a visible context crop, opaque generation coverage and the displayed soft selection for protected final compositing.
+- Expansion regenerates 32 model pixels inside the original and blends over only 16 native pixels. Optional Specialized outpaint uses the distilled Fast4 FAL adapter.
+- Broad scene and seam acceptance remains open; see the [paired mask evaluation](../benchmarks/EDIT_MASK_RESULTS_2026-10-09.md) and [quality/speed follow-up](notes/2026-10-10-quality-speed-sweep.md).
 
-**Current regional default:** Native mask-conditioned FLUX.2 Klein editing through Diffusers 0.41.0
-
-- Uses a visible padded context crop, native soft latent masking and protected inward alpha compositing. See [inpainting validation](notes/2026-10-07-inpainting.md).
-- The mushroom fixture validates this fix locally; a fixed multi-scene evaluation against Fill remains open. This does not promote Klein to the expansion route.
+FLUX.1 Fill Dev was an initial specialist candidate. Its adapter is removed; introducing a different provider would require a new quality, latency and licensing decision.
 
 ## 7. Target architecture
 
@@ -456,7 +451,7 @@ Do not introduce concurrent heavy GPU jobs on the 16 GB target profile.
 
 ### Phase 5 — Upgrade inpainting
 
-- Add the specialist fill provider.
+- Use the implemented Klein mask-conditioned route; a specialist replacement requires separate evaluation.
 - Implement contextual crop extraction.
 - Keep user-controlled mask growth separate from inward blending and protected compositing. Show the padded context rectangle.
 - Generate multiple alternatives.
@@ -467,8 +462,7 @@ Do not introduce concurrent heavy GPU jobs on the 16 GB target profile.
 
 ### Phase 6 — Upgrade generation and presets
 
-- Add FLUX.2 Klein 4B.
-- Retain Z-Image Turbo as the fast provider.
+- Use the implemented Klein 9B NVFP4 Quality, 4B NVFP4 Fast and advanced 4B BF16 providers.
 - Add Fast and Quality product presets.
 - Hide raw model and runtime controls under Advanced.
 - Add aspect-ratio presets and multiple alternatives.
@@ -487,12 +481,13 @@ Do not introduce concurrent heavy GPU jobs on the 16 GB target profile.
 
 ### Phase 8 — Desktop packaging and recovery
 
-- Package the Python worker as a Tauri sidecar or controlled application component.
-- Supervise worker startup, health, restart, and shutdown.
-- Add first-run model download and validation.
-- Add disk-space and download progress reporting.
-- Add crash recovery and autosave restoration.
-- Produce a Windows installer.
+**Delivered:** The shell runs the checkout Python environment as a controlled component, supervises startup/restart/shutdown, reuses an existing engine and builds Windows installers. Models download on first use; documents and revisions persist. The Python/CUDA environment and models are not bundled into the installer.
+
+**Remaining:**
+
+- Package or provision Python, CUDA PyTorch and runtime dependencies for a fresh machine.
+- Add disk-space, model-download progress and validation UI.
+- Validate interrupted downloads, crash recovery and document restoration through the installed app on a clean profile.
 
 **Exit criterion:** A new user can install MosImage and complete the core workflow without manually starting a backend.
 
@@ -591,7 +586,7 @@ Record segmentation quality, protected-pixel changes, latency, peak VRAM, and su
 
 ## 18. Historical first implementation slice
 
-This section records the original starting slice. The canvas, compositing, revisions and edge expansion have since been delivered; see the implementation status above. Remaining roadmap work includes the rest of phase 4 and desktop packaging in phase 8. The October product-direction proposal evaluates additional follow-up work.
+This section records the original starting slice. The canvas, compositing, revisions and edge expansion have since been delivered; see the implementation status above. Remaining roadmap work includes the rest of phase 4 and self-contained installation/recovery in the partially delivered phase 8. The October product-direction proposal evaluates additional follow-up work.
 
 The first vertical slice should avoid model expansion and prove the editor architecture using the existing Z-Image provider:
 
