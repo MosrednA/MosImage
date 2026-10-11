@@ -12,7 +12,7 @@ from PIL import Image
 from app import storage
 from app.config import settings
 from app.enhance import (ENHANCE_STRENGTH, MAX_TILES, SINGLE_PASS_AREA, TILE_AREA, TILE_OVERLAP, enhance_region, kept_tones,
-                         run_enhance, tile_layout, tile_weights)
+                         redraw, run_enhance, tile_layout, tile_weights)
 from app.main import app
 from app.schemas import EnhanceRequest
 from tests.test_references import isolated_data, png
@@ -79,11 +79,11 @@ class ToneAndRegionTests(unittest.TestCase):
 
 
 class EnhanceServiceTests(unittest.TestCase):
-    def provider(self, noisy: bool = False) -> MagicMock:
+    def provider(self, noisy: bool = False, strength: float = ENHANCE_STRENGTH, detail: float = .4) -> MagicMock:
         provider = MagicMock()
 
         def fake_edit(request, input_path, output_path, _control, **kwargs):
-            self.assertEqual((request.mode, request.strength, request.detail), ("enhance", ENHANCE_STRENGTH, .4))
+            self.assertEqual((request.mode, request.strength, request.detail), ("enhance", strength, detail))
             self.assertEqual(kwargs, {})
             with Image.open(input_path) as tile:
                 # Klein renders at its own size; the service scales back.
@@ -109,6 +109,21 @@ class EnhanceServiceTests(unittest.TestCase):
             with Image.open(settings.data_dir / record["output_image_path"]) as output:
                 self.assertEqual(output.size, (300, 200))
                 self.assertEqual(output.getpixel((150, 100)), (60, 90, 120))
+
+    def test_fast_enhances_without_the_detail_lora_and_redraws_more_for_strong(self) -> None:
+        # The LoRA was trained on 9B; Fast relies on the enhance prompt and a deeper partial redraw.
+        self.assertEqual(redraw(settings.quality_model, .7), (.7, ENHANCE_STRENGTH))
+        self.assertEqual(redraw(settings.fast_model, .4), (0, ENHANCE_STRENGTH))
+        self.assertAlmostEqual(redraw(settings.fast_model, .7)[1], .75)
+        self.assertEqual((redraw(settings.fast_model, .1)[1], redraw(settings.fast_model, 1)[1]), (.5, .875))
+        with isolated_data():
+            provider = self.provider(strength=redraw(settings.fast_model, .7)[1], detail=0)
+            with patch("app.enhance.registry.activate", return_value=provider):
+                [generation] = run_enhance(EnhanceRequest(model_name=settings.fast_model, detail=.7), png(Image.new("RGB", (300, 200))),
+                                           "photo.png", None, MagicMock())
+            record = storage.get_generation(generation)
+            self.assertEqual((record["model_name"], record["strength"]), (settings.fast_model, .7))
+        provider.edit.assert_called_once()
 
     def test_selection_changes_only_the_selected_part(self) -> None:
         with isolated_data():
@@ -150,13 +165,9 @@ class EnhanceServiceTests(unittest.TestCase):
 
 
 class EnhanceApiTests(unittest.TestCase):
-    def test_enhance_queues_an_edit_job_and_rejects_fast(self) -> None:
+    def test_enhance_queues_an_edit_job_on_either_preset(self) -> None:
         client = TestClient(app)
         picture = ("picture.png", png(Image.new("RGB", (64, 48))), "image/png")
-        with patch("app.main.jobs.submit") as submit:
-            parameters = json.dumps({"model_name": "flux2-klein-4b-nvfp4"})
-            self.assertEqual(client.post("/api/enhance", files={"image": picture}, data={"parameters": parameters}).status_code, 422)
-            submit.assert_not_called()
         queued = SimpleNamespace(id="job", kind="edit", status="queued")
         with patch("app.main.jobs.submit", return_value=queued) as submit, patch("app.routes.generation.run_enhance") as run:
             mask = ("mask.png", png(Image.new("L", (64, 48), 255)), "image/png")
@@ -165,8 +176,12 @@ class EnhanceApiTests(unittest.TestCase):
             self.assertEqual(submit.call_args.args[0], "edit")
             submit.call_args.args[1](MagicMock())
             request, _, _, mask_bytes, _ = run.call_args.args
-            self.assertEqual(request.detail, .7)
+            self.assertEqual((request.model_name, request.detail), (settings.quality_model, .7))
             self.assertIsNotNone(mask_bytes)
+            parameters = json.dumps({"model_name": settings.fast_model})
+            self.assertEqual(client.post("/api/enhance", files={"image": picture}, data={"parameters": parameters}).status_code, 200)
+            submit.call_args.args[1](MagicMock())
+            self.assertEqual(run.call_args.args[0].model_name, settings.fast_model)
 
 
 if __name__ == "__main__":

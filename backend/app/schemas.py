@@ -123,18 +123,13 @@ class FaceDetectionResponse(BaseModel):
 
 
 class EnhanceRequest(PromptRequest):
-    """Adds fine detail to the picture or the selection with the detail-enhancer LoRA."""
+    """Adds fine detail to the picture or the selection: with the detail-enhancer LoRA on Quality."""
 
     prompt: str = Field(default="", max_length=500)
     # The LoRA scale: 0.4 adds believable texture, 0.7 and up starts to reinvent.
+    # Fast has no such LoRA and redraws more of the picture instead.
     detail: float = Field(default=0.4, ge=0.1, le=1, allow_inf_nan=False)
     reference_ids: list[int] = Field(default_factory=list, max_length=0)
-
-    @model_validator(mode="after")
-    def quality_model(self) -> "EnhanceRequest":
-        if self.model_name != settings.quality_model:
-            raise ValueError("Enhance requires the Quality model.")
-        return self
 
 
 class InpaintForm(BaseModel):

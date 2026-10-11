@@ -89,11 +89,11 @@ describe("submitJob", () => {
     expect(vi.mocked(fixFaces).mock.calls[0][2]).toBeNull();
     await expect(submitJob(input({ operation: "faces", faces: [] }))).rejects.toThrow("Click a face");
   });
-  it("enhances the selection or the whole picture on Quality, without references", async () => {
+  it("enhances the selection or the whole picture on the chosen model, without references", async () => {
     const mask = new Blob(["detail"]);
     const selected = await submitJob(input({ operation: "enhance", mask, referenceIds: [7], settings: { ...defaultSettings, model_name: "flux2-klein-4b-nvfp4", prompt: "" } }));
     const [, parameters, selection] = vi.mocked(enhanceImage).mock.calls[0];
-    expect(parameters).toMatchObject({ model_name: "flux2-klein-9b-nvfp4", detail: 0.4, prompt: "" });
+    expect(parameters).toMatchObject({ model_name: "flux2-klein-4b-nvfp4", detail: 0.4, prompt: "" });
     expect(parameters).not.toHaveProperty("reference_ids");
     expect(selection).toBe(mask);
     expect(selected.extras.result).toEqual({ kind: "selection", mask, name: "Enhanced", replaces: null });
@@ -102,10 +102,11 @@ describe("submitJob", () => {
     expect(vi.mocked(enhanceImage).mock.calls[1][2]).toBeNull();
     expect(whole.extras.result).toEqual({ kind: "generation", name: "Enhanced" });
   });
-  it("forces Quality for Enhance and keeps the chosen model elsewhere", () => {
+  it("keeps the chosen model for Enhance and Fix faces", () => {
     const fast = { ...defaultSettings, model_name: "flux2-klein-4b-nvfp4", consistency_lora: true };
-    expect(qualityOptions(fast, "enhance", false)).toMatchObject({ model_name: "flux2-klein-9b-nvfp4", consistency_lora: false });
+    expect(qualityOptions(fast, "enhance", false)).toMatchObject({ model_name: "flux2-klein-4b-nvfp4", consistency_lora: false });
     expect(qualityOptions(fast, "faces", false).model_name).toBe("flux2-klein-4b-nvfp4");
+    expect(qualityOptions(defaultSettings, "enhance", false).model_name).toBe("flux2-klein-9b-nvfp4");
   });
   it("opens a new image from the start screen and adds a layer in a document", async () => {
     const start = await submitJob(input({ operation: "generate", hasDocument: false, source: null, referenceIds: [5] }));

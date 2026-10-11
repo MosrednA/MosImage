@@ -335,7 +335,7 @@ export async function fixFaces(image: File, parameters: EditParameters & { faith
   return request("/api/faces", { method: "POST", body: form });
 }
 
-/** The detail-enhancer LoRA's scale, from 0.1 to 1. Quality only; references are not used. */
+/** How much detail, from 0.1 to 1: the detail-enhancer LoRA's scale on Quality; Fast redraws more instead. References are not used. */
 export type EnhanceParameters = Omit<EditParameters, "reference_ids" | "consistency_lora"> & { detail: number };
 
 /** Adds fine detail to the picture, or only to the selection. */

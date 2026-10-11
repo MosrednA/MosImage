@@ -23,9 +23,8 @@ export function withPreset(settings: EditorSettings, value: GenerationPreset): E
 }
 export function qualityOptions(settings: EditorSettings, operation: Operation, blending: boolean) {
   const specialized_outpaint = operation === "expand" && settings.specialized_outpaint;
-  // Specialized outpaint is a Fast LoRA; the detail enhancer exists for Quality only.
-  const model_name = specialized_outpaint ? GENERATION_PRESETS.fast.modelName
-    : operation === "enhance" ? GENERATION_PRESETS.quality.modelName : settings.model_name;
+  // Specialized outpaint is a Fast LoRA. Enhance follows the preset: the detail enhancer joins on Quality.
+  const model_name = specialized_outpaint ? GENERATION_PRESETS.fast.modelName : settings.model_name;
   const consistency_lora = ["edit", "replace", "expand"].includes(operation)
     && model_name === GENERATION_PRESETS.quality.modelName && settings.consistency_lora;
   const detail_crop = operation === "replace" && !blending && settings.detail_crop;
@@ -53,13 +52,13 @@ export function SettingsControls({ settings, onChange, models, operation, blendi
   const showConsistency = ["edit", "replace", "expand"].includes(operation);
   const showDetail = operation === "replace" && !blending;
   const consistencyAvailable = options.model_name === GENERATION_PRESETS.quality.modelName;
-  const presetLocked = options.specialized_outpaint || operation === "enhance";
+  const presetLocked = options.specialized_outpaint;
   function preset(value: GenerationPreset) {
     onChange(withPreset(settings, value));
   }
   return <fieldset className="settings-controls" disabled={disabled}>
     <div className="prompt-options">
-      <div className="segmented" aria-label="Quality">{(["quality", "fast"] as const).map(value => <button key={value} disabled={presetLocked} aria-pressed={options.model_name === GENERATION_PRESETS[value].modelName} title={operation === "enhance" ? "Enhance always uses Quality" : GENERATION_PRESETS[value].description} onClick={() => preset(value)}>{GENERATION_PRESETS[value].label}</button>)}</div>
+      <div className="segmented" aria-label="Quality">{(["quality", "fast"] as const).map(value => <button key={value} disabled={presetLocked} aria-pressed={options.model_name === GENERATION_PRESETS[value].modelName} title={GENERATION_PRESETS[value].description} onClick={() => preset(value)}>{GENERATION_PRESETS[value].label}</button>)}</div>
       {task === "text-to-image" && <select aria-label="Image format" value={aspectPresetFor(settings.width, settings.height) ?? "custom"} onChange={event => { const config = ASPECT_PRESETS[event.target.value as AspectPreset]; if (config) onChange({ ...settings, width: config.width, height: config.height }); }}><option value="square">Square · 1:1</option><option value="landscape">Landscape · 4:3</option><option value="portrait">Portrait · 3:4</option><option value="wide">Wide · 16:9</option><option value="custom" disabled>Custom</option></select>}
       <select aria-label="Number of proposals" value={settings.count} onChange={event => onChange({ ...settings, count: Number(event.target.value) })}>{[1, 2, 3, 4].map(count => <option key={count} value={count}>{count} {count === 1 ? "proposal" : "proposals"}</option>)}</select>
     </div>

@@ -107,7 +107,7 @@ For manual setup, troubleshooting a CPU-only PyTorch install and every runtime o
 | Model | Used for | Notes |
 |---|---|---|
 | FLUX.2 Klein 9B NVFP4 | Quality preset on Windows: every AI tool | Non-commercial licence |
-| FLUX.2 Klein 4B NVFP4 | Fast preset on Windows: generation and editing, quicker and lighter | Commercially licensed; Enhance always uses Quality |
+| FLUX.2 Klein 4B NVFP4 | Fast preset on Windows: generation and editing, quicker and lighter | Commercially licensed; Enhance runs without the detail enhancer |
 | FLUX.2 Klein 9B (BF16, 8-bit or 4-bit) | Quality preset on a Mac | Non-commercial licence |
 | FLUX.2 Klein 4B (BF16, 8-bit or 4-bit) | Fast preset on a Mac | Commercially licensed |
 | FLUX.2 Klein 4B BF16 | On Windows for GPUs without NVFP4 support | Advanced controls |
@@ -115,7 +115,7 @@ For manual setup, troubleshooting a CPU-only PyTorch install and every runtime o
 | Grounding DINO tiny | Find, Subject and face detection | Runs on the CPU |
 | ViTMatte small | Soft edges for Subject and Remove background | Runs on the CPU |
 
-FLUX.2 Klein does all the AI work: generate, edit, replace, remove, sketch, fix faces, enhance and expand. Enhance always uses Quality 9B with its non-commercial detail-enhancer adapter. The CPU models handle selection. With the model loaded on the target GPU, a 1024 × 1024 generation takes about 3 s, a full-frame edit about 8 s, and widening a 1254 px photo by half about 10 s. Enhance takes about ten seconds per tile. On an M5 Max, Quality takes about 7 s to generate, 11 s to replace a selection and 15 s for a full-frame edit; Fast about half that. The engine warms up the Quality model in the background at start-up; downloads and loading add time. See the [model comparison](benchmarks/MODEL_COMPARISON_2026-10-09.md) and [Enhance evaluation](docs/notes/2026-10-10-quality-speed-sweep.md#enhance) for measurements.
+FLUX.2 Klein does all the AI work: generate, edit, replace, remove, sketch, fix faces, enhance and expand. Enhance on Quality 9B adds its non-commercial detail-enhancer adapter; on Fast it redraws without it. The CPU models handle selection. With the model loaded on the target GPU, a 1024 × 1024 generation takes about 3 s, a full-frame edit about 8 s, and widening a 1254 px photo by half about 10 s. Enhance takes about ten seconds per tile. On an M5 Max, Quality takes about 7 s to generate, 11 s to replace a selection and 15 s for a full-frame edit; Fast about half that. The engine warms up the Quality model in the background at start-up; downloads and loading add time. See the [model comparison](benchmarks/MODEL_COMPARISON_2026-10-09.md) and [Enhance evaluation](docs/notes/2026-10-10-quality-speed-sweep.md#enhance) for measurements.
 
 ## Desktop app
 

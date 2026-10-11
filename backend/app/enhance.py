@@ -1,4 +1,4 @@
-"""Enhance: adds fine detail with the detail-enhancer LoRA, in overlapping tiles on large pictures."""
+"""Enhance: adds fine detail (with the detail-enhancer LoRA on Quality), in overlapping tiles on large pictures."""
 from __future__ import annotations
 
 import json
@@ -33,8 +33,19 @@ MIN_SELECTION_MARGIN = 32
 # 0.93. It keeps each tile's layout, so neighbouring tiles agree where they overlap.
 ENHANCE_STEPS = 8
 ENHANCE_STRENGTH = 0.625
+# Fast has no detail-enhancer LoRA (it was trained on 9B). The enhance prompt
+# alone adds detail there, and more detail means redrawing more: Subtle (0.4)
+# at ENHANCE_STRENGTH, Strong (0.7) at 0.75.
+FAST_STRENGTH_PER_DETAIL = 5 / 12
 
 Box = tuple[int, int, int, int]
+
+
+def redraw(model_name: str, detail: float) -> tuple[float, float]:
+    """The detail LoRA scale and redraw strength of Enhance on this model."""
+    if model_name == settings.quality_model:
+        return detail, ENHANCE_STRENGTH
+    return 0.0, min(0.875, max(0.5, ENHANCE_STRENGTH + (detail - 0.4) * FAST_STRENGTH_PER_DETAIL))
 
 
 def tile_layout(width: int, height: int) -> list[Box]:
@@ -109,8 +120,9 @@ def enhance_region(selection: np.ndarray | None, width: int, height: int) -> Box
 
 
 def run_enhance(request: EnhanceRequest, image_bytes: bytes, image_name: str | None, mask_bytes: bytes | None, control: JobControl) -> list[int]:
-    """Redraws the picture or selection tile by tile with the detail LoRA and blends the tiles back."""
+    """Redraws the picture or selection tile by tile (with the detail LoRA on Quality) and blends the tiles back."""
     provider = registry.activate(request.model_name)
+    detail, strength = redraw(request.model_name, request.detail)
     input_path = _save_bytes(image_bytes, settings.input_dir, "input", image_name)
     mask_path: Path | None = None
     output_paths: list[Path] = []
@@ -146,7 +158,7 @@ def run_enhance(request: EnhanceRequest, image_bytes: bytes, image_name: str | N
                     tile_request = EditRequest(prompt="enhance", model_name=request.model_name, runtime_mode=request.runtime_mode,
                                                steps=ENHANCE_STEPS, guidance=request.guidance,
                                                seed=None if seed is None else (seed + number) % (2**32),
-                                               mode="enhance", detail=request.detail, strength=ENHANCE_STRENGTH,
+                                               mode="enhance", detail=detail, strength=strength,
                                                ).model_copy(update={"prompt": request.prompt})
                     tile_seed, _ = provider.edit(tile_request, tile_in, tile_out, step)
                     used_seed = used_seed or tile_seed

@@ -41,7 +41,6 @@ class QualityOptionTests(unittest.TestCase):
             (EditRequest, {"strength": .6}),
             (EditRequest, {"strength": .6, "mode": "sketch"}),
             (EditRequest, {"strength": 0, "mode": "face"}),
-            (EnhanceRequest, {"model_name": "flux2-klein-4b-nvfp4"}),
             (EnhanceRequest, {"reference_ids": [1]}),
             (EnhanceRequest, {"detail": 0}),
             (EnhanceRequest, {"detail": 1.5}),

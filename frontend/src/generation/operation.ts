@@ -13,7 +13,7 @@ export function taskFor(operation: Operation): ImageTask {
 /** Faithful sharpens faces from themselves, keeping expression and light; Redraw draws them anew. */
 export type FaceMode = "faithful" | "redraw";
 
-/** How much detail Enhance adds: the detail-enhancer LoRA's scale. */
+/** How much detail Enhance adds: the detail-enhancer LoRA's scale on Quality, a deeper redraw on Fast. */
 export type EnhanceLevel = "subtle" | "strong";
 export const ENHANCE_DETAIL: Record<EnhanceLevel, number> = { subtle: 0.4, strong: 0.7 };
 
