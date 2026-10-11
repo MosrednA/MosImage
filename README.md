@@ -108,8 +108,9 @@ For manual setup, troubleshooting a CPU-only PyTorch install and every runtime o
 |---|---|---|
 | FLUX.2 Klein 9B NVFP4 | Quality preset on Windows: every AI tool | Non-commercial licence |
 | FLUX.2 Klein 4B NVFP4 | Fast preset on Windows: generation and editing, quicker and lighter | Commercially licensed; Enhance always uses Quality |
-| FLUX.2 Klein 9B BF16 | Quality preset on a Mac | Non-commercial licence |
-| FLUX.2 Klein 4B BF16 | Fast preset on a Mac; on Windows for GPUs without NVFP4 support | Advanced controls on Windows |
+| FLUX.2 Klein 9B (BF16, 8-bit or 4-bit) | Quality preset on a Mac | Non-commercial licence |
+| FLUX.2 Klein 4B (BF16, 8-bit or 4-bit) | Fast preset on a Mac | Commercially licensed |
+| FLUX.2 Klein 4B BF16 | On Windows for GPUs without NVFP4 support | Advanced controls |
 | SAM 2.1 Tiny | Click selection and layer cut-outs | Runs on the CPU |
 | Grounding DINO tiny | Find, Subject and face detection | Runs on the CPU |
 | ViTMatte small | Soft edges for Subject and Remove background | Runs on the CPU |
