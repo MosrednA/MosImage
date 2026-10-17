@@ -312,6 +312,34 @@ class ReferenceGenerationTests(unittest.TestCase):
         self.assertNotIn("reference", _inpaint_prompt(InpaintForm(prompt="sitting on a bench")))
         self.assertNotIn("reference image", _inpaint_prompt(InpaintForm(prompt="grass", edit_operation="remove"), ["Anna"]))
 
+    def test_reference_roles_customize_prompts_and_persist_via_api(self) -> None:
+        from app.models.base import ModelReference
+        from app.models.flux2_klein import _edit_prompt, _generation_prompt
+
+        anna = ModelReference(name="Anna", path=Path("anna.png"), role="subject")
+        coat = ModelReference(name="Red coat", path=Path("coat.png"), role="clothing")
+        pose = ModelReference(name="Reference 2", path=Path("pose.png"), role="pose")
+        style = ModelReference(name="Noir", path=Path("style.png"), role="style")
+
+        inpaint_mixed = _inpaint_prompt(InpaintForm(prompt="standing in the park"), [anna, pose])
+        self.assertIn("Anna is the person or object from reference image 1", inpaint_mixed)
+        self.assertIn("Follow the body pose, posture, gesture and framing from reference image 2", inpaint_mixed)
+
+        edit_clothing = _edit_prompt("put this jacket on her", [coat])
+        self.assertIn("For Red coat, copy the outfit, garments, fabric, colours and accessories from image 2", edit_clothing)
+
+        gen_style = _generation_prompt("a rainy street at dusk", [style])
+        self.assertIn("Match the visual style, lighting, colour palette and surface texture of the reference image.", gen_style)
+
+        with isolated_data():
+            client = TestClient(app)
+            created = client.post("/api/v2/references", files={"image": ("Anna.png", png(Image.new("RGB", (20, 20))), "image/png")}).json()
+            self.assertEqual(created["role"], "subject")
+            updated = client.patch(f"/api/v2/references/{created['id']}", json={"role": "clothing", "name": "Jacket"})
+            self.assertEqual(updated.status_code, 200)
+            self.assertEqual((updated.json()["role"], updated.json()["name"]), ("clothing", "Jacket"))
+            self.assertEqual(client.patch(f"/api/v2/references/{created['id']}", json={"role": "invalid"}).status_code, 422)
+
     def test_reference_ids_are_validated(self) -> None:
         with self.assertRaises(ValidationError):
             OutpaintForm(prompt="sky", left=64, reference_ids=[3])

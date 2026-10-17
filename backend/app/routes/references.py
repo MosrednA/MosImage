@@ -6,7 +6,7 @@ from PIL import Image
 
 from .. import references
 from ..jobs import jobs
-from ..schemas import ReferenceRecord
+from ..schemas import ReferenceRecord, ReferenceUpdate
 from ..selection import selector
 from .common import http_errors, read_uploaded_image
 
@@ -45,6 +45,12 @@ async def add_document_reference(document_id: int, image: UploadFile = File(...)
     content = await read_uploaded_image(image)
     with http_errors({**NOT_FOUND, **UNREADABLE}):
         return references.create_reference(document_id, content, image.filename)
+
+
+@router.patch("/references/{reference_id}", response_model=ReferenceRecord)
+def update_document_reference(reference_id: int, body: ReferenceUpdate) -> dict:
+    with http_errors({**NOT_FOUND, **UNREADABLE}):
+        return references.update_reference(reference_id, name=body.name, role=body.role)
 
 
 @router.delete("/references/{reference_id}")

@@ -37,6 +37,7 @@ interface EditorCanvasProps {
   imageUrl: string | null;
   previewImageUrl?: string | null;
   reviewing: boolean;
+  splitCompare?: boolean;
   imageName?: string;
   onMaskChange: (mask: Blob | null) => void;
   tool: CanvasTool;
@@ -77,7 +78,7 @@ export interface FaceOverlay {
 }
 
 export function EditorCanvas(props: EditorCanvasProps) {
-  const { imageUrl, previewImageUrl, reviewing, imageName, tool, disabled, points, contextPadding, faces } = props;
+  const { imageUrl, previewImageUrl, reviewing, splitCompare, imageName, tool, disabled, points, contextPadding, faces } = props;
   const stageRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const cursorRef = useRef<HTMLDivElement | null>(null);
@@ -96,6 +97,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const [sketchColour, setSketchColour] = useState<string>(SKETCH_COLOURS[2]);
   const [sketchSize, setSketchSize] = useState<number>(SKETCH_SIZE.initial);
   const [sketchErase, setSketchErase] = useState(false);
+  const [splitRatio, setSplitRatio] = useState(0.5);
   const { layerActive } = props;
   const expand = expandOverride ?? (imageSize ? autoExpand(imageSize.width, imageSize.height) : DEFAULT_EXPAND);
   const soften = softenOverride ?? (imageSize ? autoSoften(imageSize.width, imageSize.height) : 0);
@@ -180,8 +182,15 @@ export function EditorCanvas(props: EditorCanvasProps) {
     mask.gesture.update(event);
   }
 
+  function updateSplit(clientX: number) {
+    const rect = surfaceRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return;
+    setSplitRatio(Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)));
+  }
+
   const brushCursor = editing && !panning && !disabled && (tool === "brush" || tool === "eraser" || tool === "sketch");
   const cursorSize = tool === "sketch" ? sketchSize : brushSize;
+  const splitting = !!(reviewing && splitCompare && previewImageUrl);
 
   return (
     <section className="editor-canvas" aria-label="Image editor">
@@ -205,8 +214,21 @@ export function EditorCanvas(props: EditorCanvasProps) {
       <div ref={stageRef} className="editor-stage" data-tool={panning ? "move" : tool} {...viewport.panHandlers}>
         {imageUrl && imageSize && displaySize ? (
           <div ref={surfaceRef} className={"editor-surface" + (brushCursor ? " brush-cursor-active" : "")} style={{ width: displaySize.width, height: displaySize.height }}>
-            <img src={previewImageUrl || imageUrl} alt={imageName || "Source image"} draggable={false} />
+            <img src={splitting ? imageUrl : (previewImageUrl || imageUrl)} alt={imageName || "Source image"} draggable={false} />
             {props.renderLayers({ zoom, size: imageSize, brushSize, brushHardness: 1 - softness / 100, brushOpacity: brushOpacity / 100, brushTone: tone / 100, hide: layerHide, interactive: layerInput && editing, trackCursor })}
+            {splitting && <>
+              <img className="split-preview-image" src={previewImageUrl!} alt="Proposal preview" draggable={false}
+                style={{ clipPath: `inset(0 0 0 ${(splitRatio * 100).toFixed(2)}%)` }} />
+              <div className="split-compare-overlay" aria-label="Split comparison"
+                onPointerDown={event => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); updateSplit(event.clientX); }}
+                onPointerMove={event => { if (event.buttons & 1) updateSplit(event.clientX); }}>
+                <div className="split-compare-divider" style={{ left: `${(splitRatio * 100).toFixed(2)}%` }}>
+                  <span className="split-compare-label before">Original</span>
+                  <span className="split-compare-handle" aria-hidden="true">↔</span>
+                  <span className="split-compare-label after">Proposal</span>
+                </div>
+              </div>
+            </>}
             <canvas ref={sketch.canvasRef} className="sketch-draw" width={imageSize.width} height={imageSize.height} data-tool="sketch" aria-label="Sketch canvas"
               style={{ pointerEvents: sketching && editing && !disabled ? undefined : "none", opacity: props.sketchVisible && !reviewing ? 1 : 0 }}
               onPointerDown={event => { if (event.button === 0 && !disabled) sketch.gesture.begin(event); }}

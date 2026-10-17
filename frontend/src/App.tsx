@@ -33,7 +33,7 @@ import { ReferencePanel } from "./components/ReferencePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { SidePanel, SideTab } from "./components/SidePanel";
 import { LayerStage } from "./layers/LayerStage";
-import { blankCanvas, canvasBlob, cutSelection, decodeImage, fileFromUrl, invertMask, layerFootprint, layerSelection, loadImage, loadMask, selectionPatch, selectionToLayerMask, shownMask, solidMask } from "./layers/bitmaps";
+import { blankCanvas, canvasBlob, cutSelection, decodeImage, editChangeMask, fileFromUrl, invertMask, layerFootprint, layerSelection, loadImage, loadMask, selectionPatch, selectionToLayerMask, shownMask, solidMask } from "./layers/bitmaps";
 import { generationPlacement, initialPlacement } from "./layers/geometry";
 import { MergeKind } from "./layers/stack";
 import { useLayers } from "./hooks/useLayers";
@@ -92,6 +92,7 @@ export default function App() {
   const [proposal, setProposal] = useState<RevisionRecord | null>(null);
   const [selected, setSelected] = useState(0);
   const [compare, setCompare] = useState(false);
+  const [splitCompare, setSplitCompare] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const [panel, setPanel] = useState<"settings" | "expansion" | "shortcuts" | null>(null);
@@ -582,9 +583,9 @@ export default function App() {
       jobs.queued(submission.created, submission.operation, submission.extras);
     });
   }
-  async function apply(separate = false) {
+  async function apply(separate = false, maskAfter = false) {
     await perform(async () => {
-      if (layerResult && chosen) await applyAsLayer(layerResult, proposalUrls, selected, separate);
+      if (layerResult && chosen) await applyAsLayer(layerResult, proposalUrls, selected, separate, maskAfter);
       else if (document && proposal) {
         const result = await acceptAlternative(document.id, proposal.id, proposal.alternatives[selected].id);
         await openSaved(result); await refresh();
@@ -593,22 +594,32 @@ export default function App() {
       }
     });
   }
-  function discard() { setAlternatives([]); setProposal(null); setLayerResult(null); setCompare(false); }
+  function discard() { setAlternatives([]); setProposal(null); setLayerResult(null); setCompare(false); setSplitCompare(false); }
   /** Every proposal becomes a variant of one new layer, showing the chosen one; `separate` gives each its own layer. */
-  async function applyAsLayer(result: LayerResult, urls: string[], shown: number, separate = false) {
+  async function applyAsLayer(result: LayerResult, urls: string[], shown: number, separate = false, maskAfter = false) {
     if (!size) return;
     await layers.settled();
     let added: LayerRecord | null;
     if (result.kind === "generation") {
       const files = await Promise.all(urls.map(url => fileFromUrl(url, "generation.png")));
-      const image = await loadImage(urls[shown]);
+      const loaded = await Promise.all(urls.map(url => loadImage(url)));
+      const image = loaded[shown];
       const placement = generationPlacement({ width: image.naturalWidth, height: image.naturalHeight }, size);
-      added = await layers.addResult(files, null, result.name, placement, null, undefined, shown, separate);
+      let layerMask: Blob | null = null;
+      if (result.diffMask) {
+        const background = await decodeImage(await picture.editImage());
+        const diff = editChangeMask(background, separate ? [image] : loaded, size);
+        if (diff) layerMask = await canvasBlob(diff);
+      }
+      if (!layerMask && maskAfter) layerMask = await canvasBlob(solidMask(image.naturalWidth, image.naturalHeight));
+      added = await layers.addResult(files, layerMask, result.name, placement, null, undefined, shown, separate);
     } else if (result.kind === "layer") {
       const layer = layers.layers.find(item => item.id === result.layerId);
       if (!layer) throw new Error("That layer was deleted, so the edit has nowhere to go.");
       const images = await Promise.all(urls.map(async url => canvasBlob(await editedLayer(await loadImage(url), layer))));
-      const layerMask = layer.mask_url ? await fileFromUrl(fileUrl(layer.mask_url), "mask.png") : null;
+      // The edit keeps the layer's mask, switched on or off as it was.
+      const layerMask = layer.mask_url ? await fileFromUrl(fileUrl(layer.mask_url), "mask.png")
+        : maskAfter ? await canvasBlob(solidMask(layer.width, layer.height)) : null;
       added = await layers.addResult(images, layerMask, result.name, layer, layer.id, "Edit layer", shown, separate);
     } else {
       // Fixed faces keep their own mask: only the faces become the layer.
@@ -621,7 +632,10 @@ export default function App() {
     }
     if (!added) return;
     await layers.settled();
-    discard(); selection.clear(); setSketchClear(value => value + 1); setOperation("replace"); setTool("transform"); setSideTab("layers"); collapsePanel(false);
+    discard(); selection.clear(); setSketchClear(value => value + 1); setOperation("replace");
+    if (maskAfter) editLayerMask(added.id);
+    else setTool("transform");
+    setSideTab("layers"); collapsePanel(false);
     await refresh();
   }
   async function facesMask(): Promise<Blob> {
@@ -663,7 +677,7 @@ export default function App() {
           ? <CropCanvas imageUrl={crop.imageUrl} size={size} rect={crop.rect} ratio={ratioValue(crop.ratio, size)} onChange={rect => setCrop({ ...crop, rect })} disabled={locked} />
           : operation === "expand" && size
           ? <ExpansionCanvas imageUrl={expansionPictureUrl} size={size} expansion={expansion} onChange={setExpansion} disabled={locked} reviewing={reviewing} previewUrl={previewUrl} previewSize={chosen?.width && chosen.height ? { width: chosen.width, height: chosen.height } : null} />
-          : <EditorCanvas imageUrl={sourceUrl} previewImageUrl={previewUrl} reviewing={reviewing} imageName={document?.name} onMaskChange={selection.setMask} tool={tool} disabled={locked} maskImportUrl={selection.maskUrl} clearToken={selection.clearToken}
+          : <EditorCanvas imageUrl={sourceUrl} previewImageUrl={previewUrl} reviewing={reviewing} splitCompare={splitCompare} imageName={document?.name} onMaskChange={selection.setMask} tool={tool} disabled={locked} maskImportUrl={selection.maskUrl} clearToken={selection.clearToken}
             points={selection.points} onObjectPoint={point => void selection.objectPoint(point)} onRemovePoint={index => void selection.removePoint(index)} onClearSelection={selection.clear}
             onImageSize={setSize} onError={setError} contextPadding={settings.context_padding} onContextPadding={context_padding => setSettings(current => ({ ...current, context_padding }))} onHelp={() => setPanel("shortcuts")}
             layerActive={!!activeLayer} layerPointCount={selection.layerPoints.length} onUndoLayerPoint={() => void selection.removeLayerPoint(selection.layerPoints.length - 1)}
@@ -674,7 +688,7 @@ export default function App() {
               disabled: locked, onFill: fillSelection, onRemove: () => void submit("remove"), onFaces: () => void submit("faces"), onEnhance: () => void submit("enhance"),
               onToLayer: () => void copySelectionToLayer(), maskTarget: maskTarget?.name ?? null, onMaskLayer: () => maskTarget && void addLayerMask(maskTarget.id, false),
             }}
-            renderLayers={view => previewUrl ? null : <LayerStage layers={layers.layers} active={activeLayer} zoom={view.zoom} size={view.size} tool={tool} brushSize={view.brushSize} hide={view.hide}
+            renderLayers={view => previewUrl && !splitCompare ? null : <LayerStage layers={layers.layers} active={activeLayer} zoom={view.zoom} size={view.size} tool={tool} brushSize={view.brushSize} hide={view.hide}
               brushHardness={view.brushHardness} brushOpacity={view.brushOpacity} brushTone={view.brushTone} maskView={maskView} overlay={layerMasking && maskOverlay}
               interactive={view.interactive} disabled={locked} points={selection.layerPoints} onSelect={layers.select}
               onPreview={layers.preview} onCancelPreview={layers.cancelPreview} onCommit={layers.update} onMask={(id, layerMask, label) => void layers.setMask(id, layerMask, label)}
@@ -689,12 +703,17 @@ export default function App() {
           onSize={(width, height, keep) => setCrop({ ...crop, rect: resizeCrop(crop.rect, width, height, ratioValue(crop.ratio, size), keep) })}
           onReset={() => setCrop({ ...crop, ratio: "free", rect: fullCrop(size) })} onCancel={() => setCrop(null)} onApply={() => void applyCrop()} />
         : reviewing
-        ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }} canCompare={!!source} comparing={compare} onCompare={() => setCompare(value => !value)} busy={busy} onDiscard={discard} onApply={() => void apply()} onApplySeparately={layerResult ? () => void apply(true) : undefined} />
+        ? <ProposalTray thumbnails={proposalUrls} selected={selected} onSelect={index => { setSelected(index); setCompare(false); }}
+          canCompare={!!source && operation !== "expand"} comparing={compare} onCompare={() => { setCompare(value => !value); setSplitCompare(false); }}
+          splitting={splitCompare} onSplit={operation !== "expand" ? () => { setSplitCompare(value => !value); setCompare(false); } : undefined}
+          busy={busy} onDiscard={discard} onApply={() => void apply()}
+          onApplyAndMask={layerResult ? () => void apply(false, true) : undefined}
+          onApplySeparately={layerResult ? () => void apply(true) : undefined} />
         : <CommandCard promptRef={promptRef} operation={operation} onOperation={chooseOperation} hasImage={!!source} locked={locked}
           editScope={editScope} onEditScope={document && layers.layers.length ? chooseEditScope : undefined} sketchScope={sketchScope} onSketchScope={setSketchScope}
           faceMode={faceMode} onFaceMode={setFaceMode} enhanceLevel={enhanceLevel} onEnhanceLevel={setEnhanceLevel}
           settingsLabel={settingsSummary(settings, operation, !!blending)} prompt={settings.prompt} onPrompt={prompt => setSettings({ ...settings, prompt })}
-          references={references.map(item => ({ id: item.id, name: item.name, imageUrl: fileUrl(item.subject_url ?? item.image_url) }))} onRemoveReference={id => refs.toggle(id)}
+          references={references.map(item => ({ id: item.id, name: item.name, role: item.role, imageUrl: fileUrl(item.subject_url ?? item.image_url) }))} onRemoveReference={id => refs.toggle(id)}
           hint={commandHint(command)} cancelled={job?.status === "cancelled"} jobActive={jobs.active} cancelling={jobs.cancelling} canSubmit={submittable}
           onCanvasSize={() => setPanel("expansion")} onSettings={() => setPanel("settings")} onSubmit={() => void submit()} onCancel={() => void jobs.cancel()} />}
       {notice && !error && <div className="saved-notice" role="status">
@@ -722,7 +741,7 @@ export default function App() {
           onVariant={layers.switchVariant} onSeparateVariants={layers.separateVariants} />
         : <ReferencePanel references={refs.references} newImage={!document} activeIds={refs.active.map(item => item.id)} pending={refs.pending} uploading={refs.uploading}
           disabled={locked || operation === "expand"} busy={busy} note={referenceNote}
-          onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null && !locked && operation !== "expand") chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} />}
+          onUse={chooseReference} onAdd={files => void refs.add(files).then(id => { if (id !== null && !locked && operation !== "expand") chooseReference(id); })} onRemove={id => void refs.remove(id)} onIsolate={(id, isolated) => void refs.setIsolated(id, isolated)} onRole={(id, role) => void refs.setRole(id, role)} />}
     </SidePanel>
     {panel === "settings" && <ControlDialog title="Generation settings" description="Choose how your image is created." onClose={() => setPanel(null)}><SettingsControls settings={settings} onChange={setSettings} models={models} operation={operation} blending={!!blending} disabled={locked} unifiedMemory={system?.selected_device === "mps"} /></ControlDialog>}
     {panel === "expansion" && size && <ExpansionDialog size={size} expansion={expansion} onChange={setExpansion} disabled={locked} onClose={() => setPanel(null)} />}

@@ -111,7 +111,7 @@ def run_image_edit(request: EditRequest, image_bytes: bytes, image_name: str | N
 
 def _model_references(reference_ids: list[int]) -> list[ModelReference]:
     return [
-        ModelReference(name=record["name"], path=references.model_image_path(record["id"]))
+        ModelReference(name=record["name"], path=references.model_image_path(record["id"]), role=record.get("role", "subject"))
         for record in (references.get_reference(reference_id) for reference_id in reference_ids)
         if record is not None
     ]

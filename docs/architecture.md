@@ -1,7 +1,7 @@
 # Architecture
 
 Status: Current reference
-Last verified: 2026-10-11
+Last verified: 2026-10-17
 
 MosImage is two local processes: a FastAPI engine that owns the models, the job queue and all files, and a React UI that talks to it over HTTP on `127.0.0.1:8000`. The optional Tauri shell starts the engine itself and shows the same UI in a desktop window.
 
@@ -32,7 +32,7 @@ MosImage is two local processes: a FastAPI engine that owns the models, the job 
 | `selection.py` | `/api` | point selection, select by text, subject cut-out |
 | `jobs.py` | `/api/jobs` | job status and cancellation |
 | `documents.py` | `/api/v2` | documents, revisions, layer assets, layers, AI alternatives, undo/redo |
-| `references.py` | `/api/v2` | loose and per-document references, subject isolation |
+| `references.py` | `/api/v2` | loose and per-document references, subject isolation, name and role (`PATCH /references/{id}`) |
 | `common.py` | | shared helpers: bounded upload reads, parameter parsing, capability and reference checks, `http_errors()` for mapping exceptions to status codes |
 
 `main.py` keeps only the app setup: CORS, static file serving for `/files/images/`, health, system info, engine warm-up, model load/unload and shutdown.
@@ -83,7 +83,7 @@ Optional Fine detail sends the contextual selected crop through `provider.edit` 
 - `storage.py` runs SQLite with WAL and named migrations, and records generation history.
 - `documents.py` stores documents, revisions, AI alternatives, undo and redo. A stale base revision raises `RevisionConflict`, which the API returns as HTTP 409.
 - `layers.py` stores layer images (RGBA PNG) and masks (greyscale PNG). The opened picture is the bottom layer, `background`, which points at the document image itself; `revisions.composite_image_path` remains the canvas image that sets the size and the library thumbnail. An AI layer that replaced another keeps its `original_id`. A switched-off mask is kept with `mask_enabled: false`; stacks saved before that flag existed load with their masks on. A layer can hold up to eight same-sized `variant_paths`, the AI proposals it was applied with; `image_path` is the one shown and the others stay on disk until the document goes.
-- `references.py` stores reference images and their optional isolated subjects.
+- `references.py` stores reference images, their optional isolated subjects and their role (subject, clothing, pose or style), which the Klein prompts turn into a sentence per reference.
 
 All files live under `data/`. Only `data/images/` is served over HTTP.
 

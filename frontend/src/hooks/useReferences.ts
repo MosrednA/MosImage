@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ReferenceRecord, addReference, deleteReference, listReferences, setReferenceIsolation } from "../api";
+import { ReferenceRecord, ReferenceRole, addReference, deleteReference, listReferences, setReferenceIsolation, updateReference } from "../api";
 
 const ACCEPTED = new Set(["image/png", "image/jpeg", "image/webp"]);
 /** Matches the backend limit; more references dilute each likeness. */
@@ -65,6 +65,13 @@ export function useReferences(documentId: number | null, onError: (message: stri
     });
   }
 
+  async function setRole(id: number, role: ReferenceRole) {
+    await withPending(id, async () => {
+      const record = await updateReference(id, { role });
+      setReferences(items => items.map(item => item.id === id ? record : item));
+    });
+  }
+
   async function withPending(id: number, action: () => Promise<void>) {
     setPending(ids => new Set(ids).add(id));
     try { await action(); } catch (err) { onError(message(err)); }
@@ -81,7 +88,7 @@ export function useReferences(documentId: number | null, onError: (message: stri
   function clear() { setActiveIds([]); }
 
   const active = activeIds.map(id => references.find(item => item.id === id)).filter((item): item is ReferenceRecord => !!item);
-  return { references, active, toggle, clear, pending, uploading, add, remove, setIsolated };
+  return { references, active, toggle, clear, pending, uploading, add, remove, setIsolated, setRole };
 }
 
 function message(error: unknown): string { return error instanceof Error ? error.message : "The reference could not be updated."; }

@@ -11,7 +11,11 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const HOST: &str = "127.0.0.1";
-const PORT: u16 = 8000;
+/// MOSIMAGE_PORT at build time, else 8000; the UI build reads the same variable.
+const PORT: u16 = match option_env!("MOSIMAGE_PORT") {
+    Some(port) => parse_port(port),
+    None => 8000,
+};
 /// Cancelling a job and unloading the models takes a few seconds; after this the engine is ended.
 const STOP_GRACE: Duration = Duration::from_secs(20);
 const RESTART_DELAY: Duration = Duration::from_secs(1);
@@ -207,6 +211,20 @@ fn python(backend: &Path) -> PathBuf {
     } else {
         backend.join(".venv").join("bin").join("python")
     }
+}
+
+const fn parse_port(text: &str) -> u16 {
+    let digits = text.as_bytes();
+    assert!(!digits.is_empty(), "MOSIMAGE_PORT is empty");
+    let mut port: u32 = 0;
+    let mut index = 0;
+    while index < digits.len() {
+        assert!(digits[index].is_ascii_digit(), "MOSIMAGE_PORT must be a number");
+        port = port * 10 + (digits[index] - b'0') as u32;
+        assert!(port <= 65535, "MOSIMAGE_PORT must be below 65536");
+        index += 1;
+    }
+    port as u16
 }
 
 fn address() -> SocketAddr {

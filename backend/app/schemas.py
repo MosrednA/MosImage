@@ -270,16 +270,25 @@ class GenerationRecord(BaseModel):
     created_at: datetime
 
 
+ReferenceRole = Literal["subject", "clothing", "pose", "style"]
+
+
 class ReferenceRecord(BaseModel):
     id: int
     # None for loose references on the start screen.
     document_id: int | None
     name: str
+    role: ReferenceRole = "subject"
     width: int
     height: int
     image_url: str
     subject_url: str | None = None
     created_at: datetime
+
+
+class ReferenceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    role: ReferenceRole | None = None
 
 
 class DocumentUpdate(BaseModel):

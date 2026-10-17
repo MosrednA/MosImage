@@ -115,10 +115,10 @@ describe("submitJob", () => {
     expect(inDocument.extras.result?.kind).toBe("generation");
     expect(vi.mocked(generateImage).mock.calls[0][0]).toMatchObject({ width: 1024, height: 1024, reference_ids: [5] });
   });
-  it("needs a layer for a layer edit", async () => {
+  it("needs a layer for a layer edit and enables diffMask for whole-picture edits", async () => {
     await expect(submitJob(input({ operation: "edit", editScope: "layer" }))).rejects.toThrow("Pick the layer");
     const whole = await submitJob(input({ operation: "edit" }));
-    expect(whole.extras.result?.kind).toBe("generation");
+    expect(whole.extras.result).toEqual({ kind: "generation", name: "AI · a red hat", diffMask: true });
   });
   it("expands the picture as you see it and moves layers along", async () => {
     const visible = new File(["with layers"], "picture.png");

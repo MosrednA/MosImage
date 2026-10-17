@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS document_references (
     width INTEGER NOT NULL,
     height INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    role TEXT NOT NULL DEFAULT 'subject',
     FOREIGN KEY(document_id) REFERENCES documents(id)
 );
 
@@ -40,6 +41,7 @@ MAX_REFERENCES = 24
 MAX_PIXELS = 16_777_216
 # Neutral studio grey: concept images on plain backgrounds worked best in trials.
 SUBJECT_BACKGROUND = (232, 232, 232)
+VALID_ROLES = {"subject", "clothing", "pose", "style"}
 
 
 def _allow_loose_references(db: sqlite3.Connection) -> None:
@@ -47,7 +49,9 @@ def _allow_loose_references(db: sqlite3.Connection) -> None:
     columns = {row["name"]: row for row in db.execute("PRAGMA table_info(document_references)")}
     if not columns["document_id"]["notnull"]:
         return
-    db.executescript("""
+    role_col = ", role TEXT NOT NULL DEFAULT 'subject'" if "role" in columns else ""
+    role_sel = ", role" if "role" in columns else ""
+    db.executescript(f"""
         CREATE TABLE document_references_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             document_id INTEGER,
@@ -56,10 +60,10 @@ def _allow_loose_references(db: sqlite3.Connection) -> None:
             subject_path TEXT,
             width INTEGER NOT NULL,
             height INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')){role_col},
             FOREIGN KEY(document_id) REFERENCES documents(id)
         );
-        INSERT INTO document_references_new SELECT id, document_id, name, image_path, subject_path, width, height, created_at FROM document_references;
+        INSERT INTO document_references_new SELECT id, document_id, name, image_path, subject_path, width, height, created_at{role_sel} FROM document_references;
         DROP TABLE document_references;
         ALTER TABLE document_references_new RENAME TO document_references;
         CREATE INDEX IF NOT EXISTS document_references_document_idx ON document_references(document_id, id);
@@ -98,10 +102,17 @@ def _number_machine_names(db: sqlite3.Connection) -> None:
             db.execute("UPDATE document_references SET name = ? WHERE id = ?", (f"Reference {position}", row["id"]))
 
 
+def _add_reference_role(db: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(document_references)")}
+    if "role" not in columns:
+        db.execute("ALTER TABLE document_references ADD COLUMN role TEXT NOT NULL DEFAULT 'subject'")
+
+
 REFERENCE_MIGRATIONS: list[storage.Migration] = [
     ("references.0001_create", lambda db: db.executescript(REFERENCE_SCHEMA)),
     ("references.0002_loose", _allow_loose_references),
     ("references.0003_machine_names", _number_machine_names),
+    ("references.0004_role", _add_reference_role),
 ]
 
 
@@ -213,6 +224,28 @@ def clear_subject(reference_id: int) -> dict[str, Any]:
     return get_reference(reference_id) or {}
 
 
+def update_reference(reference_id: int, *, name: str | None = None, role: str | None = None) -> dict[str, Any]:
+    reference = get_reference(reference_id)
+    if reference is None:
+        raise LookupError("Reference not found")
+    updates: dict[str, Any] = {}
+    if name is not None:
+        cleaned = name.strip()
+        if not cleaned:
+            raise ValueError("Reference name cannot be empty")
+        updates["name"] = cleaned[:80]
+    if role is not None:
+        if role not in VALID_ROLES:
+            raise ValueError(f"Unsupported reference role: {role}")
+        updates["role"] = role
+    if updates:
+        columns = ", ".join(f"{column} = ?" for column in updates)
+        with storage.connect() as db:
+            db.execute(f"UPDATE document_references SET {columns} WHERE id = ?", (*updates.values(), reference_id))
+            db.commit()
+    return get_reference(reference_id) or {}
+
+
 def delete_reference(reference_id: int) -> None:
     reference = get_reference(reference_id)
     if reference is None:
@@ -248,6 +281,7 @@ def _count(db: sqlite3.Connection, document_id: int | None) -> int:
 
 def _record(row: Row) -> dict[str, Any]:
     record = dict(row)
+    record.setdefault("role", "subject")
     record["image_url"] = storage.image_url(record["image_path"])
     record["subject_url"] = storage.image_url(record["subject_path"]) if record["subject_path"] else None
     return record

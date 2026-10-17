@@ -2,13 +2,14 @@ import { MutableRefObject, useEffect, useRef, useState } from "react";
 import { DocumentRecord, LayerRecord, fileUrl } from "../api";
 import { ImageSize } from "../canvas/coordinates";
 import { errorMessage } from "../errors";
-import { FlatLayer, decodeImage, fileFromUrl, flatten, loadImage, shownMask, withTransparencyOf } from "../layers/bitmaps";
+import { FlatLayer, decodeImage, editedLayerImage, fileFromUrl, flatten, loadImage, shownMask } from "../layers/bitmaps";
 import { fillsCanvas, isShown } from "../layers/stack";
 import { saveFile } from "../saveFile";
 
-/** An edited layer image with the original layer's transparency. */
+/** An edited layer image following the AI's updated silhouette, to show through the layer's own mask. */
 export async function editedLayer(edited: HTMLImageElement, layer: LayerRecord): Promise<HTMLCanvasElement> {
-  return withTransparencyOf(edited, await loadImage(fileUrl(layer.image_url)), layer.width, layer.height);
+  const [image, mask] = await Promise.all([loadImage(fileUrl(layer.image_url)), shownMask(layer)]);
+  return editedLayerImage(edited, image, mask, layer.width, layer.height);
 }
 
 /** Layers with their images and masks loaded, ready to draw. */

@@ -167,11 +167,14 @@ export interface LayerRecord extends LayerState {
 
 export interface LayerAsset { path: string; url: string; width: number; height: number }
 
+export type ReferenceRole = "subject" | "clothing" | "pose" | "style";
+
 export interface ReferenceRecord {
   id: number;
   /** Null for loose references on the start screen. */
   document_id: number | null;
   name: string;
+  role?: ReferenceRole;
   width: number;
   height: number;
   image_url: string;
@@ -439,6 +442,14 @@ export async function addReference(documentId: number | null, image: File): Prom
   const form = new FormData();
   form.set("image", image);
   return request(documentId === null ? "/api/v2/references" : `/api/v2/documents/${documentId}/references`, { method: "POST", body: form });
+}
+
+export async function updateReference(referenceId: number, payload: { name?: string; role?: ReferenceRole }): Promise<ReferenceRecord> {
+  return request(`/api/v2/references/${referenceId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function deleteReference(referenceId: number): Promise<void> {

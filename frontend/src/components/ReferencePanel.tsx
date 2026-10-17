@@ -1,7 +1,14 @@
 import { DragEvent, useRef, useState } from "react";
-import { ReferenceRecord, fileUrl } from "../api";
+import { ReferenceRecord, ReferenceRole, fileUrl } from "../api";
 import { MAX_ACTIVE_REFERENCES } from "../hooks/useReferences";
 import { Icon } from "./Icon";
+
+export const REFERENCE_ROLES: readonly { role: ReferenceRole; label: string; title: string }[] = [
+  { role: "subject", label: "Subject", title: "Keep face, hair, clothing and proportions from this reference" },
+  { role: "clothing", label: "Outfit", title: "Copy only the outfit, fabric, colours and accessories" },
+  { role: "pose", label: "Pose", title: "Follow the body posture, gesture and framing" },
+  { role: "style", label: "Style", title: "Match the lighting, colour palette and visual style" },
+];
 
 interface Props {
   references: ReferenceRecord[];
@@ -20,6 +27,7 @@ interface Props {
   onAdd: (files: File[]) => void;
   onRemove: (id: number) => void;
   onIsolate: (id: number, isolated: boolean) => void;
+  onRole?: (id: number, role: ReferenceRole) => void;
 }
 
 export function ReferencePanel(props: Props) {
@@ -58,6 +66,7 @@ export function ReferencePanel(props: Props) {
       </button>}
       {references.map(item => {
         const order = activeIds.indexOf(item.id) + 1, active = order > 0, busy = pending.has(item.id), isolated = !!item.subject_url;
+        const currentRole: ReferenceRole = item.role ?? "subject";
         const title = active ? "Stop using this reference" : full ? `Up to ${MAX_ACTIVE_REFERENCES} references per edit. Take one out first.` : "Use this reference in your next edit";
         return <div key={item.id} className={"reference-card" + (active ? " active" : "") + (busy ? " busy" : "") + (!active && full ? " unavailable" : "")}>
           <button className="reference-use" aria-pressed={active} disabled={disabled || busy} title={title} onClick={() => props.onUse(item.id)}>
@@ -72,6 +81,13 @@ export function ReferencePanel(props: Props) {
               onClick={() => props.onIsolate(item.id, !isolated)}><Icon name="scissors" /></button>
             <button className="icon-button" disabled={engineBusy || busy} title="Remove reference" aria-label={`Remove ${item.name}`} onClick={() => props.onRemove(item.id)}><Icon name="trash" /></button>
           </div>
+          {props.onRole && <div className="reference-roles" role="group" aria-label={`Role for ${item.name}`}>
+            {REFERENCE_ROLES.map(option => <button key={option.role} type="button" className={currentRole === option.role ? "active" : ""}
+              aria-pressed={currentRole === option.role} disabled={engineBusy || busy} title={option.title}
+              onClick={() => { if (currentRole !== option.role) props.onRole?.(item.id, option.role); }}>
+              {option.label}
+            </button>)}
+          </div>}
         </div>;
       })}
       {Array.from({ length: uploading }, (_, index) => <div key={"upload-" + index} className="reference-card uploading"><span className="reference-spinner" aria-label="Uploading" /></div>)}

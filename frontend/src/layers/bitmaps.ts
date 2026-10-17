@@ -149,11 +149,299 @@ export function maskedLayer(image: CanvasImageSource, mask: HTMLCanvasElement | 
   return canvas;
 }
 
-/** An edited layer image cut back to the original's transparency, so cut-outs stay cut out. */
-export function withTransparencyOf(edited: CanvasImageSource, original: CanvasImageSource, width: number, height: number): HTMLCanvasElement {
+/**
+ * Updates `editedData` in place so a layer edit keeps transparent areas cut out
+ * while letting new details grow outside the original silhouette and erased parts
+ * become transparent. The engine renders transparent pixels on `rgb(232, 232, 232)`.
+ */
+export function editedLayerPixels(editedData: Uint8ClampedArray, originalData: Uint8ClampedArray, width: number, height: number): void {
+  const total = width * height;
+  let hasTransparency = false;
+  for (let i = 3; i < originalData.length; i += 4) {
+    if (originalData[i] < 255) { hasTransparency = true; break; }
+  }
+  if (!hasTransparency) return;
+
+  let bgR = 0, bgG = 0, bgB = 0, bgCount = 0;
+  for (let p = 0; p < total; p += 1) {
+    const idx = p * 4;
+    if (originalData[idx + 3] === 0) {
+      const r = editedData[idx], g = editedData[idx + 1], b = editedData[idx + 2];
+      if (Math.abs(r - 232) <= 28 && Math.abs(g - 232) <= 28 && Math.abs(b - 232) <= 28) {
+        bgR += r; bgG += g; bgB += b; bgCount += 1;
+      }
+    }
+  }
+  if (bgCount > 0) {
+    bgR = Math.round(bgR / bgCount);
+    bgG = Math.round(bgG / bgCount);
+    bgB = Math.round(bgB / bgCount);
+  } else {
+    bgR = bgG = bgB = 232;
+  }
+
+  const bgDiffs = new Uint8Array(total);
+  const changeDiffs = new Uint8Array(total);
+  const candidate = new Uint8Array(total);
+  for (let p = 0; p < total; p += 1) {
+    const idx = p * 4;
+    const r = editedData[idx], g = editedData[idx + 1], b = editedData[idx + 2];
+    const bgDiff = Math.max(Math.abs(r - bgR), Math.abs(g - bgG), Math.abs(b - bgB));
+    bgDiffs[p] = bgDiff;
+
+    const origAlpha = originalData[idx + 3];
+    const a0 = origAlpha / 255;
+    const expR = originalData[idx] * a0 + bgR * (1 - a0);
+    const expG = originalData[idx + 1] * a0 + bgG * (1 - a0);
+    const expB = originalData[idx + 2] * a0 + bgB * (1 - a0);
+    const changeDiff = Math.min(255, Math.round(Math.max(Math.abs(r - expR), Math.abs(g - expG), Math.abs(b - expB))));
+    changeDiffs[p] = changeDiff;
+
+    const origBgDiff = Math.max(Math.abs(originalData[idx] - bgR), Math.abs(originalData[idx + 1] - bgG), Math.abs(originalData[idx + 2] - bgB));
+    if ((origAlpha < 240 && bgDiff <= 22) || (origAlpha >= 240 && origBgDiff > 28 && changeDiff > 24 && bgDiff <= 14)) {
+      candidate[p] = 1;
+    }
+  }
+
+  const exterior = new Uint8Array(total);
+  const queue = new Int32Array(total);
+  let head = 0, tail = 0;
+  const push = (p: number) => {
+    if (candidate[p] && !exterior[p]) {
+      exterior[p] = 1;
+      queue[tail++] = p;
+    }
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    if (originalData[x * 4 + 3] < 128) push(x);
+    const bottom = (height - 1) * width + x;
+    if (originalData[bottom * 4 + 3] < 128) push(bottom);
+  }
+  for (let y = 0; y < height; y += 1) {
+    const left = y * width;
+    if (originalData[left * 4 + 3] < 128) push(left);
+    const right = y * width + width - 1;
+    if (originalData[right * 4 + 3] < 128) push(right);
+  }
+
+  // Also seed transparent holes inside the layer: gaps in its own content, such as
+  // between strands of hair, and any of at least 16 connected pixels. A small grey
+  // patch inside new detail only borders that detail, so it stays.
+  const visitedHole = new Uint8Array(total);
+  const component: number[] = [];
+  for (let p = 0; p < total; p += 1) {
+    if (visitedHole[p] || originalData[p * 4 + 3] !== 0 || bgDiffs[p] > 18) continue;
+    component.length = 0;
+    visitedHole[p] = 1;
+    component.push(p);
+    let bordersLayer = false;
+    const visit = (n: number) => {
+      if (originalData[n * 4 + 3] > 0) bordersLayer = true;
+      else if (!visitedHole[n] && bgDiffs[n] <= 18) { visitedHole[n] = 1; component.push(n); }
+    };
+    for (let idx = 0; idx < component.length; idx += 1) {
+      const cur = component[idx];
+      const cx = cur % width, cy = (cur - cx) / width;
+      if (cx > 0) visit(cur - 1);
+      if (cx + 1 < width) visit(cur + 1);
+      if (cy > 0) visit(cur - width);
+      if (cy + 1 < height) visit(cur + width);
+    }
+    if (bordersLayer || component.length >= 16) {
+      for (const node of component) push(node);
+    }
+  }
+
+  while (head < tail) {
+    const cur = queue[head++];
+    const cx = cur % width, cy = (cur - cx) / width;
+    if (cx > 0) push(cur - 1);
+    if (cx + 1 < width) push(cur + 1);
+    if (cy > 0) push(cur - width);
+    if (cy + 1 < height) push(cur + width);
+  }
+
+  for (let p = 0; p < total; p += 1) {
+    const idx = p * 4;
+    const origAlpha = originalData[idx + 3];
+    const bgDiff = bgDiffs[p];
+    const changeDiff = changeDiffs[p];
+    let alpha = 255;
+
+    if (exterior[p]) {
+      if (origAlpha > 0 && changeDiff <= 16) {
+        alpha = origAlpha;
+      } else if (bgDiff <= 16) {
+        alpha = 0;
+      } else {
+        alpha = Math.round(((bgDiff - 16) / (22 - 16)) * 255);
+      }
+    } else if (origAlpha > 0 && origAlpha < 255 && fitsCoverage(editedData, idx, bgR, bgG, bgB, origAlpha)) {
+      // A soft edge the edit kept or recoloured keeps its softness; only colour
+      // that coverage cannot make over the background is new, solid detail.
+      alpha = origAlpha;
+    } else if (origAlpha < 255) {
+      const cx = p % width, cy = (p - cx) / width;
+      const touchesExterior =
+        (cx > 0 && exterior[p - 1]) ||
+        (cx + 1 < width && exterior[p + 1]) ||
+        (cy > 0 && exterior[p - width]) ||
+        (cy + 1 < height && exterior[p + width]);
+      if (touchesExterior) {
+        if (changeDiff <= 16) {
+          alpha = origAlpha;
+        } else if (bgDiff < 28) {
+          const ramp = Math.round(Math.max(0, (bgDiff - 14) / (28 - 14)) * 255);
+          alpha = Math.max(origAlpha, ramp);
+        }
+      }
+    }
+
+    editedData[idx + 3] = alpha;
+    if (alpha > 0 && alpha < 255) {
+      const a = alpha / 255;
+      editedData[idx] = Math.min(255, Math.max(0, Math.round((editedData[idx] - bgR * (1 - a)) / a)));
+      editedData[idx + 1] = Math.min(255, Math.max(0, Math.round((editedData[idx + 1] - bgG * (1 - a)) / a)));
+      editedData[idx + 2] = Math.min(255, Math.max(0, Math.round((editedData[idx + 2] - bgB * (1 - a)) / a)));
+    }
+  }
+}
+
+/** True when an edited colour over the background is some colour at `alpha`, give or take 16 levels. */
+function fitsCoverage(data: Uint8ClampedArray, idx: number, bgR: number, bgG: number, bgB: number, alpha: number): boolean {
+  const a = alpha / 255;
+  const fits = (value: number, bg: number) => value >= bg * (1 - a) - 16 && value <= bg * (1 - a) + 255 * a + 16;
+  return fits(data[idx], bgR) && fits(data[idx + 1], bgG) && fits(data[idx + 2], bgB);
+}
+
+/**
+ * Puts an edit of a masked layer back under its mask, in place, so the mask stays
+ * editable: `editedData` is what editedLayerPixels made of the layer as the AI saw
+ * it, through the alpha of `maskData`. Where the mask lets it show, it shows just
+ * as edited; parts the AI never saw and left empty keep `layerData`, so painting
+ * the mask back reveals them as before.
+ */
+export function unmaskedLayerPixels(editedData: Uint8ClampedArray, layerData: Uint8ClampedArray, maskData: Uint8ClampedArray): void {
+  for (let idx = 0; idx < editedData.length; idx += 4) {
+    const shown = maskData[idx + 3];
+    if (shown === 255) continue;
+    const alpha = editedData[idx + 3];
+    if (alpha === 0 && layerData[idx + 3] * shown < 255) {
+      editedData.set(layerData.subarray(idx, idx + 4), idx);
+    } else if (shown > 0) {
+      editedData[idx + 3] = Math.min(255, Math.round((alpha * 255) / shown));
+    }
+    // New detail where the mask hides everything is kept, hidden until the mask shows it.
+  }
+}
+
+/**
+ * A layer edit as the layer's new image under its unchanged `mask`: background stays
+ * cut out, soft edges stay soft and new detail may grow past the old outline.
+ */
+export function editedLayerImage(edited: CanvasImageSource, image: CanvasImageSource, mask: HTMLCanvasElement | null, width: number, height: number): HTMLCanvasElement {
   const canvas = blankCanvas(width, height);
-  composeLayer(canvas, edited, original);
+  const context = canvas.getContext("2d", { willReadFrequently: true })!;
+  context.drawImage(edited, 0, 0, width, height);
+  const editedPixels = context.getImageData(0, 0, width, height);
+  // The AI saw the layer through its mask.
+  editedLayerPixels(editedPixels.data, pixelData(maskedLayer(image, mask, width, height), width, height), width, height);
+  if (mask) unmaskedLayerPixels(editedPixels.data, pixelData(image, width, height), pixelData(mask, width, height));
+  context.putImageData(editedPixels, 0, 0);
   return canvas;
+}
+
+function pixelData(source: CanvasImageSource, width: number, height: number): Uint8ClampedArray {
+  const canvas = blankCanvas(width, height);
+  const context = canvas.getContext("2d", { willReadFrequently: true })!;
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return context.getImageData(0, 0, canvas.width, canvas.height).data;
+}
+
+/**
+ * Computes a feathered alpha mask over white for local edits between `sourceData`
+ * and one or more `editedDataList` buffers. Returns `null` when the change covers
+ * almost nothing (< 0.2%) or is global (> 45% of the image).
+ */
+export function changeMaskPixels(sourceData: Uint8ClampedArray, editedDataList: Uint8ClampedArray[], width: number, height: number): Uint8ClampedArray | null {
+  const total = width * height;
+  if (!total || !editedDataList.length) return null;
+  const raw = new Uint8ClampedArray(total);
+  for (let p = 0; p < total; p += 1) {
+    const idx = p * 4;
+    const sr = sourceData[idx], sg = sourceData[idx + 1], sb = sourceData[idx + 2];
+    let maxDiff = 0;
+    for (const editedData of editedDataList) {
+      const diff = Math.max(Math.abs(editedData[idx] - sr), Math.abs(editedData[idx + 1] - sg), Math.abs(editedData[idx + 2] - sb));
+      if (diff > maxDiff) maxDiff = diff;
+    }
+    raw[p] = maxDiff >= 24 ? 255 : 0;
+  }
+
+  const maxSide = Math.max(width, height);
+  const openRadius = Math.max(1, Math.round(maxSide / 128));
+  const opened = blurChannel(raw, width, height, openRadius);
+  let activeCount = 0;
+  for (let p = 0; p < total; p += 1) {
+    const v = opened[p] > 120 ? 255 : 0;
+    opened[p] = v;
+    if (v > 0) activeCount += 1;
+  }
+
+  const coverage = activeCount / total;
+  if (coverage < 0.002 || coverage > 0.45) return null;
+
+  const growRadius = Math.max(1, Math.round(maxSide / 48));
+  const grown = blurChannel(opened, width, height, growRadius).map(v => v > 24 ? 255 : 0);
+  const featherRadius = Math.max(1, Math.round(maxSide / 40));
+  const feathered = blurChannel(grown, width, height, featherRadius);
+
+  const output = new Uint8ClampedArray(total * 4);
+  for (let p = 0; p < total; p += 1) {
+    const idx = p * 4;
+    output[idx] = output[idx + 1] = output[idx + 2] = 255;
+    output[idx + 3] = Math.max(opened[p], Math.min(255, Math.round(feathered[p] * 1.25)));
+  }
+  return output;
+}
+
+/**
+ * Builds a full-size layer mask covering only the changed region of a whole-image
+ * Edit so untouched background stays at native resolution. Returns `null` for global edits.
+ */
+export function editChangeMask(source: CanvasImageSource, edited: CanvasImageSource[], size: ImageSize): HTMLCanvasElement | null {
+  if (!edited.length) return null;
+  const maxWorkSide = 256;
+  const scale = Math.min(1, maxWorkSide / Math.max(size.width, size.height));
+  const workWidth = Math.max(1, Math.round(size.width * scale));
+  const workHeight = Math.max(1, Math.round(size.height * scale));
+
+  const readDownsampled = (image: CanvasImageSource): Uint8ClampedArray => {
+    const c = blankCanvas(workWidth, workHeight);
+    const ctx = c.getContext("2d", { willReadFrequently: true })!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "medium";
+    ctx.drawImage(image, 0, 0, workWidth, workHeight);
+    return ctx.getImageData(0, 0, workWidth, workHeight).data;
+  };
+
+  const maskData = changeMaskPixels(readDownsampled(source), edited.map(readDownsampled), workWidth, workHeight);
+  if (!maskData) return null;
+
+  const workMask = blankCanvas(workWidth, workHeight);
+  const workCtx = workMask.getContext("2d")!;
+  const imageData = workCtx.createImageData(workWidth, workHeight);
+  imageData.data.set(maskData);
+  workCtx.putImageData(imageData, 0, 0);
+
+  if (workWidth === size.width && workHeight === size.height) return workMask;
+  const fullMask = blankCanvas(size.width, size.height);
+  const fullCtx = fullMask.getContext("2d")!;
+  fullCtx.imageSmoothingEnabled = true;
+  fullCtx.imageSmoothingQuality = "high";
+  fullCtx.drawImage(workMask, 0, 0, size.width, size.height);
+  return fullMask;
 }
 
 export interface FlatLayer extends Placement { image: CanvasImageSource; mask: HTMLCanvasElement | null; opacity: number }

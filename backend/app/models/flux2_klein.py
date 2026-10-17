@@ -15,7 +15,7 @@ from app.config import settings
 from app.jobs import JobCancelled, JobControl
 from app.models.base import ModelReference
 from app.runtime import empty_cache, require_generation_device, selected_device, selected_dtype, torch_module
-from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, OutpaintForm, RuntimeMode, TextToImageRequest
+from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, OutpaintForm, ReferenceRole, RuntimeMode, TextToImageRequest
 
 if TYPE_CHECKING:
     from app.models.klein_lora import KleinLora
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 # Resident on the GPU, in unified memory on Apple silicon, or offloaded to RAM between uses.
 Placement = Literal["cuda", "mps", "cpu", "offload"]
 PipelineTask = Literal["text-to-image", "inpaint"]
+ReferenceSpec = str | ModelReference
 
 # Several references share a token budget: two at this size cost what one
 # 1024 px reference does, and kept both identities in the local trial.
@@ -43,7 +44,29 @@ ENHANCE_PROMPT = (ENHANCE_TRIGGER + " Sharpen textures, add realistic micro-deta
 MATCH_SURROUNDINGS = " Match the surrounding lighting, color palette, perspective, texture and depth of field."
 
 
-def _inpaint_prompt(request: InpaintForm, references: Sequence[str] = ()) -> str:
+def _unpack_references(references: Sequence[ReferenceSpec]) -> list[tuple[str, ReferenceRole]]:
+    return [(item, "subject") if isinstance(item, str) else (item.name, item.role) for item in references]
+
+
+def _role_clause(name: str, role: ReferenceRole, ref_label: str, *, in_selection: bool = False) -> str:
+    named = None if GENERIC_REFERENCE_NAME.match(name) else name
+    if role == "clothing":
+        prefix = f"For {named}, copy" if named else "Copy"
+        return (f"{prefix} the outfit, garments, fabric, colours and accessories from {ref_label},"
+                " while keeping the person's own face, hair and body identity.")
+    if role == "pose":
+        prefix = f"For {named}, follow" if named else "Follow"
+        return (f"{prefix} the body pose, posture, gesture and framing from {ref_label},"
+                " without copying that reference's face or clothing.")
+    if role == "style":
+        return f"Match the visual style, lighting, colour palette and surface texture of {ref_label}."
+    subject = named or "The subject"
+    tail = ", and show it complete within the selection." if in_selection else "."
+    return (f"{subject} is the person or object from {ref_label}: keep its face, hair, accessories, clothing,"
+            f" colours and proportions identical to {ref_label}{tail}")
+
+
+def _inpaint_prompt(request: InpaintForm, references: Sequence[ReferenceSpec] = ()) -> str:
     if isinstance(request, OutpaintForm):
         # The masked border is neutral grey padding around the original picture.
         instruction = (f"Extend the picture outward into the masked border with {request.prompt.strip().rstrip('.')}."
@@ -59,51 +82,74 @@ def _inpaint_prompt(request: InpaintForm, references: Sequence[str] = ()) -> str
         instruction = "Remove the selected subject completely and reconstruct the background naturally inside the masked region. " + request.prompt.strip()
     else:
         instruction = request.prompt.strip().rstrip(".") + "."
-        if len(references) == 1:
-            instruction += (" The subject is the person or object from the reference image: keep its face, hair, clothing,"
-                            " colours and proportions identical to the reference, and show it complete within the selection.")
-        elif references:
-            named = [f"{name} is reference image {index}" for index, name in enumerate(references, 1) if not GENERIC_REFERENCE_NAME.match(name)]
-            instruction += f" The subjects come from the {len(references)} reference images"
-            instruction += (": " + ", ".join(named) + ".") if named else "."
-            instruction += (" Keep each one's face, hair, clothing, colours and proportions identical to their reference,"
-                            " and show them all complete within the selection.")
+        pairs = _unpack_references(references)
+        if pairs and all(role == "subject" for _, role in pairs):
+            names = [name for name, _ in pairs]
+            if len(names) == 1:
+                instruction += (" The subject is the person or object from the reference image: keep its face, hair, clothing,"
+                                " colours and proportions identical to the reference, and show it complete within the selection.")
+            else:
+                named = [f"{name} is reference image {index}" for index, name in enumerate(names, 1) if not GENERIC_REFERENCE_NAME.match(name)]
+                instruction += f" The subjects come from the {len(names)} reference images"
+                instruction += (": " + ", ".join(named) + ".") if named else "."
+                instruction += (" Keep each one's face, hair, clothing, colours and proportions identical to their reference,"
+                                " and show them all complete within the selection.")
+        elif len(pairs) == 1:
+            name, role = pairs[0]
+            instruction += " " + _role_clause(name, role, "the reference image", in_selection=True)
+        elif pairs:
+            clauses = [_role_clause(name, role, f"reference image {index}", in_selection=True) for index, (name, role) in enumerate(pairs, 1)]
+            instruction += " " + " ".join(clauses)
     instruction += MATCH_SURROUNDINGS
     if request.scene_context.strip():
         instruction += " Scene context: " + request.scene_context.strip()
     return instruction
 
 
-def _generation_prompt(prompt: str, references: Sequence[str] = ()) -> str:
+def _generation_prompt(prompt: str, references: Sequence[ReferenceSpec] = ()) -> str:
     """Names each reference by its position, as the pipeline orders them."""
     instruction = prompt.strip()
-    if not references:
+    pairs = _unpack_references(references)
+    if not pairs:
         return instruction
     instruction = instruction.rstrip(".") + "."
-    if len(references) == 1:
-        subject = "The subject" if GENERIC_REFERENCE_NAME.match(references[0]) else references[0]
-        return instruction + (f" {subject} is the person or object from the reference image: keep its face, hair,"
-                              " accessories, clothing, colours and proportions identical to the reference.")
-    named = [f"{name} is reference image {index}" for index, name in enumerate(references, 1) if not GENERIC_REFERENCE_NAME.match(name)]
-    instruction += f" The subjects come from the {len(references)} reference images"
-    instruction += (": " + ", ".join(named) + ".") if named else "."
-    # "Accessories" rather than a list of items: naming glasses moved one
-    # person's glasses onto the other in the two-person trial.
-    return instruction + " Keep each one's face, hair, accessories, clothing and proportions identical to their own reference image."
+    if all(role == "subject" for _, role in pairs):
+        names = [name for name, _ in pairs]
+        if len(names) == 1:
+            subject = "The subject" if GENERIC_REFERENCE_NAME.match(names[0]) else names[0]
+            return instruction + (f" {subject} is the person or object from the reference image: keep its face, hair,"
+                                  " accessories, clothing, colours and proportions identical to the reference.")
+        named = [f"{name} is reference image {index}" for index, name in enumerate(names, 1) if not GENERIC_REFERENCE_NAME.match(name)]
+        instruction += f" The subjects come from the {len(names)} reference images"
+        instruction += (": " + ", ".join(named) + ".") if named else "."
+        # "Accessories" rather than a list of items: naming glasses moved one
+        # person's glasses onto the other in the two-person trial.
+        return instruction + " Keep each one's face, hair, accessories, clothing and proportions identical to their own reference image."
+    if len(pairs) == 1:
+        name, role = pairs[0]
+        return instruction + " " + _role_clause(name, role, "the reference image")
+    clauses = [_role_clause(name, role, f"reference image {index}") for index, (name, role) in enumerate(pairs, 1)]
+    return instruction + " " + " ".join(clauses)
 
 
-def _edit_prompt(prompt: str, references: Sequence[str] = ()) -> str:
+def _edit_prompt(prompt: str, references: Sequence[ReferenceSpec] = ()) -> str:
     """The picture is image 1; references follow it as images 2 and up."""
     instruction = "Edit image 1: " + prompt.strip().rstrip(".") + "."
-    if len(references) == 1:
-        subject = "The subject" if GENERIC_REFERENCE_NAME.match(references[0]) else references[0]
-        instruction += (f" {subject} is the person or object from image 2: keep its face, hair, accessories, clothing,"
-                        " colours and proportions identical to image 2.")
-    elif references:
-        named = [f"{name} is image {index}" for index, name in enumerate(references, 2) if not GENERIC_REFERENCE_NAME.match(name)]
-        instruction += f" Images 2 to {len(references) + 1} show the people or objects to bring in"
-        instruction += (": " + ", ".join(named) + ".") if named else "."
-        instruction += " Keep each one's face, hair, accessories, clothing and proportions identical to their own image."
+    pairs = _unpack_references(references)
+    if pairs and all(role == "subject" for _, role in pairs):
+        names = [name for name, _ in pairs]
+        if len(names) == 1:
+            subject = "The subject" if GENERIC_REFERENCE_NAME.match(names[0]) else names[0]
+            instruction += (f" {subject} is the person or object from image 2: keep its face, hair, accessories, clothing,"
+                            " colours and proportions identical to image 2.")
+        else:
+            named = [f"{name} is image {index}" for index, name in enumerate(names, 2) if not GENERIC_REFERENCE_NAME.match(name)]
+            instruction += f" Images 2 to {len(names) + 1} show the people or objects to bring in"
+            instruction += (": " + ", ".join(named) + ".") if named else "."
+            instruction += " Keep each one's face, hair, accessories, clothing and proportions identical to their own image."
+    elif pairs:
+        clauses = [_role_clause(name, role, f"image {index}") for index, (name, role) in enumerate(pairs, 2)]
+        instruction += " " + " ".join(clauses)
     return instruction + " Keep everything the instruction does not change as it is in image 1, including each person's face and identity."
 
 
@@ -114,7 +160,7 @@ def _sketch_prompt(prompt: str) -> str:
             " Keep every part of image 1 that is not sketched as it is.")
 
 
-def _face_prompt(prompt: str, references: Sequence[str] = ()) -> str:
+def _face_prompt(prompt: str, references: Sequence[ReferenceSpec] = ()) -> str:
     """Image 1 is a close crop around one face; references follow as images 2 and up."""
     # Naming teeth made Klein open closed mouths into a grin, so the list leaves them out.
     instruction = ("Restore image 1, a close-up of a face, as a sharp and detailed photograph: clear eyes, natural skin texture,"
@@ -122,11 +168,12 @@ def _face_prompt(prompt: str, references: Sequence[str] = ()) -> str:
                    " colours, framing and background exactly.")
     if prompt.strip():
         instruction += " Also: " + prompt.strip().rstrip(".") + "."
-    if len(references) == 1:
-        name = "This person" if GENERIC_REFERENCE_NAME.match(references[0]) else references[0]
+    names = [name for name, _ in _unpack_references(references)]
+    if len(names) == 1:
+        name = "This person" if GENERIC_REFERENCE_NAME.match(names[0]) else names[0]
         instruction += f" {name} is the person in image 2: make the face match image 2."
-    elif references:
-        instruction += f" The person is one of the people in images 2 to {len(references) + 1}: make the face match their image."
+    elif names:
+        instruction += f" The person is one of the people in images 2 to {len(names) + 1}: make the face match their image."
     return instruction
 
 
@@ -138,7 +185,7 @@ def _enhance_prompt(prompt: str) -> str:
     return instruction
 
 
-def _mode_prompt(request: EditRequest, references: Sequence[str]) -> str:
+def _mode_prompt(request: EditRequest, references: Sequence[ReferenceSpec]) -> str:
     if request.mode == "sketch":
         return _sketch_prompt(request.prompt)
     if request.mode == "enhance":
@@ -237,7 +284,7 @@ class Flux2KleinProvider:
         control.set_progress(0.15)
         seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
         generator = torch.Generator(selected_device(torch)).manual_seed(seed)
-        prompt_embeds = self._encode_prompt(pipe, _generation_prompt(request.prompt, [reference.name for reference in references]), control)
+        prompt_embeds = self._encode_prompt(pipe, _generation_prompt(request.prompt, references), control)
         control.set_phase("generating")
         image = pipe(
             # Each reference becomes its own block of image tokens.
@@ -279,7 +326,7 @@ class Flux2KleinProvider:
         control.set_progress(0.15)
         seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
         generator = torch.Generator(selected_device(torch)).manual_seed(seed)
-        prompt_embeds = self._encode_prompt(pipe, _mode_prompt(request, [reference.name for reference in references]), control)
+        prompt_embeds = self._encode_prompt(pipe, _mode_prompt(request, references), control)
         control.set_phase("generating")
         if partial:
             # A full mask repaints everything. The pipeline still passes the
@@ -340,7 +387,7 @@ class Flux2KleinProvider:
         with Image.open(mask_path) as selection:
             mask_image = selection.convert("L")
         control.set_progress(0.15)
-        prompt_embeds = self._encode_prompt(pipe, _inpaint_prompt(request, [reference.name for reference in references]), control)
+        prompt_embeds = self._encode_prompt(pipe, _inpaint_prompt(request, references), control)
         control.set_phase("generating")
         # The sketched crop doubles as the reference, so no stroke survives the edit.
         reference: Any = init_image if request.edit_operation == "sketch" else (

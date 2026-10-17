@@ -1,9 +1,17 @@
 import { Ref } from "react";
+import { ReferenceRole } from "../api";
 import { EditScope, EnhanceLevel, FaceMode, Operation, SketchScope, promptPlaceholder, submitLabel } from "../generation/operation";
 import { Icon } from "./Icon";
 import { MOD } from "../platform";
 
-export interface ActiveReference { id: number; name: string; imageUrl: string }
+export interface ActiveReference { id: number; name: string; imageUrl: string; role?: ReferenceRole }
+
+const ROLE_BADGE: Record<ReferenceRole, string> = {
+  subject: "Subject",
+  clothing: "Outfit",
+  pose: "Pose",
+  style: "Style",
+};
 
 interface Props {
   promptRef?: Ref<HTMLTextAreaElement>;
@@ -76,8 +84,10 @@ export function CommandCard(props: Props) {
     </div>
     <div className="prompt-row">
       {props.references.length > 0 && <div className={"reference-chips" + (props.references.length > 1 ? " several" : "")}>
-        {props.references.map(reference => <div key={reference.id} className="reference-chip" title={`Using ${reference.name} as reference`}>
-          <img crossOrigin="anonymous" src={reference.imageUrl} alt="" /><span>{reference.name}</span>
+        {props.references.map(reference => <div key={reference.id} className="reference-chip" title={`Using ${reference.name} (${ROLE_BADGE[reference.role ?? "subject"]}) as reference`}>
+          <img crossOrigin="anonymous" src={reference.imageUrl} alt="" />
+          <span>{reference.name}</span>
+          {reference.role && reference.role !== "subject" && <small className="reference-chip-role">{ROLE_BADGE[reference.role]}</small>}
           <button aria-label={`Stop using ${reference.name}`} title="Stop using this reference" disabled={locked} onClick={() => props.onRemoveReference(reference.id)}><Icon name="close" /></button>
         </div>)}
       </div>}

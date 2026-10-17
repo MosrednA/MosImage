@@ -9,7 +9,7 @@ import { ENHANCE_DETAIL, EditScope, EnhanceLevel, FaceMode, Operation, SketchSco
 
 /** A full generation, the selected footprint of a regional AI edit, an edit of one layer, or the fixed faces. */
 export type LayerResult = { kind: "selection"; mask: Blob; name: string; replaces: string | null }
-  | { kind: "generation"; name: string }
+  | { kind: "generation"; name: string; diffMask?: boolean }
   | { kind: "layer"; layerId: string; name: string }
   | { kind: "faces"; name: string };
 
@@ -148,8 +148,8 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
       return asLayer(await editWholeImage(picture, withReferences), { kind: "layer", layerId: layer.id, name: `${layer.name} · AI` });
     }
     if (input.editScope !== "visible") throw new Error("Pick the layer to edit in the Layers panel.");
-    // The AI sees every visible layer; the result covers the canvas as a new layer.
-    return asLayer(await editWholeImage(await input.picture(), withReferences), { kind: "generation", name: resultName(null, operation, prompt) });
+    // The AI sees every visible layer; local changes get a difference mask so untouched background stays sharp.
+    return asLayer(await editWholeImage(await input.picture(), withReferences), { kind: "generation", name: resultName(null, operation, prompt), diffMask: true });
   }
   if (task === "outpaint") {
     if (!source || !size || !validExpansion(size, input.expansion)) throw new Error("Choose a valid canvas size first.");

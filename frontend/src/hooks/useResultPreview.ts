@@ -3,7 +3,7 @@ import { DocumentRecord, GenerationRecord, fileUrl } from "../api";
 import { ImageSize } from "../canvas/coordinates";
 import { errorMessage } from "../errors";
 import { LayerResult } from "../generation/submission";
-import { FlatLayer, decodeImage, flatten, loadImage, shownMask } from "../layers/bitmaps";
+import { FlatLayer, decodeImage, editChangeMask, flatten, loadImage, shownMask } from "../layers/bitmaps";
 import { generationPlacement } from "../layers/geometry";
 import { isShown } from "../layers/stack";
 import { editedLayer } from "./usePicture";
@@ -35,7 +35,8 @@ export function useResultPreview({ result, chosen, source, size, documentRef, pi
       if (result.kind === "generation") {
         const background = await decodeImage(await latest.current.picture());
         const dimensions = { width: image.naturalWidth, height: image.naturalHeight };
-        blob = await flatten(background, size, [{ ...dimensions, ...generationPlacement(dimensions, size), image, mask: null, opacity: 1 }]);
+        const mask = result.diffMask ? editChangeMask(background, [image], size) : null;
+        blob = await flatten(background, size, [{ ...dimensions, ...generationPlacement(dimensions, size), image, mask, opacity: 1 }]);
       } else {
         // The edited copy shows where the layer is; the original is hidden, as after Apply.
         const parts = await Promise.all((documentRef.current?.layers ?? []).map(async (layer): Promise<FlatLayer | null> => {

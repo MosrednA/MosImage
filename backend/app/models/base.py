@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Protocol, Sequence
 
 from app.jobs import JobControl
-from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, OutpaintForm, TextToImageRequest
+from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, OutpaintForm, ReferenceRole, TextToImageRequest
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,7 @@ class ModelReference:
 
     name: str
     path: Path
+    role: ReferenceRole = "subject"
 
 
 class ImageModelProvider(Protocol):
