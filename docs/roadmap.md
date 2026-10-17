@@ -1,11 +1,13 @@
 # MosImage v2 — Refactor and Upgrade Plan
 
 Status: Active
-Last verified: 2026-10-11
+Last verified: 2026-10-15
 Review by: 2026-11-11
 
 **Target:** Windows desktop, local-first\
 **Primary hardware:** Ryzen 7 9700X, 32 GB RAM, RTX 5070 Ti 16 GB VRAM
+
+**FLUX 3 evaluation completed, 15 October 2026:** the [native NVFP4 comparison](../benchmarks/FLUX3_KLEIN_2026-10-15.md) retains 78 successful images/requests: matched-caption pairs, current-prompt Klein controls and complete staged encoder/renderer lifecycles. FLUX 3 works on the 16 GB card; cached renders are about twice as slow, while new prompts cost 11.6–20.2 seconds in the measured reload-based prototype. Identity/reference and scene-following improvements are selective; current Klein prompts still win important local-edit cases. The user rejected integration because the speed/quality benefit is insufficient. Keep Klein 9B as Quality; no FLUX 3 provider work is planned. A future small model must be substantially faster end to end at comparable quality, or clearly improve difficult edits.
 
 **Editing masks, 9 October 2026:** resolution-aware expansion overlap and separate generation/final blend coverage are implemented. Expansion regenerates 32 model pixels inside the original while the final blend remains limited to 16 native pixels; inpaint generates fully inside the displayed soft footprint and composites with its original alpha. The [paired implementation report](../benchmarks/EDIT_MASK_RESULTS_2026-10-09.md) retains 30 Klein 9B renders with exact protected pixels. Visual gains are limited and the shirt fringe remains. The [quality investigation](notes/2026-10-09-image-quality-research.md) preserves the original proposals; LoRA compatibility and selected detail crops now have separate evaluation evidence, while staged expansion and operation-specific mask recipes remain proposed.
 **Plan date:** July 16, 2026

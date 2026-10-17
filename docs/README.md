@@ -13,6 +13,8 @@ The guide and architecture describe the current implementation. The roadmap owns
 
 ## Benchmarks
 
+- [FLUX 3 Image Klein versus current Klein 9B, 15 October 2026](../benchmarks/FLUX3_KLEIN_2026-10-15.md): 78 successful local images/requests, matched captions plus current-prompt controls, native Windows NVFP4 and a working sequential 16 GB lifecycle. The user rejected integration: selective visual gains at about twice the cached render time do not meet the required speed or quality improvement. Quality remains Klein 9B.
+
 - [SAM 3 prompt refinement and real-photo evaluation, 10 October 2026](../benchmarks/SAM3_REFINEMENT_2026-10-10.md): completed threshold calibration, equal-input correction clicks/boxes, official pedestrian masks and exploratory fixture recovery; 593 verified masks, 276 identical evaluation repetitions, similar refined point quality, GPU speed and absent-concept rejection gains, with annotation limits.
 
 - [SAM 3 selection comparison, 10 October 2026](../benchmarks/SAM3_SELECTION_2026-10-10.md): seven frozen point/text cases, CPU/GPU timing and memory, repeatability and all paired masks; GPU speed improves, while quality remains mixed and the current CPU default is unchanged.
