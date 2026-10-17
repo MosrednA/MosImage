@@ -2,7 +2,8 @@ import { DocumentRecord, JobStatus, SystemInfo } from "../api";
 import { describeJob } from "../generation/progress";
 import { isActiveJob } from "../hooks/useJobPolling";
 import { Icon } from "./Icon";
-import { MOD } from "../platform";
+import { WindowControls } from "./WindowControls";
+import { MOD, OWN_TITLE_BAR } from "../platform";
 
 interface Props {
   document: DocumentRecord | null;
@@ -22,9 +23,10 @@ interface Props {
 }
 
 export function TopBar({ document, onRename, online, connecting, system, warmUp, locked, canExport, onUndo, onRedo, onOpen, onLibrary, onExport }: Props) {
-  return <header className="topbar">
-    <a className="brand" href="#" onClick={event => event.preventDefault()} aria-label="MosImage"><span className="brand-mark">m<span>•</span></span><strong>MosImage</strong></a>
-    <div className="document-title">
+  // In the Windows app the bar is also the title bar: its empty parts move the window.
+  return <header className={"topbar" + (OWN_TITLE_BAR ? " titlebar" : "")} data-tauri-drag-region>
+    <div className="brand" data-tauri-drag-region><span className="brand-mark">m<span>•</span></span><strong>MosImage</strong></div>
+    <div className="document-title" data-tauri-drag-region>
       {document
         ? <><input aria-label="Document name" maxLength={160} value={document.name} onChange={event => onRename(event.target.value)} /><small>Saved locally</small></>
         : <strong>New image</strong>}
@@ -39,6 +41,7 @@ export function TopBar({ document, onRename, online, connecting, system, warmUp,
       <button className="quiet-button" aria-label="Library" disabled={locked} onClick={onLibrary}><Icon name="library" /><span>Library</span></button>
       <button className="export-button" aria-label="Export image" title={`Save the picture as an image file (${MOD}+S)`} disabled={!canExport || locked} onClick={onExport}><Icon name="download" /><span>Export</span></button>
     </div>
+    {OWN_TITLE_BAR && <WindowControls />}
   </header>;
 }
 

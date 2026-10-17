@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "title": "MosImage",
+        "width": 1280,
+        "height": 840,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "resizable": true,
+        "dragDropEnabled": false,
+        "decorations": false
+      }
+    ]
+  }
+}
