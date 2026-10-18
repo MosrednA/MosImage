@@ -39,11 +39,17 @@ export function submitLabel(operation: Operation): string {
     : operation === "sketch" ? "Render" : operation === "faces" ? "Fix faces" : operation === "enhance" ? "Enhance" : "Generate";
 }
 
-export function sketchHint(scope: SketchScope, hasSketch: boolean): string {
-  if (!hasSketch) return "Paint rough shapes in colour with the Sketch tool, then say what they are. Crude is fine: the AI follows shape, size and colour.";
+export function sketchHint(scope: SketchScope, hasSketch: boolean, referenceNames: readonly string[] = []): string {
+  const names = joinNames(referenceNames), several = referenceNames.length > 1;
+  if (!hasSketch) {
+    return referenceNames.length
+      ? `Sketch where and how ${names} should go, then say who is where. The sketch sets position, size and pose; ${several ? "their references set their" : "the reference sets the"} look and colours.`
+      : "Paint rough shapes in colour with the Sketch tool, then say what they are. Crude is fine: the AI follows shape, size and colour.";
+  }
+  const keep = referenceNames.length ? ` ${names} ${several ? "keep" : "keeps"} the look and colours of their reference.` : "";
   return scope === "strokes"
-    ? "Render turns the strokes into the real thing; the rest of the picture stays as it is. Apply adds it as a new layer."
-    : "Render redraws the whole picture around your sketch, so lighting and style match. Apply adds it as a new layer.";
+    ? `Render turns the strokes into the real thing; the rest of the picture stays as it is.${keep} Apply adds it as a new layer.`
+    : `Render redraws the whole picture around your sketch, so lighting and style match.${keep} Apply adds it as a new layer.`;
 }
 
 /** `picks` counts the faces shown on the canvas, once they are found. */
@@ -79,7 +85,11 @@ export function promptPlaceholder(operation: Operation, hasImage: boolean, refer
     return "How should the picture change? e.g. make it a snowy night";
   }
   if (operation === "remove") return "Optional: describe the background to restore…";
-  if (operation === "sketch") return "What did you draw? e.g. a deer drinking at the water";
+  if (operation === "sketch") {
+    if (referenceNames.length > 1) return `What did you draw? e.g. ${joinNames(referenceNames)} sitting on the bench, ${referenceNames[0]} on the left`;
+    if (referenceNames.length) return `What did you draw? e.g. ${referenceNames[0]} sitting on the bench`;
+    return "What did you draw? e.g. a deer drinking at the water";
+  }
   if (operation === "faces") return "Optional: anything extra, e.g. eyes open, gentle smile";
   if (operation === "enhance") return "Optional: what to bring out, e.g. the knit of the sweater";
   if (operation === "expand") return "Describe the scene or what to add beyond the edges…";

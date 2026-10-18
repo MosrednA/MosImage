@@ -254,20 +254,84 @@ class SketchAndFacePromptTests(unittest.TestCase):
                 self.assertEqual(load.call_args.args[1], "text-to-image")
                 self.assertNotIn("strength", pipe.call_args.kwargs)
 
-    def test_sketch_inpaint_uses_its_own_crop_as_reference_and_ignores_people(self) -> None:
+    def test_sketch_inpaint_uses_its_own_crop_as_reference(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             Image.new("RGB", (64, 64), "purple").save(root / "source.png")
             Image.new("L", (64, 64), 255).save(root / "mask.png")
-            Image.new("RGB", (40, 40), "orange").save(root / "anna.png")
             pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (64, 64))]))
             with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe):
-                from app.models.base import ModelReference
-                self.provider.inpaint(InpaintForm(prompt="a deer", edit_operation="sketch"), root / "source.png", root / "mask.png", root / "out.png", MagicMock(),
-                                      references=[ModelReference("Anna", root / "anna.png")])
+                self.provider.inpaint(InpaintForm(prompt="a deer", edit_operation="sketch"), root / "source.png", root / "mask.png", root / "out.png", MagicMock())
                 arguments = pipe.call_args.kwargs
                 self.assertIs(arguments["image_reference"], arguments["image"])
-                self.assertNotIn("Anna", pipe.encode_prompt.call_args.kwargs["prompt"])
+                self.assertIn("pose and colours", pipe.encode_prompt.call_args.kwargs["prompt"])
+
+    def test_sketch_inpaint_puts_references_after_the_sketch_at_one_size(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (96, 64), "purple").save(root / "source.png")
+            Image.new("L", (96, 64), 255).save(root / "mask.png")
+            Image.new("RGB", (40, 60), "orange").save(root / "anna.png")
+            pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (96, 64))]))
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe):
+                from app.models.base import ModelReference
+                self.provider.inpaint(InpaintForm(prompt="Anna on the bench", edit_operation="sketch"), root / "source.png", root / "mask.png", root / "out.png", MagicMock(),
+                                      references=[ModelReference("Anna", root / "anna.png")])
+                arguments = pipe.call_args.kwargs
+                sketch, anna = arguments["image_reference"]
+                # The pipeline crops later references to the first one's size.
+                self.assertEqual(sketch.size, anna.size)
+                self.assertEqual(sketch.getpixel((sketch.width // 2, sketch.height // 2)), (128, 0, 128))
+                prompt = pipe.encode_prompt.call_args.kwargs["prompt"]
+                self.assertIn("Reference image 1 shows the sketch. Follow its shape, position, size and pose", prompt)
+                self.assertIn("Anna is the person or object from reference image 2", prompt)
+                self.assertIn("The sketch only marks where Anna goes and in what pose: draw Anna from reference image 2 there,"
+                              " with Anna's own face, hair, clothing and colours instead of the sketch's flat colours.", prompt)
+                self.assertNotIn("pose and colours", prompt)
+                # Removal still has nothing to place.
+                self.provider.inpaint(InpaintForm(prompt="x", edit_operation="remove"), root / "source.png", root / "mask.png", root / "out.png", MagicMock(),
+                                      references=[ModelReference("Anna", root / "anna.png")])
+                self.assertNotIn("image_reference", pipe.call_args.kwargs)
+
+    def test_whole_picture_sketch_numbers_references_after_the_picture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (120, 120), "tan").save(root / "picture.png")
+            Image.new("RGB", (40, 60), "orange").save(root / "anna.png")
+            pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (1024, 1024))]))
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", return_value=pipe):
+                from app.models.base import ModelReference
+                self.provider.edit(EditRequest(prompt="Anna on the bench", mode="sketch"), root / "picture.png", root / "out.png", MagicMock(),
+                                   references=[ModelReference("Anna", root / "anna.png", "subject")])
+                picture, anna = pipe.call_args.kwargs["image"]
+                self.assertEqual(anna.size, (40, 60))
+                prompt = pipe.encode_prompt.call_args.kwargs["prompt"]
+                self.assertTrue(prompt.startswith("Image 1 contains a rough coloured sketch"))
+                self.assertIn("Follow the sketch's layout, shapes, sizes and poses closely.", prompt)
+                self.assertIn("Anna is the person or object from image 2", prompt)
+                self.assertTrue(prompt.endswith("Keep every part of image 1 that is not sketched as it is."))
+
+    def test_sketch_prompts_leave_the_pose_to_a_pose_reference(self) -> None:
+        from app.models.base import ModelReference
+        references = [ModelReference("Anna", Path("anna.png")), ModelReference("Dancer", Path("dancer.png"), "pose")]
+        whole = _sketch_prompt("Anna dancing", references)
+        self.assertIn("Follow the sketch's layout, shapes and sizes closely.", whole)
+        self.assertIn("follow the body pose, posture, gesture and framing from image 3", whole)
+        self.assertIn("The sketch only marks where Anna goes: draw Anna from image 2 there", whole)
+        crop = _inpaint_prompt(InpaintForm(prompt="Anna dancing", edit_operation="sketch"), references)
+        self.assertIn("Follow its shape, position and size,", crop)
+        self.assertIn("from reference image 3", crop)
+
+    def test_sketch_prompts_tie_every_subject_to_its_reference(self) -> None:
+        from app.models.base import ModelReference
+        two = _sketch_prompt("Anna and a friend on the bench", [ModelReference("Anna", Path("a.png")), ModelReference("Reference 2", Path("b.png"))])
+        self.assertIn("The sketch only marks where Anna and the subject from image 3 go and in what pose: draw them there,"
+                      " each from their own image, with their own face", two)
+        one = _sketch_prompt("someone on the bench", [ModelReference("Reference 1", Path("a.png"))])
+        self.assertIn("where the subject goes and in what pose: draw the subject from image 2 there, with its own face", one)
+        # An outfit has no one to name: its colours simply win over the sketch's.
+        outfit = _sketch_prompt("a coat", [ModelReference("Coat", Path("c.png"), "clothing")])
+        self.assertIn("use that reference's real colours", outfit)
 
     def test_face_mode_renders_at_the_smaller_face_area(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

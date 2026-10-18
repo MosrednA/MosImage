@@ -41,7 +41,7 @@ export function commandHint(state: CommandState): string {
   if (state.activeLayerName !== null && state.layerMasking) return `Painting the mask of “${state.activeLayerName}”: Brush paints its tone, white shows and black hides (X swaps), Eraser hides, \\ tints hidden parts red. Click the layer thumbnail or press Esc when done.`;
   if (state.activeLayerName !== null) return `Editing layer “${state.activeLayerName}”. B and E paint its mask; press Esc for AI edits, which see every visible layer.`;
   if (operation === "edit" && state.editScope === "layer") return layerEditHint(state.editLayerName, referenceNames);
-  if (operation === "sketch") return sketchHint(state.sketchScope, state.hasSketch);
+  if (operation === "sketch") return sketchHint(state.sketchScope, state.hasSketch, referenceNames);
   if (operation === "faces") return facesHint(state.hasMask, referenceNames, state.faceMode, state.facePicks);
   if (operation === "enhance") return enhanceHint(state.hasMask);
   if (state.blendingName !== null && state.hasMask) return `Blending “${state.blendingName}” in: the AI redraws it and its edges to fit the scene. Widen the area with the brush if needed.`;

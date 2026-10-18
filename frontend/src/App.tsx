@@ -135,7 +135,7 @@ export default function App() {
   // What the AI made of the picture as you saw it, which is also how an Expand proposal looks once applied.
   const proposalUrls = alternatives.map(item => fileUrl(item.output_image_url));
   // References place people in a selection (Replace), the whole picture (Edit) or a new image (Generate).
-  const referencesFor = (chosen: Operation) => ((chosen === "replace" || chosen === "edit" || chosen === "faces") && source) || chosen === "generate" ? refs.active : [];
+  const referencesFor = (chosen: Operation) => ((chosen === "replace" || chosen === "edit" || chosen === "sketch" || chosen === "faces") && source) || chosen === "generate" ? refs.active : [];
   const references = referencesFor(operation);
   // Selection tools select on the picture, as in Photoshop, unless the layer is being masked.
   const activeLayer = operation === "expand" || operation === "sketch" || isWholeImage(operation) || (isSelectionTool(tool) && !layerMasking) ? null : layers.active;
@@ -465,7 +465,8 @@ export default function App() {
     if (wasActive) return;
     // Without a picture, references compose a new image.
     if (!source) setOperation("generate");
-    else if (operation !== "replace" && !isWholeImage(operation)) setOperation("replace");
+    // A sketch shows where and how a reference goes, so picking one keeps it.
+    else if (operation !== "replace" && operation !== "sketch" && !isWholeImage(operation)) setOperation("replace");
     // Two proposals make a good likeness easy to pick.
     setSettings(current => ({ ...current, count: current.count === 1 ? 2 : current.count }));
   }

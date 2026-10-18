@@ -15,6 +15,10 @@ describe("sketch, faces and enhance", () => {
     expect(sketchHint("strokes", false)).toContain("Paint rough shapes");
     expect(sketchHint("strokes", true)).toContain("the rest of the picture stays");
     expect(sketchHint("whole", true)).toContain("redraws the whole picture");
+    expect(sketchHint("strokes", false, ["Anna"])).toBe("Sketch where and how Anna should go, then say who is where. The sketch sets position, size and pose; the reference sets the look and colours.");
+    expect(sketchHint("whole", true, ["Anna", "Tom"])).toContain("Anna and Tom keep the look and colours of their reference.");
+    expect(promptPlaceholder("sketch", true, ["Anna"])).toBe("What did you draw? e.g. Anna sitting on the bench");
+    expect(promptPlaceholder("sketch", true, ["Anna", "Tom"])).toBe("What did you draw? e.g. Anna and Tom sitting on the bench, Anna on the left");
     expect(facesHint(false)).toBe("Every face in the picture is sharpened from the face itself and pasted back. Expression and lighting stay the same. Apply adds the faces as a new layer.");
     expect(facesHint(false, [], "redraw")).toContain("The expression can change.");
     expect(facesHint(true, [], "faithful", { found: 3, picked: 2 })).toBe("The 2 picked faces are sharpened from the face itself and pasted back. Expression and lighting stay the same. Click a face to leave it out or add it. Apply adds the faces as a new layer.");

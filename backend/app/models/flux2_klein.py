@@ -42,6 +42,11 @@ ENHANCE_TRIGGER = "Enhance this image to high resolution with rich fine details.
 ENHANCE_PROMPT = (ENHANCE_TRIGGER + " Sharpen textures, add realistic micro-details, improve clarity and definition."
                   " Keep the same composition, subjects, colours and lighting.")
 MATCH_SURROUNDINGS = " Match the surrounding lighting, color palette, perspective, texture and depth of field."
+# With references, a sketch places and poses them; its crude colours would
+# otherwise dress a person in whatever pencil drew them. Subjects get a
+# sentence of their own (`_sketch_subjects`); this covers outfits and styles.
+SKETCH_REFERENCE_COLOURS = (" The sketch's colours are only rough placeholders: wherever the sketch stands for a reference,"
+                            " use that reference's real colours, and keep the sketch's colours only for other sketched things.")
 
 
 def _unpack_references(references: Sequence[ReferenceSpec]) -> list[tuple[str, ReferenceRole]]:
@@ -75,9 +80,14 @@ def _inpaint_prompt(request: InpaintForm, references: Sequence[ReferenceSpec] = 
     elif request.edit_operation == "sketch":
         # In the local trial this followed a crude deer and top hat closely,
         # with the sketched crop also given as the reference image.
-        instruction = (f"Turn the rough coloured sketch in the masked area into {request.prompt.strip().rstrip('.')}."
-                       " Follow the sketch's shape, position, size, pose and colours, but render it as a realistic,"
-                       " detailed part of the picture.")
+        instruction = f"Turn the rough coloured sketch in the masked area into {request.prompt.strip().rstrip('.')}."
+        if references:
+            # The sketched crop leads the references, as reference image 1.
+            instruction += (f" Reference image 1 shows the sketch. Follow its {_sketch_follows(references)}, but render it as a"
+                            " realistic, detailed part of the picture." + _sketch_references(references, "reference image"))
+        else:
+            instruction += (" Follow the sketch's shape, position, size, pose and colours, but render it as a realistic,"
+                            " detailed part of the picture.")
     elif request.edit_operation == "remove":
         instruction = "Remove the selected subject completely and reconstruct the background naturally inside the masked region. " + request.prompt.strip()
     else:
@@ -153,11 +163,52 @@ def _edit_prompt(prompt: str, references: Sequence[ReferenceSpec] = ()) -> str:
     return instruction + " Keep everything the instruction does not change as it is in image 1, including each person's face and identity."
 
 
-def _sketch_prompt(prompt: str) -> str:
-    """Image 1 is the picture with rough strokes on it, or a sketch on a blank canvas."""
-    return ("Image 1 contains a rough coloured sketch. Turn it into a finished, detailed image: "
-            + prompt.strip().rstrip(".") + ". Follow the sketch's layout, shapes, sizes, poses and colours closely."
-            " Keep every part of image 1 that is not sketched as it is.")
+def _sketch_follows(references: Sequence[ReferenceSpec], *, whole: bool = False) -> str:
+    """What the sketch decides once references join it; a pose reference takes over the pose."""
+    posed = not any(role == "pose" for _, role in _unpack_references(references))
+    if whole:
+        return "layout, shapes, sizes and poses" if posed else "layout, shapes and sizes"
+    return "shape, position, size and pose" if posed else "shape, position and size"
+
+
+def _sketch_references(references: Sequence[ReferenceSpec], label: str) -> str:
+    """Each reference's role, numbered after the sketch (image 1), and whose colours win over the sketch's."""
+    pairs = _unpack_references(references)
+    clauses = [_role_clause(name, role, f"{label} {index}") for index, (name, role) in enumerate(pairs, 2)]
+    return " " + " ".join(clauses) + _sketch_subjects(pairs, label)
+
+
+def _sketch_subjects(pairs: list[tuple[str, ReferenceRole]], label: str) -> str:
+    """Ties the sketched figures to the subject references by name.
+
+    Without it, the whole-picture trial drew a faceless head as the back of
+    Anna's head and kept jeans and a beige jumper from nowhere; naming her
+    brought back her face, clothes and colours.
+    """
+    subjects = [(index, name) for index, (name, role) in enumerate(pairs, 2) if role == "subject"]
+    if not subjects:
+        return SKETCH_REFERENCE_COLOURS
+    pose = " and in what pose" if all(role != "pose" for _, role in pairs) else ""
+    if len(subjects) == 1:
+        index, name = subjects[0]
+        generic = bool(GENERIC_REFERENCE_NAME.match(name))
+        who, own = ("the subject", "its") if generic else (name, f"{name}'s")
+        return (f" The sketch only marks where {who} goes{pose}: draw {who} from {label} {index} there, with {own} own face, hair,"
+                " clothing and colours instead of the sketch's flat colours.")
+    names = [f"the subject from {label} {index}" if GENERIC_REFERENCE_NAME.match(name) else name for index, name in subjects]
+    who = ", ".join(names[:-1]) + " and " + names[-1]
+    return (f" The sketch only marks where {who} go{pose}: draw them there, each from their own {label}, with their own face, hair,"
+            " clothing and colours instead of the sketch's flat colours.")
+
+
+def _sketch_prompt(prompt: str, references: Sequence[ReferenceSpec] = ()) -> str:
+    """Image 1 is the picture with rough strokes on it, or a sketch on a blank canvas; references follow it."""
+    instruction = "Image 1 contains a rough coloured sketch. Turn it into a finished, detailed image: " + prompt.strip().rstrip(".") + "."
+    if references:
+        instruction += f" Follow the sketch's {_sketch_follows(references, whole=True)} closely." + _sketch_references(references, "image")
+    else:
+        instruction += " Follow the sketch's layout, shapes, sizes, poses and colours closely."
+    return instruction + " Keep every part of image 1 that is not sketched as it is."
 
 
 def _face_prompt(prompt: str, references: Sequence[ReferenceSpec] = ()) -> str:
@@ -187,7 +238,7 @@ def _enhance_prompt(prompt: str) -> str:
 
 def _mode_prompt(request: EditRequest, references: Sequence[ReferenceSpec]) -> str:
     if request.mode == "sketch":
-        return _sketch_prompt(request.prompt)
+        return _sketch_prompt(request.prompt, references)
     if request.mode == "enhance":
         return _enhance_prompt(request.prompt)
     if request.mode == "face":
@@ -223,12 +274,16 @@ def _reference_image(path: Path) -> Image.Image:
 
 
 def _reference_images(paths: Sequence[Path]) -> list[Image.Image]:
-    """One reference keeps its own size; several are padded to one shared size.
+    """One reference keeps its own size; several are padded to one shared size."""
+    return _shared_size([_reference_image(path) for path in paths])
+
+
+def _shared_size(images: list[Image.Image]) -> list[Image.Image]:
+    """Pads several images to one size of about ``MULTI_REFERENCE_AREA``.
 
     The pipeline crops every reference to the first one's size, so differing
     aspect ratios would cut people off without the shared padding.
     """
-    images = [_reference_image(path) for path in paths]
     if len(images) < 2:
         return images
     aspect = sum(image.width / image.height for image in images) / len(images)
@@ -320,7 +375,7 @@ class Flux2KleinProvider:
         with Image.open(input_path) as picture:
             source = _opaque(picture)
         fitted = _fit_area(source, FACE_AREA if request.mode == "face" else EDIT_AREA)
-        if request.mode in ("sketch", "enhance"):
+        if request.mode == "enhance":
             references = ()
         reference_images = _reference_images([reference.path for reference in references])
         control.set_progress(0.15)
@@ -377,21 +432,25 @@ class Flux2KleinProvider:
         torch = self._load_torch()
         pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control)
         self._configure_edit_adapters(pipe, request.consistency_lora, control)
-        if request.edit_operation in ("remove", "sketch"):
+        if request.edit_operation == "remove":
             references = ()
-        reference_images = _reference_images([reference.path for reference in references])
         seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
         generator = torch.Generator(selected_device(torch)).manual_seed(seed)
         with Image.open(input_path) as source:
             init_image = source.convert("RGB")
         with Image.open(mask_path) as selection:
             mask_image = selection.convert("L")
+        reference: Any
+        if request.edit_operation == "sketch":
+            # The sketched crop doubles as the reference, so no stroke survives
+            # the edit; picked references follow it as images 2 and up.
+            reference = _shared_size([init_image, *(_reference_image(item.path) for item in references)]) if references else init_image
+        else:
+            reference_images = _reference_images([item.path for item in references])
+            reference = reference_images if len(reference_images) > 1 else reference_images[0] if reference_images else None
         control.set_progress(0.15)
         prompt_embeds = self._encode_prompt(pipe, _inpaint_prompt(request, references), control)
         control.set_phase("generating")
-        # The sketched crop doubles as the reference, so no stroke survives the edit.
-        reference: Any = init_image if request.edit_operation == "sketch" else (
-            reference_images if len(reference_images) > 1 else reference_images[0] if reference_images else None)
         image = pipe(
             image=init_image,
             mask_image=mask_image,

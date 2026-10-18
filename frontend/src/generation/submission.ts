@@ -112,9 +112,11 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
     if (!input.sketch || !footprint) throw new Error("Sketch something first: paint rough shapes with the Sketch tool.");
     const picture = await sketchedPicture(await input.picture(), input.sketch, size);
     const name = resultName(null, operation, prompt);
-    if (input.sketchScope === "whole") return asLayer(await editWholeImage(picture, { ...parameters, mode: "sketch" }), { kind: "generation", name });
+    // Picked references are drawn where the sketch shows them, in its pose and size.
+    if (input.sketchScope === "whole") return asLayer(await editWholeImage(picture, { ...withReferences, mode: "sketch" }), { kind: "generation", name });
     // Only the sketch and a margin around it are redrawn; the rest of the picture stays exact.
     const form = inpaintForm(parameters, picture, footprint, { strength: 1, editOperation: "sketch", contextPadding: settings.context_padding });
+    for (const id of referenceIds) form.append("reference_ids", String(id));
     return asLayer(await inpaintImage(form), { kind: "selection", mask: footprint, name, replaces: null });
   }
   if (operation === "faces") {
