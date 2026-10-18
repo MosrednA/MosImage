@@ -68,7 +68,7 @@ class Flux2KleinNvfp4Provider(Flux2KleinProvider):
         if self._outpaint_adapter is None or (self._pipes and self._placement != placement):
             self.unload()
             self._want_outpaint_adapter = True
-        pipe = self._load_pipe(placement, "text-to-image", control)
+        pipe = self._load_pipe(placement, "text-to-image", control.subrange(0, 0.15))
         assert self._outpaint_adapter is not None
         self._outpaint_adapter.set_scale(1.1)
         torch = self._load_torch()
@@ -165,11 +165,14 @@ class Flux2Klein9bNvfp4Provider(Flux2KleinNvfp4Provider):
         from app.models.klein_text_encoder import load_text_encoder
 
         pipe = super()._create_pipeline(task, control)
+        control.set_progress(0.05)
         root = snapshot_download(self.base_repo, revision=self.base_revision, allow_patterns=["text_encoder/*"],
                                  token=settings.huggingface_token)
         control.raise_if_cancelled()
         components = {name: getattr(pipe, name) for name in SHARED_COMPONENTS}
-        components["text_encoder"] = load_text_encoder(Path(root), control.raise_if_cancelled)
+        # The encoder is nearly all of this (about 16 of 17 s), so its progress is the load's.
+        components["text_encoder"] = load_text_encoder(Path(root), control.raise_if_cancelled,
+                                                       lambda share: control.set_progress(0.05 + 0.95 * share))
         pipeline_class = Flux2KleinInpaintPipeline if task == "inpaint" else Flux2KleinPipeline
         return pipeline_class(**components, is_distilled=pipe.config.get("is_distilled", False))
 

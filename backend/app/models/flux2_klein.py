@@ -333,7 +333,7 @@ class Flux2KleinProvider:
         control.raise_if_cancelled()
         require_generation_device()
         torch = self._load_torch()
-        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
+        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control.subrange(0, 0.15))
         self._configure_edit_adapters(pipe, False, control)
         reference_images = _reference_images([reference.path for reference in references])
         control.set_progress(0.15)
@@ -370,7 +370,7 @@ class Flux2KleinProvider:
         torch = self._load_torch()
         partial = request.strength < 1
         # A partial redraw needs the source latent, which only the inpaint pipeline noises.
-        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint" if partial else "text-to-image", control)
+        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint" if partial else "text-to-image", control.subrange(0, 0.15))
         self._configure_edit_adapters(pipe, request.consistency_lora, control, request.detail)
         with Image.open(input_path) as picture:
             source = _opaque(picture)
@@ -430,7 +430,7 @@ class Flux2KleinProvider:
         control.raise_if_cancelled()
         require_generation_device()
         torch = self._load_torch()
-        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control)
+        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control.subrange(0, 0.15))
         self._configure_edit_adapters(pipe, request.consistency_lora, control)
         if request.edit_operation == "remove":
             references = ()
@@ -474,13 +474,14 @@ class Flux2KleinProvider:
             control.raise_if_cancelled()
             require_generation_device()
             placement = self._placement_for(request.runtime_mode)
-            pipe = self._load_pipe(placement, request.task, control)
+            # Loading is most of a start-up (about 24 of 27 s for 9B); the warm-up step is the rest.
+            pipe = self._load_pipe(placement, request.task, control.subrange(0, 0.9))
             self._configure_edit_adapters(pipe, False, control)
-            control.set_progress(0.6)
+            control.set_progress(0.9)
             if request.warm_up:
                 self._warm_up(pipe, request.task, control)
                 # The other task shares the weights, so having it ready is free.
-                self._load_pipe(placement, "text-to-image" if request.task == "inpaint" else "inpaint", control)
+                self._load_pipe(placement, "text-to-image" if request.task == "inpaint" else "inpaint", control.subrange(0.9, 0.95))
             control.set_progress(0.95)
         except JobCancelled:
             self.unload()
@@ -562,6 +563,7 @@ class Flux2KleinProvider:
         pipe(prompt="a quiet garden", height=256, width=256, num_inference_steps=1, guidance_scale=1.0, generator=generator, **extra)
 
     def _load_pipe(self, placement: Placement, task: PipelineTask, control: JobControl) -> Any:
+        """The pipeline for ``task``, loaded if needed; progress runs over all of ``control``'s range."""
         control.raise_if_cancelled()
         if self._pipes and self._placement != placement:
             self.unload()
@@ -572,13 +574,14 @@ class Flux2KleinProvider:
             control.set_phase("loading", self.display_name)
         pipe = None
         try:
-            pipe = self._create_pipeline(task, control) if shared is None else self._derive_pipeline(shared, task)
+            # Reading the weights takes about 70% of a load, copying them to the GPU the rest.
+            pipe = self._create_pipeline(task, control.subrange(0, 0.7)) if shared is None else self._derive_pipeline(shared, task)
             control.raise_if_cancelled()
             if task == "inpaint":
                 # Keep mask resampling coverage; final user feathering is
                 # applied by the compositor, independently of generation.
                 pipe.mask_processor.register_to_config(do_binarize=False)
-            self._place_pipeline(pipe, placement)
+            self._place_pipeline(pipe, placement, control.subrange(0.7, 1.0))
             control.raise_if_cancelled()
         except BaseException:
             pipe = None
@@ -616,7 +619,7 @@ class Flux2KleinProvider:
             self._torch = torch_module()
         return self._torch
 
-    def _place_pipeline(self, pipe: Any, placement: Placement) -> None:
+    def _place_pipeline(self, pipe: Any, placement: Placement, control: JobControl | None = None) -> None:
         torch = self._load_torch()
         device = selected_device(torch)
         self._configure_memory(pipe)
@@ -624,9 +627,26 @@ class Flux2KleinProvider:
             if placement == "offload" and hasattr(pipe, "enable_model_cpu_offload"):
                 pipe.enable_model_cpu_offload()
             else:
+                if control is not None:
+                    self._move_in_parts(pipe.transformer, "cuda", control.subrange(0, 0.95))
                 pipe.to("cuda")
         else:
             pipe.to(device)
+
+    def _move_in_parts(self, module: Any, device: str, control: JobControl) -> None:
+        """Move a large module block by block, so its copy (about 7 s for 9B) shows progress.
+
+        The pipeline's own ``to`` then finds these blocks in place and moves the rest.
+        """
+        torch = self._load_torch()
+        parts = [block for child in module.children()
+                 for block in (child if isinstance(child, torch.nn.ModuleList) else (child,))]
+        sizes = [sum(tensor.numel() * tensor.element_size() for tensor in (*part.parameters(), *part.buffers())) for part in parts]
+        total, done = max(sum(sizes), 1), 0
+        for part, size in zip(parts, sizes):
+            part.to(device)
+            done += size
+            control.set_progress(done / total)
 
     def _configure_memory(self, pipe: Any) -> None:
         vae = getattr(pipe, "vae", None)

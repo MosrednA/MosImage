@@ -159,9 +159,10 @@ def _warm_up_engine(control: JobControl) -> None:
     """Load SAM and the Quality model before the first click or edit."""
     control.set_phase("loading", "SAM 2.1 Tiny")
     selector.warm_up()
-    control.set_progress(0.2)
+    # SAM takes under a second; the Quality model the other 25 or so.
+    control.set_progress(0.03)
     request = LoadModelRequest(model_name=settings.warm_up_model, task="inpaint", warm_up=True)
-    _preload_model(request, control.subrange(0.2, 1.0))
+    _preload_model(request, control.subrange(0.03, 1.0))
 
 
 def _preload_model(request: LoadModelRequest, control: JobControl) -> None:

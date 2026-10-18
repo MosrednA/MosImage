@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -45,12 +46,37 @@ class Nvfp4ProviderTests(unittest.TestCase):
         loaded = inpaint.from_pretrained.call_args
         self.assertEqual((loaded.args, loaded.kwargs["revision"]), ((BASE_REPO_9B,), BASE_REVISION_9B))
         self.assertIsNone(loaded.kwargs["text_encoder"])
-        loader.load_text_encoder.assert_called_once_with(Path("snapshot"), control.raise_if_cancelled)
+        root, cancelled, progress = loader.load_text_encoder.call_args.args
+        self.assertEqual((root, cancelled), (Path("snapshot"), control.raise_if_cancelled))
+        # The encoder is most of a 9B start-up, so its share becomes the load's progress.
+        progress(0.5)
+        self.assertAlmostEqual(control.set_progress.call_args.args[0], 0.525)
         built = inpaint.call_args.kwargs
         self.assertIs(built["text_encoder"], encoder)
         self.assertIs(built["transformer"], inpaint.from_pretrained.return_value.transformer)
         self.assertTrue(built["is_distilled"])
         self.assertEqual({provider._placement_for(mode) for mode in ("balanced", "safe", "performance")}, {"cuda"})
+
+    def test_encoder_weights_report_their_share_once_each_is_handled(self) -> None:
+        import torch
+        from safetensors.torch import save_file
+        from app.models.klein_text_encoder import KEEP_LAYERS, _kept_weights
+
+        shards = {"a.safetensors": {"model.embed_tokens.weight": torch.ones(2, 2), "lm_head.weight": torch.ones(2, 2)},
+                  "b.safetensors": {"model.layers.0.mlp.up_proj.weight": torch.ones(2, 2),
+                                    f"model.layers.{KEEP_LAYERS}.mlp.up_proj.weight": torch.ones(2, 2), "model.norm.weight": torch.ones(2)}}
+        events: list[object] = []
+        with TemporaryDirectory() as directory:
+            folder = Path(directory)
+            for shard, weights in shards.items():
+                save_file(weights, str(folder / shard))
+            weight_map = {key: shard for shard, weights in shards.items() for key in weights}
+            (folder / "model.safetensors.index.json").write_text(json.dumps({"weight_map": weight_map}), encoding="utf-8")
+            for name, _tensor in _kept_weights(folder, "cpu", lambda: None, lambda share: events.append(round(share, 2))):
+                events.append(name)
+        # Skipped weights (the LM head, layers past the last one read) count for nothing.
+        self.assertEqual(sorted(events[0::2]), ["embed_tokens.weight", "layers.0.mlp.up_proj.weight", "norm.weight"])
+        self.assertEqual(events[1::2], [0.33, 0.67, 1.0])
 
     def test_native_loader_receives_pinned_files_and_pipeline_uses_bf16_components(self) -> None:
         provider = Flux2KleinNvfp4Provider()

@@ -9,11 +9,32 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 
 from app.config import settings
-from app.jobs import JobCancelled
+from app.jobs import JobCancelled, JobControl
 from app.models.base import ModelReference
 from app.models.flux2_klein import MULTI_REFERENCE_AREA, REFERENCE_BACKGROUND, Flux2KleinProvider, _edit_prompt, _inpaint_prompt
 from app.models.registry import ModelRegistry
 from app.schemas import EditRequest, InpaintForm, LoadModelRequest, OutpaintForm, TextToImageRequest
+
+
+class ProgressLog:
+    """A job manager that records the progress a job reports."""
+
+    def __init__(self) -> None:
+        self.values: list[float] = []
+        self.on_progress = lambda: None
+
+    def is_cancel_requested(self, _job_id: str) -> bool:
+        return False
+
+    def update_progress(self, _job_id: str, progress: float) -> None:
+        self.on_progress()
+        self.values.append(progress)
+
+    def update_phase(self, *_args: object) -> None:
+        pass
+
+    def update_step(self, *_args: object) -> None:
+        pass
 
 
 class Flux2KleinPlacementTests(unittest.TestCase):
@@ -74,6 +95,58 @@ class Flux2KleinPlacementTests(unittest.TestCase):
         self.assertIn("mask_image", arguments)
         self.assertEqual([call.args[1] for call in load.call_args_list], ["inpaint", "text-to-image"])
         control.set_phase.assert_called_with("warming", self.provider.display_name)
+
+    def test_start_up_progress_moves_with_the_load_and_never_back(self) -> None:
+        manager = ProgressLog()
+
+        def create(_task: str, control: JobControl) -> MagicMock:
+            control.set_progress(0.5)
+            control.set_progress(1.0)
+            return MagicMock()
+
+        def place(_pipe: object, _placement: str, control: JobControl) -> None:
+            control.set_progress(1.0)
+
+        with patch("app.models.flux2_klein.require_generation_device"), patch.object(self.provider, "_create_pipeline", side_effect=create), \
+                patch.object(self.provider, "_derive_pipeline", return_value=MagicMock()), \
+                patch.object(self.provider, "_place_pipeline", side_effect=place), patch.object(self.provider, "_warm_up"):
+            self.provider.preload(LoadModelRequest(model_name=self.provider.name, task="inpaint", warm_up=True), JobControl(manager, "job"))
+        # Reading the weights and copying them to the GPU fill most of the bar; the warm-up step the rest.
+        self.assertEqual([round(value, 3) for value in manager.values], [0.315, 0.63, 0.9, 0.9, 0.95, 0.95])
+        self.assertEqual(manager.values, sorted(manager.values))
+
+    def test_a_load_during_an_edit_stays_before_the_first_step(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (64, 64), "purple").save(root / "source.png")
+            Image.new("L", (64, 64), 255).save(root / "mask.png")
+            pipe = MagicMock(return_value=SimpleNamespace(images=[Image.new("RGB", (64, 64))]))
+
+            def load(_placement: str, _task: str, control: JobControl) -> MagicMock:
+                control.set_progress(1.0)
+                return pipe
+
+            manager = ProgressLog()
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), \
+                    patch.object(self.provider, "_load_torch", return_value=MagicMock()), patch.object(self.provider, "_load_pipe", side_effect=load):
+                self.provider.inpaint(InpaintForm(prompt="moss"), root / "source.png", root / "mask.png", root / "output.png", JobControl(manager, "job"))
+        # Steps start at 15%, so a model load during an edit fills the bar up to there.
+        self.assertEqual(manager.values[:2], [0.15, 0.15])
+        self.assertEqual(manager.values, sorted(manager.values))
+
+    def test_placement_copies_the_transformer_block_by_block(self) -> None:
+        import torch
+
+        transformer = torch.nn.Module()
+        transformer.embedder = torch.nn.Linear(4, 12)  # 60 weights
+        transformer.blocks = torch.nn.ModuleList(torch.nn.Linear(4, 4) for _ in range(3))  # 20 each
+        manager, moved = ProgressLog(), []
+        manager.on_progress = lambda: moved.append(sum(parameter.is_meta for parameter in transformer.parameters()))
+        with patch.object(self.provider, "_load_torch", return_value=torch):
+            self.provider._move_in_parts(transformer, "meta", JobControl(manager, "job"))
+        # Each block reports its share by size once it has moved.
+        self.assertEqual([round(value, 3) for value in manager.values], [0.5, 0.667, 0.833, 1.0])
+        self.assertEqual(moved, [2, 4, 6, 8])
 
     def test_failed_placement_is_not_reported_as_a_loaded_model(self) -> None:
         with patch.object(self.provider, "_create_pipeline", return_value=MagicMock()), patch.object(self.provider, "_place_pipeline", side_effect=RuntimeError("out of memory")), patch.object(self.provider, "_collect"):

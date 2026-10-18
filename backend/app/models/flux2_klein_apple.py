@@ -63,7 +63,7 @@ class Flux2KleinAppleProvider(Flux2KleinProvider):
             raise ValueError("Specialized outpaint requires the Fast model.")
         control.raise_if_cancelled()
         require_generation_device()
-        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control)
+        pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control.subrange(0, 0.15))
         self._configure_edit_adapters(pipe, False, control)
         if self._outpaint_adapter is None:
             # Without offload hooks the LoRA can join already resident weights.

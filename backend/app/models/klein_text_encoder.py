@@ -23,8 +23,12 @@ HIDDEN_STATE_LAYERS = (9, 18, 27)
 KEEP_LAYERS = max(HIDDEN_STATE_LAYERS) + 1
 
 
-def load_text_encoder(root: Path, check_cancelled: Callable[[], None]) -> Any:
-    """Build the streamed encoder from a snapshot holding ``text_encoder/``."""
+def load_text_encoder(root: Path, check_cancelled: Callable[[], None],
+                      progress: Callable[[float], None] | None = None) -> Any:
+    """Build the streamed encoder from a snapshot holding ``text_encoder/``.
+
+    ``progress`` hears the share done; this is most of a 9B start-up (about 16 s).
+    """
     import torch
     from accelerate import init_empty_weights
     from torch import nn
@@ -82,7 +86,8 @@ def load_text_encoder(root: Path, check_cancelled: Callable[[], None]) -> Any:
     with init_empty_weights():
         model = Qwen3Model(config)
     state: dict[str, torch.Tensor] = {}
-    for name, tensor in _kept_weights(folder, "cpu", check_cancelled):
+    report = progress or (lambda _share: None)
+    for name, tensor in _kept_weights(folder, "cpu", check_cancelled, lambda share: report(0.9 * share)):
         if name.startswith("layers.") and name.endswith("proj.weight"):
             parent, leaf = name.removesuffix(".weight").rsplit(".", 1)
             setattr(model.get_submodule(parent), leaf, Fp8Linear(tensor))
@@ -99,10 +104,12 @@ def load_text_encoder(root: Path, check_cancelled: Callable[[], None]) -> Any:
         raise RuntimeError(f"Text encoder weights missing from the checkpoint: {', '.join(leftover[:5])}")
     check_cancelled()
     cpu_state: dict[str, torch.Tensor] = {}
-    for name, tensor in (*model.named_parameters(), *model.named_buffers()):
+    tensors = [*model.named_parameters(), *model.named_buffers()]
+    for done, (name, tensor) in enumerate(tensors, 1):
         tensor.data = tensor.data.pin_memory()
         if not name.startswith("embed_tokens."):
             cpu_state[name] = tensor
+        report(0.9 + 0.1 * done / len(tensors))
     return StreamedTextEncoder(model, cpu_state)
 
 
@@ -140,22 +147,39 @@ def _trimmed_config(folder: Path) -> Any:
     return config
 
 
-def _kept_weights(folder: Path, device: str, check_cancelled: Callable[[], None]) -> Iterator[tuple[str, Any]]:
-    """The BF16 weights Klein's encode reads, named as in ``Qwen3Model``."""
+def _kept_weights(folder: Path, device: str, check_cancelled: Callable[[], None],
+                  progress: Callable[[float], None] | None = None) -> Iterator[tuple[str, Any]]:
+    """The BF16 weights Klein's encode reads, named as in ``Qwen3Model``.
+
+    ``progress`` hears the share yielded once the caller has handled each weight.
+    """
     import torch
     from safetensors import safe_open
 
     index = json.loads((folder / "model.safetensors.index.json").read_text(encoding="utf-8"))
+    total = sum(_kept_name(key) is not None for key in index["weight_map"])
+    done = 0
     for shard in sorted(set(index["weight_map"].values())):
         check_cancelled()
         with safe_open(str(folder / shard), framework="pt") as weights:
             for key in weights.keys():
-                if not key.startswith("model."):
-                    continue  # lm_head: logits are never used
-                name = key.removeprefix("model.")
-                if name.startswith("layers.") and int(name.split(".")[1]) >= KEEP_LAYERS:
+                name = _kept_name(key)
+                if name is None:
                     continue
                 tensor = weights.get_tensor(key).to(device=device, dtype=torch.bfloat16)
                 # On the CPU, clone() detaches the tensor from the memory-mapped
                 # shard, which would otherwise stay resident after loading.
                 yield name, tensor.clone() if device == "cpu" else tensor
+                done += 1
+                if progress is not None:
+                    progress(min(done / total, 1.0))
+
+
+def _kept_name(key: str) -> str | None:
+    """The ``Qwen3Model`` name of a checkpoint key, or None for a weight the encode never reads."""
+    if not key.startswith("model."):
+        return None  # lm_head: logits are never used
+    name = key.removeprefix("model.")
+    if name.startswith("layers.") and int(name.split(".")[1]) >= KEEP_LAYERS:
+        return None
+    return name
