@@ -1,3 +1,5 @@
+import { ENGINE_UNREACHABLE } from "./errors";
+
 export type ImageTask = "text-to-image" | "edit" | "inpaint" | "outpaint";
 export type TaskKind = ImageTask | "select" | "load-model";
 export type JobState = "queued" | "running" | "cancelling" | "cancelled" | "completed" | "failed";
@@ -220,10 +222,17 @@ export interface LoadModelRequest {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+/** A health check answers at once; one that hangs counts as no answer. */
+const HEALTH_TIMEOUT = 5000;
 
 export function fileUrl(path: string): string {
   // Retire cached image responses from the pre-CORS editor.
   return `${API_BASE}${path}${path.includes("?") ? "&" : "?"}v=2`;
+}
+
+/** Answers as soon as the engine serves requests, before the models are warm. */
+export async function checkHealth(): Promise<void> {
+  await request("/api/health", { signal: AbortSignal.timeout(HEALTH_TIMEOUT) });
 }
 
 export async function listModels(): Promise<ModelInfo[]> {
@@ -487,8 +496,19 @@ export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
+/** Nothing answered: the engine is still starting, has stopped, or restarts after a hard cancel. */
+export class EngineUnreachableError extends Error {
+  constructor() { super(ENGINE_UNREACHABLE); }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, init);
+  let response: Response;
+  // fetch rejects only when no answer came, with "Failed to fetch" in WebView2 and "Load failed" in WebKit.
+  try { response = await fetch(`${API_BASE}${path}`, init); }
+  catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new EngineUnreachableError();
+  }
   if (!response.ok) {
     const text = await response.text();
     let message = text;

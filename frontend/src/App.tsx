@@ -29,6 +29,7 @@ import { ExpansionDialog } from "./components/ExpansionDialog";
 import { CropBar } from "./components/CropBar";
 import { WelcomeCanvas } from "./components/WelcomeCanvas";
 import { ShortcutsDialog } from "./components/ShortcutsDialog";
+import { StartupScreen } from "./components/StartupScreen";
 import { ReferencePanel } from "./components/ReferencePanel";
 import { LayersPanel } from "./components/LayersPanel";
 import { SidePanel, SideTab } from "./components/SidePanel";
@@ -109,7 +110,7 @@ export default function App() {
   const [enhanceLevel, setEnhanceLevel] = useState<EnhanceLevel>("subtle");
   // Crop works on the picture as you see it; the image is a flattened copy, released when crop ends.
   const [crop, setCrop] = useState<{ rect: CropRect; ratio: CropRatio; imageUrl: string } | null>(null);
-  const refs = useReferences(document?.id ?? null, setError);
+  const refs = useReferences(document?.id ?? null, engine.started, setError);
   // Layer saves move the revision on before React re-renders; requests read it here.
   const documentRef = useRef<DocumentRecord | null>(document);
   documentRef.current = document;
@@ -130,7 +131,8 @@ export default function App() {
 
   const busy = pending || jobs.active;
   const reviewing = alternatives.length > 0;
-  const locked = busy || reviewing;
+  // Nothing works before the engine first answers; the start screen shows meanwhile.
+  const locked = busy || reviewing || !engine.started;
   const chosen = alternatives[selected];
   // What the AI made of the picture as you saw it, which is also how an Expand proposal looks once applied.
   const proposalUrls = alternatives.map(item => fileUrl(item.output_image_url));
@@ -666,10 +668,17 @@ export default function App() {
   const referenceNote = operation === "expand" ? "References are used for Replace edits. Leave Expand to place one."
     : operation === "remove" && refs.active.length ? "Switch to Replace to place the selected references." : null;
 
+  const topBar = <TopBar document={document} onRename={name => document && setDocument({ ...document, name })} online={online} connecting={engine.connecting} system={system} warmUp={engine.warmUp} locked={locked} canExport={!!source}
+    onUndo={() => void perform(() => travel("undo"))} onRedo={() => void perform(() => travel("redo"))}
+    onOpen={() => upload.current?.click()} onLibrary={() => setLibraryOpen(true)} onExport={() => void exportPicture()} />;
+  if (!engine.started) return <main className="focus-app">
+    {topBar}
+    <StartupScreen failure={engine.startFailure} onRetry={engine.retryStart} />
+    {panel === "shortcuts" && <ShortcutsDialog onClose={() => setPanel(null)} />}
+  </main>;
+
   return <main className="focus-app with-references">
-    <TopBar document={document} onRename={name => document && setDocument({ ...document, name })} online={online} connecting={engine.connecting} system={system} warmUp={engine.warmUp} locked={locked} canExport={!!source}
-      onUndo={() => void perform(() => travel("undo"))} onRedo={() => void perform(() => travel("redo"))}
-      onOpen={() => upload.current?.click()} onLibrary={() => setLibraryOpen(true)} onExport={() => void exportPicture()} />
+    {topBar}
     <input ref={upload} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" onChange={onFile} />
     <ToolRail hasImage={!!source} tool={tool} expanding={operation === "expand" && !crop} cropping={!!crop} locked={locked} onNew={newImage} onTool={chooseTool} onExpand={chooseExpansion} onCrop={() => void startCrop()} />
     <section className="focus-workspace" onDragOver={event => { event.preventDefault(); if (!locked) setDropActive(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false); }} onDrop={drop}>

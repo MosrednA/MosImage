@@ -5,9 +5,21 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MosImage</title>
+    <!--
+      Shown before the stylesheet and the app load, so start-up never flashes white: the app's
+      background (--well) with the logo centred, which the start screen then glides into place (splash.ts).
+    -->
+    <style>
+      html, body { background: #1c2027; }
+      #splash { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: #1c2027; pointer-events: none; }
+      /* Matches .startup-mark in styles.css, shown larger until it shrinks into place. */
+      #splash > div { position: relative; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 16px; background: linear-gradient(135deg, #071225, #0b1b36); box-shadow: inset 0 0 0 1px #3fb9ff40, 0 0 32px #3fb9ff22; font: 700 44px/1 "Bahnschrift", sans-serif; color: #3fb9ff; text-shadow: 0 0 14px #3fb9ffaa; transform: scale(1.5); }
+      #splash span { position: absolute; right: 7px; top: 4px; font-size: 26px; color: #6ee7c3; text-shadow: 0 0 10px #6ee7c3; }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="splash" aria-hidden="true"><div>m<span>&bull;</span></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
