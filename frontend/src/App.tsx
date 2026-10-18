@@ -364,12 +364,12 @@ export default function App() {
   function chooseTool(next: CanvasTool) {
     setCrop(null);
     if (next === "sketch") { chooseOperation("sketch"); return; }
-    // With a layer selected, Brush and Eraser paint its mask, as in Photoshop; Esc first selects on the picture.
-    if ((next === "brush" || next === "eraser") && layers.active && !layerMasking) { editLayerMask(layers.active.id); setTool(next); return; }
     setTool(next);
     if (operation === "sketch" && next !== "move") setOperation("replace");
     if (operation === "expand" || isWholeImage(operation)) { selection.clear(); setOperation("replace"); }
     if (next === "transform") setMaskingId(null);
+    // Every selection tool, Brush and Eraser too, selects on the picture; Apply just selected
+    // its new layer, so painting a mask waits for Paint mask, the mask thumbnail or Apply & mask.
     else if (isSelectionTool(next) && !layerMasking) layers.select(null);
   }
   function toggleLayerMask(id: string) {

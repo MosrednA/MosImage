@@ -39,7 +39,7 @@ export function canSubmit(state: CommandState): boolean {
 export function commandHint(state: CommandState): string {
   const { operation, referenceNames } = state;
   if (state.activeLayerName !== null && state.layerMasking) return `Painting the mask of “${state.activeLayerName}”: Brush paints its tone, white shows and black hides (X swaps), Eraser hides, \\ tints hidden parts red. Click the layer thumbnail or press Esc when done.`;
-  if (state.activeLayerName !== null) return `Editing layer “${state.activeLayerName}”. B and E paint its mask; press Esc for AI edits, which see every visible layer.`;
+  if (state.activeLayerName !== null) return `Editing layer “${state.activeLayerName}”. Brush or another selection tool selects on the picture for AI edits, which see every visible layer; the Layers panel paints its mask.`;
   if (operation === "edit" && state.editScope === "layer") return layerEditHint(state.editLayerName, referenceNames);
   if (operation === "sketch") return sketchHint(state.sketchScope, state.hasSketch, referenceNames);
   if (operation === "faces") return facesHint(state.hasMask, referenceNames, state.faceMode, state.facePicks);

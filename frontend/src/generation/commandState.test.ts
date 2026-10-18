@@ -46,6 +46,8 @@ describe("commandHint", () => {
   it("puts the layer being worked on first", () => {
     expect(commandHint(state({ activeLayerName: "Hat", layerMasking: true }))).toContain("Painting the mask of “Hat”");
     expect(commandHint(state({ activeLayerName: "Hat" }))).toContain("Editing layer “Hat”");
+    // The Brush selects on the picture even with a layer selected; masks are painted from the Layers panel.
+    expect(commandHint(state({ activeLayerName: "Hat" }))).toContain("Brush or another selection tool selects on the picture");
   });
   it("explains blending and that results become layers", () => {
     expect(commandHint(state({ blendingName: "Hat" }))).toContain("Blending “Hat” in");

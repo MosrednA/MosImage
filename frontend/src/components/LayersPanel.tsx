@@ -297,7 +297,7 @@ function LayerProperties({ layer, disabled, onUpdate, onPreview, onRemove, onDup
       {layer.mask_url
         ? <>
           <button className="layer-mask" aria-pressed={masking} disabled={disabled}
-            title={masking ? "Back to the layer's pixels · Esc" : "Paint the mask from white to black: Brush paints its tone, Eraser hides · B or E with the layer selected"}
+            title={masking ? "Back to the layer's pixels · Esc" : "Paint the mask from white to black: Brush paints its tone, Eraser hides"}
             onClick={() => props.onMask(layer.id)}><Icon name="brush" />{masking ? "Done painting" : "Paint mask"}</button>
           <div className="mask-tools">
             <button className="mask-tool" disabled={disabled} aria-pressed={!layer.mask_enabled}
