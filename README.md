@@ -124,7 +124,7 @@ cd frontend
 npm run tauri:build
 ```
 
-This builds `frontend/src-tauri/target/release/mosimage.exe` plus MSI and NSIS installers. The app starts and stops the engine itself, or reuses one that `start.cmd` already started. Close a running `mosimage.exe` before rebuilding, because Windows locks the file.
+This builds `frontend/src-tauri/target/release/mosimage.exe` in a few seconds after the first build; `npm run tauri:installers` also makes MSI and NSIS installers. The app starts and stops the engine itself, or reuses one that `start.cmd` already started. Close a running `mosimage.exe` before rebuilding, because Windows locks the file.
 
 On a Mac, after `./start.sh` has set up the engine once:
 

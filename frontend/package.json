@@ -9,7 +9,8 @@
     "test": "vitest run",
     "preview": "vite preview",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "tauri:build": "tauri build --no-bundle",
+    "tauri:installers": "tauri build",
     "tauri:build:mac": "tauri build --bundles app && rm -rf /Applications/MosImage.app && ditto src-tauri/target/release/bundle/macos/MosImage.app /Applications/MosImage.app"
   },
   "dependencies": {

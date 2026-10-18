@@ -272,8 +272,11 @@ The Tauri desktop app in `frontend/src-tauri` is the same UI in its own window. 
 ```powershell
 cd frontend
 npm run tauri:dev    # development, with Vite
-npm run tauri:build  # mosimage.exe plus MSI and NSIS installers under src-tauri/target/release
+npm run tauri:build       # src-tauri/target/release/mosimage.exe, in a few seconds after the first build
+npm run tauri:installers  # the same, plus MSI and NSIS installers under src-tauri/target/release/bundle
 ```
+
+Release builds of the shell are incremental (`Cargo.toml`), so after a UI change only the changed part of the app is compiled again: about 4 s instead of about 40 s. The installers add about 9 s, so the everyday build leaves them out.
 
 The app starts the engine itself from `backend/.venv` in the checkout it was built from (override with `MOSIMAGE_ROOT`), without a console window; output goes to `data/logs/engine.log`. The engine port is 8000; when Windows has reserved that port, build with `MOSIMAGE_PORT` set to another one, which moves both the engine and the UI that talks to it. If an engine is already listening on that port, for example from `start.cmd`, the app uses it and leaves it running. Like `backend/supervisor.ps1`, the app restarts its engine after a hard cancel or crash. On close it asks the engine to cancel jobs and unload models through `/api/shutdown`, guarded by a per-launch token, and ends it after 20 s if needed. A Windows job object ends the engine as well if the app itself crashes, so no Python process keeps RAM or GPU memory.
 

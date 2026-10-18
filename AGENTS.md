@@ -20,7 +20,7 @@ MosImage uses a split local app architecture:
 - `npm run dev` from `frontend/` starts Vite on port `5173`.
 - `npm run build` from `frontend/` type-checks and builds the UI.
 - `npm run tauri:dev` from `frontend/` starts the optional desktop shell after Rust/Tauri prerequisites are installed.
-- `npm run tauri:build` from `frontend/` rebuilds `src-tauri/target/release/mosimage.exe`. The user's desktop shortcut opens that file, so a build updates the app they launch. Close a running `mosimage.exe` first, because Windows locks it.
+- `npm run tauri:build` from `frontend/` rebuilds `src-tauri/target/release/mosimage.exe` (incremental, without installers). The user's desktop shortcut opens that file, so a build updates the app they launch. Close a running `mosimage.exe` first, because Windows locks it. `npm run tauri:installers` also builds the MSI and NSIS installers.
 - `npm run tauri:build:mac` from `frontend/` builds `MosImage.app` and installs it in `/Applications`, which the user opens on their Mac.
 
 ## Coding Style & Naming Conventions
