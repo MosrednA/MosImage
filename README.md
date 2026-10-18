@@ -44,7 +44,7 @@ Three steps on one picture, each about 3–10 seconds on an RTX 5070 Ti (7–15 
 **Create**
 - **Generate** an image from a prompt. In an open document the result is added as a new layer.
 - **References**: put people, pets or objects from your own photos into a new scene ("Anna and Tom riding a roller coaster"), up to three at once.
-- **Sketch** rough coloured strokes and describe them. MosImage renders just the sketch, or the whole picture around it.
+- **Sketch** rough coloured strokes and describe them. MosImage renders just the sketch, or the whole picture around it. With references picked, the sketch places and poses them.
 
 **Edit**
 - **Replace** or **Remove** a selected area. Pixels outside the selection stay exact.
