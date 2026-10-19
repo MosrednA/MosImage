@@ -1,8 +1,9 @@
-import { Ref } from "react";
+import { RefObject, useLayoutEffect, useRef, useState } from "react";
 import { ReferenceRole } from "../api";
 import { EditScope, EnhanceLevel, FaceMode, Operation, SketchScope, promptPlaceholder, submitLabel } from "../generation/operation";
 import { Icon } from "./Icon";
 import { MOD } from "../platform";
+import { promptHeight } from "./promptHeight";
 
 export interface ActiveReference { id: number; name: string; imageUrl: string; role?: ReferenceRole }
 
@@ -14,7 +15,7 @@ const ROLE_BADGE: Record<ReferenceRole, string> = {
 };
 
 interface Props {
-  promptRef?: Ref<HTMLTextAreaElement>;
+  promptRef?: RefObject<HTMLTextAreaElement | null>;
   operation: Operation;
   onOperation: (operation: Exclude<Operation, "expand">) => void;
   hasImage: boolean;
@@ -46,6 +47,19 @@ interface Props {
 
 export function CommandCard(props: Props) {
   const { operation, hasImage, locked } = props;
+  const ownField = useRef<HTMLTextAreaElement>(null);
+  const field = props.promptRef ?? ownField;
+  const [focused, setFocused] = useState(false);
+  // A disabled textarea may lose focus without a blur event, so locking collapses it too.
+  const expanded = focused && !locked;
+  // While focused the prompt grows upward over the canvas, so the layout below never shifts.
+  useLayoutEffect(() => {
+    const element = field.current;
+    if (!element) return;
+    element.style.height = "";
+    if (expanded) element.style.height = `${promptHeight(element.scrollHeight, element.offsetHeight - element.clientHeight, element.offsetHeight, true)}px`;
+    else element.scrollTop = 0;
+  }, [field, expanded, props.prompt]);
   return <section className={"command-card" + (locked ? " locked" : "")} aria-label="Instruction">
     <div className="command-context">
       <div className="operation-controls">
@@ -91,9 +105,11 @@ export function CommandCard(props: Props) {
           <button aria-label={`Stop using ${reference.name}`} title="Stop using this reference" disabled={locked} onClick={() => props.onRemoveReference(reference.id)}><Icon name="close" /></button>
         </div>)}
       </div>}
-      <textarea ref={props.promptRef} aria-label="Describe your idea" rows={1} disabled={locked} placeholder={promptPlaceholder(operation, hasImage, props.references.map(reference => reference.name))} value={props.prompt}
-        onChange={event => props.onPrompt(event.target.value)}
-        onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); if (props.canSubmit) props.onSubmit(); } }} />
+      <div className={"prompt-field" + (expanded ? " expanded" : "")}>
+        <textarea ref={field} aria-label="Describe your idea" rows={1} disabled={locked} placeholder={promptPlaceholder(operation, hasImage, props.references.map(reference => reference.name))} value={props.prompt}
+          onChange={event => props.onPrompt(event.target.value)} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+          onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); if (props.canSubmit) props.onSubmit(); } }} />
+      </div>
       {props.jobActive
         ? <button className="generate-button cancel-button" disabled={props.cancelling} onClick={props.onCancel}><Icon name="close" /><span>{props.cancelling ? "Cancelling…" : "Cancel"}</span></button>
         : <button className="primary generate-button" disabled={!props.canSubmit} onClick={props.onSubmit}><Icon name="spark" /><span>{submitLabel(operation)}</span><kbd>{MOD} ↵</kbd></button>}

@@ -190,8 +190,11 @@ small { color: var(--muted); }
 .settings-trigger { color: var(--muted); background: transparent; border-color: transparent; padding: 3px 5px 3px 9px; font-size: 11px; }
 .settings-trigger svg { width: 16px; height: 16px; }
 .prompt-row { display: flex; align-items: center; gap: 8px; }
-.prompt-row textarea { resize: none; flex: 1; min-height: 40px; height: 40px; background: var(--field); border-color: var(--line); line-height: 22px; padding: 8px 10px; font-size: 13px; }
+.prompt-field { position: relative; flex: 1; min-width: 0; height: 40px; }
+.prompt-row textarea { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; resize: none; min-height: 40px; height: 40px; max-height: min(240px, 45vh); background: var(--field); border-color: var(--line); line-height: 22px; padding: 8px 10px; font-size: 13px; }
+.prompt-field.expanded textarea { z-index: 7; }
 .prompt-row textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 1px #3fb9ff55; }
+.prompt-field.expanded textarea:focus { box-shadow: 0 0 0 1px #3fb9ff55, 0 -8px 24px #0009; }
 .prompt-row textarea::placeholder { color: var(--faint); }
 .generate-button { align-self: stretch; min-width: 132px; white-space: nowrap; font-size: 12px; padding: 8px 13px; }
 .generate-button.primary { box-shadow: 0 0 14px #1d98ee55; }
