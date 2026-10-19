@@ -5,6 +5,7 @@ import { SelectionActionProps, SelectionActions } from "../components/SelectionA
 import { isTyping } from "../hooks/useWindowEvents";
 import { OPACITY_RANGE, SOFTNESS_RANGE, TONE_RANGE } from "../layers/brush";
 import { DEFAULT_EXPAND, autoExpand, autoSoften } from "../masks/maskRefine";
+import { spotStyle } from "./barSpot";
 import { ImageBox, paddedContextBox } from "./context";
 import { ImageSize, viewportPointToImage } from "./coordinates";
 import { BRUSH_RANGE, CanvasToolbar } from "./CanvasToolbar";
@@ -12,6 +13,7 @@ import { MaskBrushBar } from "./MaskBrushBar";
 import { SelectionBar } from "./SelectionBar";
 import { SKETCH_COLOURS, SKETCH_SIZE } from "./sketch";
 import { CanvasTool, LAYER_STATUS, TOOLS, isMaskTool } from "./tools";
+import { useBarSpot } from "./useBarSpot";
 import { useMaskLayer } from "./useMaskLayer";
 import { useSketchLayer } from "./useSketchLayer";
 import { useViewport } from "./useViewport";
@@ -58,8 +60,8 @@ interface EditorCanvasProps {
   layerPointCount: number;
   onUndoLayerPoint: () => void;
   renderLayers: (view: LayerView) => ReactNode;
-  /** Next steps for a selection, shown beside it; invert and deselect come from the canvas. */
-  selectionActions?: Omit<SelectionActionProps, "onInvert" | "onDeselect"> | null;
+  /** Next steps for a selection, shown beside it; invert, deselect and the grip come from the canvas. */
+  selectionActions?: Omit<SelectionActionProps, "onInvert" | "onDeselect" | "grip"> | null;
   /** The sketch shows while Sketch is the operation; Apply clears it. */
   sketchVisible: boolean;
   sketchClearToken: number;
@@ -79,6 +81,7 @@ export interface FaceOverlay {
 
 export function EditorCanvas(props: EditorCanvasProps) {
   const { imageUrl, previewImageUrl, reviewing, splitCompare, imageName, tool, disabled, points, contextPadding, faces } = props;
+  const frameRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const cursorRef = useRef<HTMLDivElement | null>(null);
@@ -115,6 +118,7 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const editing = !reviewing && !!imageSize;
   const layerInput = (layerActive || tool === "transform") && !panning;
   const sketching = tool === "sketch" && !panning;
+  const actionsSpot = useBarSpot(frameRef);
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
@@ -191,6 +195,10 @@ export function EditorCanvas(props: EditorCanvasProps) {
   const brushCursor = editing && !panning && !disabled && (tool === "brush" || tool === "eraser" || tool === "sketch");
   const cursorSize = tool === "sketch" ? sketchSize : brushSize;
   const splitting = !!(reviewing && splitCompare && previewImageUrl);
+  // Beside the selection, or where the user moved it in the frame around the image.
+  const selectionActions = editing && !reviewing && !layerActive && !mask.drawing && maskVisible && mask.selectionBounds && props.selectionActions
+    ? <SelectionActions {...props.selectionActions} onInvert={mask.invert} onDeselect={props.onClearSelection} grip={actionsSpot.grip} />
+    : null;
 
   return (
     <section className="editor-canvas" aria-label="Image editor">
@@ -211,72 +219,73 @@ export function EditorCanvas(props: EditorCanvasProps) {
         maskVisible={maskVisible} onToggleMask={() => setMaskVisible(value => !value)}
         canUndo={mask.canUndo} canRedo={mask.canRedo} onUndo={mask.undo} onRedo={mask.redo} onInvert={mask.invert} onClear={props.onClearSelection} />}
 
-      <div ref={stageRef} className="editor-stage" data-tool={panning ? "move" : tool} {...viewport.panHandlers}>
-        {imageUrl && imageSize && displaySize ? (
-          <div ref={surfaceRef} className={"editor-surface" + (brushCursor ? " brush-cursor-active" : "")} style={{ width: displaySize.width, height: displaySize.height }}>
-            <img src={splitting ? imageUrl : (previewImageUrl || imageUrl)} alt={imageName || "Source image"} draggable={false} />
-            {props.renderLayers({ zoom, size: imageSize, brushSize, brushHardness: 1 - softness / 100, brushOpacity: brushOpacity / 100, brushTone: tone / 100, hide: layerHide, interactive: layerInput && editing, trackCursor })}
-            {splitting && <>
-              <img className="split-preview-image" src={previewImageUrl!} alt="Proposal preview" draggable={false}
-                style={{ clipPath: `inset(0 0 0 ${(splitRatio * 100).toFixed(2)}%)` }} />
-              <div className="split-compare-overlay" aria-label="Split comparison"
-                onPointerDown={event => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); updateSplit(event.clientX); }}
-                onPointerMove={event => { if (event.buttons & 1) updateSplit(event.clientX); }}>
-                <div className="split-compare-divider" style={{ left: `${(splitRatio * 100).toFixed(2)}%` }}>
-                  <span className="split-compare-label before">Original</span>
-                  <span className="split-compare-handle" aria-hidden="true">↔</span>
-                  <span className="split-compare-label after">Proposal</span>
+      <div ref={frameRef} className="editor-stage-frame">
+        <div ref={stageRef} className="editor-stage" data-tool={panning ? "move" : tool} {...viewport.panHandlers}>
+          {imageUrl && imageSize && displaySize ? (
+            <div ref={surfaceRef} className={"editor-surface" + (brushCursor ? " brush-cursor-active" : "")} style={{ width: displaySize.width, height: displaySize.height }}>
+              <img src={splitting ? imageUrl : (previewImageUrl || imageUrl)} alt={imageName || "Source image"} draggable={false} />
+              {props.renderLayers({ zoom, size: imageSize, brushSize, brushHardness: 1 - softness / 100, brushOpacity: brushOpacity / 100, brushTone: tone / 100, hide: layerHide, interactive: layerInput && editing, trackCursor })}
+              {splitting && <>
+                <img className="split-preview-image" src={previewImageUrl!} alt="Proposal preview" draggable={false}
+                  style={{ clipPath: `inset(0 0 0 ${(splitRatio * 100).toFixed(2)}%)` }} />
+                <div className="split-compare-overlay" aria-label="Split comparison"
+                  onPointerDown={event => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); updateSplit(event.clientX); }}
+                  onPointerMove={event => { if (event.buttons & 1) updateSplit(event.clientX); }}>
+                  <div className="split-compare-divider" style={{ left: `${(splitRatio * 100).toFixed(2)}%` }}>
+                    <span className="split-compare-label before">Original</span>
+                    <span className="split-compare-handle" aria-hidden="true">↔</span>
+                    <span className="split-compare-label after">Proposal</span>
+                  </div>
                 </div>
-              </div>
-            </>}
-            <canvas ref={sketch.canvasRef} className="sketch-draw" width={imageSize.width} height={imageSize.height} data-tool="sketch" aria-label="Sketch canvas"
-              style={{ pointerEvents: sketching && editing && !disabled ? undefined : "none", opacity: props.sketchVisible && !reviewing ? 1 : 0 }}
-              onPointerDown={event => { if (event.button === 0 && !disabled) sketch.gesture.begin(event); }}
-              onPointerMove={event => { trackCursor(event.clientX, event.clientY); sketch.gesture.update(event); }}
-              onPointerUp={sketch.gesture.finish} onPointerCancel={sketch.gesture.cancel} />
-            <canvas
-              ref={mask.canvasRef}
-              className="mask-draw"
-              width={imageSize.width}
-              height={imageSize.height}
-              data-tool={tool}
-              aria-label="Selection canvas"
-              style={{ pointerEvents: disabled || panning || layerInput || sketching ? "none" : undefined, opacity: mask.drawing && !reviewing ? undefined : 0 }}
-              onPointerDown={beginGesture}
-              onPointerMove={moveCursor}
-              onPointerUp={mask.gesture.finish}
-              onPointerCancel={mask.gesture.cancel}
-              onContextMenu={excludePoint}
-            />
-            <canvas ref={mask.overlayRef} className="mask-overlay" width={imageSize.width} height={imageSize.height} aria-hidden="true"
-              style={{ opacity: reviewing || mask.drawing || !maskVisible ? 0 : 1 }} />
-            {editing && !reviewing && !layerActive && !mask.drawing && maskVisible && mask.selectionBounds && props.selectionActions
-              && <div className="selection-actions-anchor" style={actionsPlacement(mask.selectionBounds, zoom, displaySize)}>
-                <SelectionActions {...props.selectionActions} onInvert={mask.invert} onDeselect={props.onClearSelection} />
-              </div>}
-            {brushCursor && <div ref={cursorRef} className="brush-cursor" style={{ width: cursorSize * zoom, height: cursorSize * zoom, margin: -cursorSize * zoom / 2 }} />}
-            {!reviewing && showContext && contextBox && <div className="context-boundary" aria-label="Protected context boundary" style={{ left: contextBox.x * zoom, top: contextBox.y * zoom, width: contextBox.width * zoom, height: contextBox.height * zoom }}><span>Context · stays unchanged</span></div>}
-            {!reviewing && maskVisible && !layerActive && points.map((point, index) => <button key={`${index}-${point.x}-${point.y}`} type="button"
-              className={`selection-point ${point.label ? "positive" : "negative"}`} style={{ left: point.x * zoom, top: point.y * zoom }}
-              disabled={disabled} aria-label={`Remove ${point.label ? "include" : "exclude"} point ${index + 1}`} title="Click to remove this point"
-              onPointerDown={event => event.stopPropagation()} onClick={() => props.onRemovePoint(index)}>
-              <span aria-hidden="true">{point.label ? "+" : "−"}</span>
-            </button>)}
-            {!reviewing && faces && faces.boxes.map(([left, top, right, bottom], index) => <button key={`${index}-${left}-${top}`} type="button"
-              className={"face-box" + (faces.picked[index] ? " picked" : "")} style={{ left: left * zoom, top: top * zoom, width: (right - left) * zoom, height: (bottom - top) * zoom }}
-              disabled={disabled} aria-pressed={faces.picked[index]} aria-label={`Face ${index + 1}`} title={faces.picked[index] ? "Click to leave this face out" : "Click to fix this face too"}
-              onPointerDown={event => event.stopPropagation()} onClick={() => faces.onToggle(index)}>
-              <span aria-hidden="true">{faces.picked[index] ? "✓" : "+"}</span>
-            </button>)}
-            {!reviewing && faces?.finding && <div className="face-status" role="status">Finding faces…</div>}
-          </div>
-        ) : (
-          <div className="canvas-empty">
-            <span className="empty-mark">+</span>
-            <strong>Open, drop, or choose a recent image</strong>
-            <span>Your mask stays aligned to the image at its native resolution.</span>
-          </div>
-        )}
+              </>}
+              <canvas ref={sketch.canvasRef} className="sketch-draw" width={imageSize.width} height={imageSize.height} data-tool="sketch" aria-label="Sketch canvas"
+                style={{ pointerEvents: sketching && editing && !disabled ? undefined : "none", opacity: props.sketchVisible && !reviewing ? 1 : 0 }}
+                onPointerDown={event => { if (event.button === 0 && !disabled) sketch.gesture.begin(event); }}
+                onPointerMove={event => { trackCursor(event.clientX, event.clientY); sketch.gesture.update(event); }}
+                onPointerUp={sketch.gesture.finish} onPointerCancel={sketch.gesture.cancel} />
+              <canvas
+                ref={mask.canvasRef}
+                className="mask-draw"
+                width={imageSize.width}
+                height={imageSize.height}
+                data-tool={tool}
+                aria-label="Selection canvas"
+                style={{ pointerEvents: disabled || panning || layerInput || sketching ? "none" : undefined, opacity: mask.drawing && !reviewing ? undefined : 0 }}
+                onPointerDown={beginGesture}
+                onPointerMove={moveCursor}
+                onPointerUp={mask.gesture.finish}
+                onPointerCancel={mask.gesture.cancel}
+                onContextMenu={excludePoint}
+              />
+              <canvas ref={mask.overlayRef} className="mask-overlay" width={imageSize.width} height={imageSize.height} aria-hidden="true"
+                style={{ opacity: reviewing || mask.drawing || !maskVisible ? 0 : 1 }} />
+              {selectionActions && !actionsSpot.spot && mask.selectionBounds
+                && <div className="selection-actions-anchor" style={actionsPlacement(mask.selectionBounds, zoom, displaySize)}>{selectionActions}</div>}
+              {brushCursor && <div ref={cursorRef} className="brush-cursor" style={{ width: cursorSize * zoom, height: cursorSize * zoom, margin: -cursorSize * zoom / 2 }} />}
+              {!reviewing && showContext && contextBox && <div className="context-boundary" aria-label="Protected context boundary" style={{ left: contextBox.x * zoom, top: contextBox.y * zoom, width: contextBox.width * zoom, height: contextBox.height * zoom }}><span>Context · stays unchanged</span></div>}
+              {!reviewing && maskVisible && !layerActive && points.map((point, index) => <button key={`${index}-${point.x}-${point.y}`} type="button"
+                className={`selection-point ${point.label ? "positive" : "negative"}`} style={{ left: point.x * zoom, top: point.y * zoom }}
+                disabled={disabled} aria-label={`Remove ${point.label ? "include" : "exclude"} point ${index + 1}`} title="Click to remove this point"
+                onPointerDown={event => event.stopPropagation()} onClick={() => props.onRemovePoint(index)}>
+                <span aria-hidden="true">{point.label ? "+" : "−"}</span>
+              </button>)}
+              {!reviewing && faces && faces.boxes.map(([left, top, right, bottom], index) => <button key={`${index}-${left}-${top}`} type="button"
+                className={"face-box" + (faces.picked[index] ? " picked" : "")} style={{ left: left * zoom, top: top * zoom, width: (right - left) * zoom, height: (bottom - top) * zoom }}
+                disabled={disabled} aria-pressed={faces.picked[index]} aria-label={`Face ${index + 1}`} title={faces.picked[index] ? "Click to leave this face out" : "Click to fix this face too"}
+                onPointerDown={event => event.stopPropagation()} onClick={() => faces.onToggle(index)}>
+                <span aria-hidden="true">{faces.picked[index] ? "✓" : "+"}</span>
+              </button>)}
+              {!reviewing && faces?.finding && <div className="face-status" role="status">Finding faces…</div>}
+            </div>
+          ) : (
+            <div className="canvas-empty">
+              <span className="empty-mark">+</span>
+              <strong>Open, drop, or choose a recent image</strong>
+              <span>Your mask stays aligned to the image at its native resolution.</span>
+            </div>
+          )}
+        </div>
+        {selectionActions && actionsSpot.spot && <div className="selection-actions-anchor" style={spotStyle(actionsSpot.spot)}>{selectionActions}</div>}
       </div>
 
       <footer className="canvas-status">

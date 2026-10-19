@@ -116,6 +116,8 @@ small { color: var(--muted); }
 .zoom-controls { display: flex; align-items: center; gap: 2px; margin-left: auto; flex-shrink: 0; }
 .zoom-controls output { width: 40px; text-align: right; color: var(--muted); font-size: 11px; font-family: "Cascadia Code", monospace; }
 .editor-stage, .expansion-stage { flex: 1; min-height: 0; overflow: auto; display: flex; padding: 20px; align-items: safe center; justify-content: safe center; }
+/* Holds the stage and, once the user moves it, the selection actions bar, which stays put while the stage scrolls. */
+.editor-stage-frame { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .editor-stage[data-tool=move] { cursor: grab; }
 .editor-stage[data-tool=move]:active { cursor: grabbing; }
 .editor-surface, .expansion-surface { position: relative; flex-shrink: 0; box-shadow: 0 0 0 1px #0008, 0 8px 40px #0006; }
@@ -498,6 +500,11 @@ small { color: var(--muted); }
 .selection-actions-bar .icon-button { width: 26px; height: 26px; padding: 5px; justify-content: center; }
 .selection-actions-divider { width: 1px; height: 18px; margin: 0 2px; background: var(--line-soft); }
 .selection-actions-target { max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.selection-actions-grip { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 26px; color: var(--faint); border-radius: var(--radius); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.selection-actions-grip:hover { color: var(--ink); background: var(--control); }
+.selection-actions-grip svg { width: 14px; height: 14px; }
+.selection-actions-bar.dragging { box-shadow: 0 14px 40px #0009, inset 0 1px 0 #ffffff0d; }
+.selection-actions-bar.dragging .selection-actions-grip { color: var(--ink); cursor: grabbing; }
 .crop-surface { position: relative; flex-shrink: 0; overflow: hidden; background: var(--well); user-select: none; }
 .crop-surface > img { position: absolute; z-index: 1; display: block; pointer-events: none; box-shadow: 0 0 0 1px #0008; }
 .crop-transparent { position: absolute; background: repeating-conic-gradient(#3a3f48 0% 25%, #2e323a 0% 50%) 50% / 16px 16px; }

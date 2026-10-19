@@ -12,6 +12,7 @@ const GROUPS: [string, [string, string][]][] = [
     ["Q", "Show or hide the selection"],
     [`${MOD} + Shift + I`, "Invert the selection"],
     [`${MOD} + D / Esc`, "Deselect"],
+    ["Drag the action bar's grip", "Move the bar; double-click the grip to put it back"],
   ]],
   ["Layers", [
     [`${MOD} + V`, "Paste an image as a layer"],

@@ -1,4 +1,4 @@
-export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help" | "person" | "plus" | "trash" | "scissors" | "chevronLeft" | "chevronRight" | "layers" | "transform" | "flipH" | "flipV" | "duplicate" | "rotate" | "reset" | "image" | "pencil" | "face" | "search" | "crop" | "enhance" | "merge" | "more";
+export type IconName = "object" | "brush" | "eraser" | "lasso" | "rectangle" | "expand" | "move" | "library" | "upload" | "undo" | "redo" | "download" | "spark" | "close" | "settings" | "eye" | "eyeOff" | "invert" | "help" | "person" | "plus" | "trash" | "scissors" | "chevronLeft" | "chevronRight" | "layers" | "transform" | "flipH" | "flipV" | "duplicate" | "rotate" | "reset" | "image" | "pencil" | "face" | "search" | "crop" | "enhance" | "merge" | "more" | "grip";
 
 const paths: Record<IconName, string> = {
   object: "M3 21L14 10M12.5 8.5l3 3M18 2v4M16 4h4M21.5 9v3M20 10.5h3M10 2.5v2.5M8.75 3.75h2.5",
@@ -41,6 +41,7 @@ const paths: Record<IconName, string> = {
   enhance: "M12 3l9 17H3zM12 10l3.5 6.5h-7z",
   merge: "M12 3v8M8.5 7.5L12 11l3.5-3.5M3 14l9 5 9-5",
   more: "M5 11a1 1 0 100 2 1 1 0 000-2zM12 11a1 1 0 100 2 1 1 0 000-2zM19 11a1 1 0 100 2 1 1 0 000-2z",
+  grip: "M9 5a1 1 0 100 2 1 1 0 000-2zM15 5a1 1 0 100 2 1 1 0 000-2zM9 11a1 1 0 100 2 1 1 0 000-2zM15 11a1 1 0 100 2 1 1 0 000-2zM9 17a1 1 0 100 2 1 1 0 000-2zM15 17a1 1 0 100 2 1 1 0 000-2z",
 };
 
 export function Icon({ name }: { name: IconName }) {

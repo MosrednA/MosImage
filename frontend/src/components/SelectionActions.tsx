@@ -1,3 +1,4 @@
+import { BarGrip } from "../canvas/useBarSpot";
 import { Icon } from "./Icon";
 import { MOD } from "../platform";
 
@@ -14,15 +15,19 @@ export interface SelectionActionProps {
   onMaskLayer: () => void;
   onInvert: () => void;
   onDeselect: () => void;
+  grip: BarGrip;
 }
 
 /**
  * What to do with a selection, floating beside it like Photoshop's
- * contextual task bar, so the next step is one click away.
+ * contextual task bar, so the next step is one click away. The grip moves it
+ * out of the way.
  */
 export function SelectionActions(props: SelectionActionProps) {
-  const { disabled } = props;
-  return <div className="selection-actions-bar" role="toolbar" aria-label="Selection actions" onPointerDown={event => event.stopPropagation()}>
+  const { disabled, grip } = props;
+  return <div className={"selection-actions-bar" + (grip.dragging ? " dragging" : "")} role="toolbar" aria-label="Selection actions" onPointerDown={event => event.stopPropagation()}>
+    <span className="selection-actions-grip" aria-hidden="true" onPointerDown={grip.onPointerDown} onDoubleClick={grip.onReset}
+      title={grip.moved ? "Drag to move the bar · double-click to put it back by the selection" : "Drag to move the bar"}><Icon name="grip" /></span>
     <button className="primary" disabled={disabled} title="Describe what should appear in the selection · Shift + Backspace" onClick={props.onFill}><Icon name="spark" />Generate</button>
     <button disabled={disabled} title="Remove what is selected and fill in the background" onClick={props.onRemove}><Icon name="eraser" />Remove</button>
     <button disabled={disabled} title="Sharpen the faces inside the selection" onClick={props.onFaces}><Icon name="face" />Faces</button>
