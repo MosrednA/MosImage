@@ -35,6 +35,7 @@ The guide and architecture describe the current implementation. The roadmap owns
 
 These notes are dated snapshots. They record what was tried, measured and decided at the time. Where they disagree with the guide, the guide describes the current behaviour.
 
+- [Community LoRAs on Quality, 21 October 2026](notes/2026-10-21-lora-ab.md): Delight and Remove-9B against the prompt alone and app Remove, why Remove-9B cannot work here, and why app Remove now leaves the selection out of the condition image.
 - [Quality, speed and UX sweep, 10 October 2026](notes/2026-10-10-quality-speed-sweep.md): hidden token growth, tolerant ring seam matching, grain matching, area-based model size, automatic edges, unload policy and faster polling, with before/after timings and a ComfyUI community check.
 - [Image quality across generation, inpaint and outpaint, 9 October 2026](notes/2026-10-09-image-quality-research.md): pre-change pipeline findings, CPU overlap/resolution probe, LoRA candidates and proposed evaluation stages, with a link to the implemented first slice.
 - [Focus implementation and validation](notes/2026-10-07-focus-implementation.md): historical delivery log and regression evidence through 10 October; use the guide for current behaviour.

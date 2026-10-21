@@ -201,6 +201,45 @@ class Flux2KleinPlacementTests(unittest.TestCase):
             self.assertTrue(pipe.encode_prompt.call_args.kwargs["prompt"].startswith("glowing mushroom."))
             self.assertTrue((root / "output.png").exists())
 
+    def test_removal_leaves_the_selection_out_of_the_condition_image(self) -> None:
+        import torch
+
+        source = Image.new("RGB", (64, 32), "purple")
+        seen: list[list[int]] = []
+
+        class Pipe:
+            def prepare_image_latents(self, images: list[torch.Tensor], *args: object) -> tuple[torch.Tensor, torch.Tensor]:
+                tokens = torch.arange(8 + 3).view(1, -1, 1)  # The input's 4 × 2 tokens, then a reference's.
+                return tokens, tokens.clone()
+
+            def __call__(self, **_: object) -> SimpleNamespace:
+                latents, ids = self.prepare_image_latents([torch.zeros(1, 128, 2, 4)])
+                self.assertEqual(latents.flatten().tolist(), ids.flatten().tolist())
+                seen.append(latents.flatten().tolist())
+                return SimpleNamespace(images=[source])
+
+            assertEqual = self.assertEqual
+
+        pipe = Pipe()
+        small = (20, 4, 28, 12)  # Inside the second token of the first row.
+        most = (0, 0, 40, 32)  # Six of the eight tokens.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source.save(root / "source.png")
+            with patch("app.models.flux2_klein.require_generation_device"), patch("app.models.flux2_klein.selected_device", return_value="cuda"), \
+                    patch.object(self.provider, "_load_torch", return_value=torch), patch.object(self.provider, "_load_pipe", return_value=pipe), \
+                    patch.object(self.provider, "_configure_edit_adapters"), patch.object(self.provider, "_configure_loras"), \
+                    patch.object(self.provider, "_encode_prompt"):
+                for operation, box in (("remove", small), ("replace", small), ("remove", most)):
+                    mask = Image.new("L", source.size, 0)
+                    mask.paste(255, box)
+                    mask.save(root / "mask.png")
+                    self.provider.inpaint(InpaintForm(prompt="grass", edit_operation=operation), root / "source.png", root / "mask.png", root / "output.png", MagicMock())
+        # The pipeline also shows the model its input, so Remove must not leave the object in view
+        # there, unless the selection covers so much that the rest is too little to continue from.
+        self.assertEqual(seen, [[0, 2, 3, 4, 5, 6, 7, 8, 9, 10], list(range(11)), list(range(11))])
+        self.assertNotIn("prepare_image_latents", vars(pipe))
+
     def test_reference_image_is_passed_for_replacement_but_not_for_removal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

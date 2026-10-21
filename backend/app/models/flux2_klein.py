@@ -3,6 +3,8 @@ from __future__ import annotations
 import gc
 import math
 from collections import OrderedDict
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 import random
 import re
 from pathlib import Path
@@ -248,6 +250,37 @@ def _mode_prompt(request: EditRequest, references: Sequence[ReferenceSpec]) -> s
     return _edit_prompt(request.prompt, references)
 
 
+@contextmanager
+def _selection_left_out(pipe: Any, mask: Image.Image, torch: Any) -> Iterator[None]:
+    """Leave the selected tokens out of the condition image for Remove.
+
+    Klein's inpaint pipeline also gives the model its input as a condition
+    image, without the mask, so an object Remove should erase stays in view
+    there and can be drawn back. A fill in its place is copied instead.
+    """
+    prepare = pipe.prepare_image_latents
+
+    def without_selection(images: list[Any], *args: Any, **kwargs: Any) -> tuple[Any, Any]:
+        latents, ids = prepare(images, *args, **kwargs)
+        # The input leads the condition tokens, row by row on its latent grid.
+        height, width = images[0].shape[-2:]
+        covered = [value != 0 for value in mask.resize((width, height), Image.Resampling.BOX).tobytes()]
+        # With most of the view selected, the rest is too little to continue
+        # from and the scene's edges went astray; Klein removes an object that
+        # large from the full view.
+        if sum(covered) > len(covered) / 2:
+            return latents, ids
+        keep = torch.ones(latents.shape[1], dtype=torch.bool)
+        keep[: height * width] = torch.tensor([not value for value in covered])
+        return latents[:, keep.to(latents.device)], ids[:, keep.to(ids.device)]
+
+    pipe.prepare_image_latents = without_selection
+    try:
+        yield
+    finally:
+        del pipe.prepare_image_latents
+
+
 def _fit_area(image: Image.Image, area: int = EDIT_AREA) -> Image.Image:
     """Scales to about ``area`` pixels with sides in multiples of 16, keeping the aspect ratio."""
     width = max(16, round(math.sqrt(area * image.width / image.height) / 16) * 16)
@@ -460,20 +493,22 @@ class Flux2KleinProvider:
         control.set_progress(0.15)
         prompt_embeds = self._encode_prompt(pipe, _inpaint_prompt(request, references), control)
         control.set_phase("generating")
-        image = pipe(
-            image=init_image,
-            mask_image=mask_image,
-            # A list of equally sized images becomes one reference token block each.
-            **({"image_reference": reference} if reference is not None else {}),
-            prompt_embeds=prompt_embeds,
-            height=init_image.height,
-            width=init_image.width,
-            num_inference_steps=request.steps,
-            guidance_scale=request.guidance,
-            strength=request.strength,
-            generator=generator,
-            callback_on_step_end=control.diffusion_callback(request.steps),
-        ).images[0]
+        hidden = _selection_left_out(pipe, mask_image, torch) if request.edit_operation == "remove" else nullcontext()
+        with hidden:
+            image = pipe(
+                image=init_image,
+                mask_image=mask_image,
+                # A list of equally sized images becomes one reference token block each.
+                **({"image_reference": reference} if reference is not None else {}),
+                prompt_embeds=prompt_embeds,
+                height=init_image.height,
+                width=init_image.width,
+                num_inference_steps=request.steps,
+                guidance_scale=request.guidance,
+                strength=request.strength,
+                generator=generator,
+                callback_on_step_end=control.diffusion_callback(request.steps),
+            ).images[0]
         control.set_progress(0.95)
         image.save(output_path, **FAST_PNG)
         return seed, image.width
