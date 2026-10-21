@@ -100,6 +100,8 @@ GENERATION_MIGRATIONS: list[Migration] = [
     ("generations.0002_runtime_mode", lambda db: add_column_if_missing(db, "generations", "runtime_mode", "TEXT NOT NULL DEFAULT 'balanced'")),
     ("generations.0003_edit_metadata", _add_generation_edit_metadata),
     ("generations.0004_quality_options", _add_quality_options),
+    # The own LoRAs used, as JSON: [{"name": ..., "scale": ...}].
+    ("generations.0005_loras", lambda db: add_column_if_missing(db, "generations", "loras", "TEXT")),
 ]
 
 
@@ -192,6 +194,7 @@ def row_to_record(row: sqlite3.Row) -> dict[str, Any]:
     record = dict(row)
     record["output_image_url"] = image_url(record["output_image_path"])
     record["reference_image_paths"] = json.loads(record.get("reference_image_paths") or "[]")
+    record["loras"] = json.loads(record.get("loras") or "[]")
     for column in ("consistency_lora", "detail_crop", "specialized_outpaint"):
         record[column] = bool(record[column])
     return record

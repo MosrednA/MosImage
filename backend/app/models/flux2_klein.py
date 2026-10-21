@@ -15,7 +15,8 @@ from app.config import settings
 from app.jobs import JobCancelled, JobControl
 from app.models.base import ModelReference
 from app.runtime import empty_cache, require_generation_device, selected_device, selected_dtype, torch_module
-from app.schemas import EditRequest, InpaintForm, LoadModelRequest, ModelInfo, OutpaintForm, ReferenceRole, RuntimeMode, TextToImageRequest
+from app.schemas import (EditRequest, InpaintForm, LoadModelRequest, LoraArchitecture, LoraChoice, ModelInfo, OutpaintForm,
+                         ReferenceRole, RuntimeMode, TextToImageRequest)
 
 if TYPE_CHECKING:
     from app.models.klein_lora import KleinLora
@@ -302,6 +303,8 @@ class Flux2KleinProvider:
     name = "flux2-klein-4b"
     display_name = "FLUX.2 Klein 4B (BF16)"
     model_id = "black-forest-labs/FLUX.2-klein-4B"
+    # Which LoRAs fit: one trained on 4B has the wrong shapes for 9B.
+    architecture: LoraArchitecture = "klein-4b"
     # The Consistency and detail-enhancer LoRAs were trained on the distilled 9B.
     supports_edit_adapters = False
 
@@ -312,6 +315,8 @@ class Flux2KleinProvider:
         self._prompt_cache: OrderedDict[str, Any] = OrderedDict()
         self._consistency_adapter: KleinLora | None = None
         self._detail_adapter: KleinLora | None = None
+        # The user's own LoRAs by name, with the file signature they were read at.
+        self._loras: dict[str, tuple[tuple[int, int], KleinLora]] = {}
 
     def info(self) -> ModelInfo:
         return ModelInfo(
@@ -319,6 +324,7 @@ class Flux2KleinProvider:
             display_name=self.display_name,
             model_id=self.model_id,
             capabilities=["text-to-image", "edit", "inpaint", "outpaint"],
+            architecture=self.architecture,
             loaded=bool(self._pipes),
             loaded_pipelines=[f"{task}:{self._placement}" for task in self._pipes],
         )
@@ -335,6 +341,7 @@ class Flux2KleinProvider:
         torch = self._load_torch()
         pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control.subrange(0, 0.15))
         self._configure_edit_adapters(pipe, False, control)
+        self._configure_loras(pipe, request.loras, control)
         reference_images = _reference_images([reference.path for reference in references])
         control.set_progress(0.15)
         seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
@@ -372,6 +379,7 @@ class Flux2KleinProvider:
         # A partial redraw needs the source latent, which only the inpaint pipeline noises.
         pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint" if partial else "text-to-image", control.subrange(0, 0.15))
         self._configure_edit_adapters(pipe, request.consistency_lora, control, request.detail)
+        self._configure_loras(pipe, request.loras, control)
         with Image.open(input_path) as picture:
             source = _opaque(picture)
         fitted = _fit_area(source, FACE_AREA if request.mode == "face" else EDIT_AREA)
@@ -432,6 +440,7 @@ class Flux2KleinProvider:
         torch = self._load_torch()
         pipe = self._load_pipe(self._placement_for(request.runtime_mode), "inpaint", control.subrange(0, 0.15))
         self._configure_edit_adapters(pipe, request.consistency_lora, control)
+        self._configure_loras(pipe, request.loras, control)
         if request.edit_operation == "remove":
             references = ()
         seed = request.seed if request.seed is not None else random.randrange(0, 2**32)
@@ -477,6 +486,7 @@ class Flux2KleinProvider:
             # Loading is most of a start-up (about 24 of 27 s for 9B); the warm-up step is the rest.
             pipe = self._load_pipe(placement, request.task, control.subrange(0, 0.9))
             self._configure_edit_adapters(pipe, False, control)
+            self._configure_loras(pipe, (), control)
             control.set_progress(0.9)
             if request.warm_up:
                 self._warm_up(pipe, request.task, control)
@@ -490,6 +500,7 @@ class Flux2KleinProvider:
     def unload(self) -> None:
         self._consistency_adapter = None
         self._detail_adapter = None
+        self._loras = {}
         self._pipes = {}
         self._placement = None
         self._prompt_cache.clear()
@@ -521,6 +532,28 @@ class Flux2KleinProvider:
             self._consistency_adapter.set_scale(0.6 if enabled else 0)
         if self._detail_adapter is not None:
             self._detail_adapter.set_scale(detail)
+
+    def _configure_loras(self, pipe: Any, choices: Sequence[LoraChoice], control: JobControl) -> None:
+        """Stacks the chosen LoRAs from the LoRA folder on the built-in ones and takes the others off.
+
+        A LoRA stays attached while it is chosen and is read again once its
+        file changes; only the chosen ones cost memory.
+        """
+        from app.loras import lora_file, signature
+
+        wanted = {choice.name: (lora_file(choice.name), choice.scale) for choice in choices}
+        stamps = {name: signature(path) for name, (path, _) in wanted.items()}
+        stale = [name for name, (stamp, _) in self._loras.items() if stamps.get(name) != stamp]
+        for name in stale:
+            self._loras.pop(name)[1].detach()
+        if stale:
+            self._collect()
+        for name, (path, scale) in wanted.items():
+            if name not in self._loras:
+                from app.models.klein_lora import KleinLora
+                control.set_phase("loading", name)
+                self._loras[name] = (stamps[name], KleinLora.attach(pipe.transformer, path, control.raise_if_cancelled))
+            self._loras[name][1].set_scale(scale)
 
     def outpaint(self, request: OutpaintForm, input_path: Path, output_path: Path,
                  control: JobControl) -> tuple[int, int]:

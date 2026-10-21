@@ -83,9 +83,11 @@ export function resultName(blended: string | null, operation: Operation, prompt:
 
 interface InpaintOptions { strength: number; editOperation: "replace" | "remove" | "sketch"; contextPadding: number }
 
-function inpaintForm(parameters: EditParameters, image: File, mask: Blob, { strength, editOperation, contextPadding }: InpaintOptions): FormData {
+function inpaintForm({ loras, ...parameters }: EditParameters, image: File, mask: Blob, { strength, editOperation, contextPadding }: InpaintOptions): FormData {
   const form = new FormData();
   for (const [key, value] of Object.entries(parameters)) if (value !== undefined) form.set(key, String(value));
+  // A list of objects does not fit a form field, so it goes as JSON.
+  form.set("loras", JSON.stringify(loras ?? []));
   form.set("strength", String(strength));
   form.set("image", image); form.set("mask", mask, "mask.png");
   form.set("edit_operation", editOperation);
@@ -100,8 +102,9 @@ export async function submitJob(input: SubmissionInput): Promise<Submission> {
   const { operation, settings, referenceIds, source, size, mask } = input;
   const task = taskFor(operation);
   const prompt = requestPrompt(operation, settings);
-  const parameters = requestParameters(settings, prompt);
   const refinements = qualityOptions(settings, operation, !!input.blendLayer);
+  // Every AI tool runs your LoRAs that fit its model.
+  const parameters = { ...requestParameters(settings, prompt), loras: refinements.loras };
   const withReferences = { ...parameters, reference_ids: referenceIds };
   if (input.hasDocument && task !== "outpaint" && input.layerCount >= MAX_LAYERS) throw new Error(`A document can have up to ${MAX_LAYERS} layers. Delete one before generating.`);
   const asLayer = (created: JobResponse, result: LayerResult): Submission => ({ created, operation: null, extras: { result } });

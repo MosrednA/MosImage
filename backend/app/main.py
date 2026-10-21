@@ -22,6 +22,7 @@ from .models.registry import registry
 from .routes import documents as document_routes
 from .routes import generation
 from .routes import jobs as job_routes
+from .routes import loras as lora_routes
 from .routes import references as reference_routes
 from .routes import selection as selection_routes
 from .routes.common import job_response, read_uploaded_image  # noqa: F401  (tests import it from here)
@@ -151,7 +152,8 @@ def load_model(request: LoadModelRequest) -> JobResponse:
     return job_response(jobs.submit("load-model", lambda control: _preload_model(request, control)))
 
 
-for router in (generation.router, selection_routes.router, job_routes.router, document_routes.router, reference_routes.router):
+for router in (generation.router, selection_routes.router, job_routes.router, document_routes.router, reference_routes.router,
+               lora_routes.router):
     app.include_router(router)
 
 

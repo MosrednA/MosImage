@@ -65,6 +65,7 @@ class Flux2KleinAppleProvider(Flux2KleinProvider):
         require_generation_device()
         pipe = self._load_pipe(self._placement_for(request.runtime_mode), "text-to-image", control.subrange(0, 0.15))
         self._configure_edit_adapters(pipe, False, control)
+        self._configure_loras(pipe, (), control)
         if self._outpaint_adapter is None:
             # Without offload hooks the LoRA can join already resident weights.
             from app.models.klein_lora import FAL_OUTPAINT, KleinLora, resolve_checkpoint
@@ -139,6 +140,7 @@ class Flux2Klein9bAppleProvider(Flux2KleinAppleProvider):
     base_display_name = "FLUX.2 Klein 9B"
     model_id = BASE_REPO_9B
     revision = BASE_REVISION_9B
+    architecture = "klein-9b"
     supports_edit_adapters = True
 
     def outpaint(self, request: OutpaintForm, input_path: Path, output_path: Path,

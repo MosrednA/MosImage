@@ -1,7 +1,7 @@
 # MosImage v2 — Refactor and Upgrade Plan
 
 Status: Active
-Last verified: 2026-10-15
+Last verified: 2026-10-21
 Review by: 2026-11-11
 
 **Target:** Windows desktop, local-first\
@@ -17,6 +17,8 @@ Review by: 2026-11-11
 **Current behaviour:** [Guide](guide.md) and [architecture](architecture.md). [Focus implementation and validation](notes/2026-10-07-focus-implementation.md) preserves the dated delivery log through 10 October. [Model research and product direction](notes/2026-10-07-direction.md) preserves the initial research snapshot and longer-term proposals.
 
 ## Implementation status
+
+**Own LoRAs, 21 October 2026:** FLUX.2 Klein LoRAs from `models/loras/` (ai-toolkit, ComfyUI, kohya, PEFT and Diffusers exports) can be switched on in Generation settings: up to three at strength 0.1–2, on every AI tool, stacked on Consistency and the detail enhancer. Each file is matched to 4B or 9B by its layer shapes. On the GPU, Fast 4B NVFP4 under CPU offload attached a 325 MB LoRA in about 3 s, stacked two, and rendered the plain image again exactly once they were off (mean pixel difference 0.0); a pixel-art job from the UI recorded its LoRA in the history. On Quality 9B NVFP4 at 768², Redmond's coloring-book LoRA rendered in 2.3 s including attachment, stacked on Consistency in an edit (10.8 s, peak 11.4 GiB) and on the detail enhancer in Enhance (7.0 s, peak 11.8 GiB), and the plain render afterwards was again identical; no pass logged a driver event. With its training caption ("Coloring Book. ColoringBookAF") the LoRA turns plain Klein's hatched coloring page into thick clean outlines at 1.0 and 1.6; with the trigger words merely listed, Klein drew them as a title on a photo. Alpha follows Diffusers, adapter metadata included: only 4 of 48 sampled Klein LoRAs on Hugging Face carry that metadata, and one of them, Delight, needs it. Open: a check on a Mac, where unit tests cover the MLX stacking so far. Training stays out of scope. The [guide](guide.md#your-own-loras) describes use and limits.
 
 **Quantized Klein on a Mac, 11 October 2026:** Klein's transformer and text encoder can run in MLX with 8-bit or 4-bit weights (`MOSIMAGE_APPLE_WEIGHTS`), inside the same diffusers pipelines, so masked edits, references and every LoRA keep working. On an M5 Max, 8-bit lowers Quality's peak from 36–42 GiB to 24–30 GiB and 4-bit to 18–24 GiB, at 4–7% more time. The default follows unified memory (BF16 from 64 GB, 8-bit from 48 GB, else 4-bit), and GPU caches are released after every job. Next: smaller VAE tiles on Apple silicon, which would cut another 5–10 GiB from every peak. See the [comparison](../benchmarks/MLX_KLEIN_2026-10-11.md).
 

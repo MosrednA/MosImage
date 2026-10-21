@@ -126,6 +126,31 @@ class MlxTransformerTests(unittest.TestCase):
         self.assertTrue(all(_get(t.parent, t.leaf) is base for t, base in zip(adapter.targets, originals, strict=True)))
         torch.testing.assert_close(self.run_model(model), before)
 
+    def test_stacked_loras_add_up_and_detach_in_any_order(self) -> None:
+        from app.models.klein_mlx import _get
+
+        model = self.load("bf16")
+        before = self.run_model(model)
+        originals = None
+        with TemporaryDirectory() as directory:
+            path = self.lora(directory)
+            single = KleinLora.attach(model, path, lambda: None)
+            single.set_scale(1.0)
+            expected = self.run_model(model)
+            originals = [target.layer.base for target in single.targets]
+            single.detach()
+            first = KleinLora.attach(model, path, lambda: None)
+            second = KleinLora.attach(model, path, lambda: None)
+        first.set_scale(0.5)
+        second.set_scale(0.5)
+        self.assertLess(relative_error(self.run_model(model), expected), 0.02)
+        first.detach()
+        second.set_scale(1.0)
+        self.assertLess(relative_error(self.run_model(model), expected), 0.02)
+        second.detach()
+        self.assertTrue(all(_get(t.parent, t.leaf) is base for t, base in zip(second.targets, originals, strict=True)))
+        torch.testing.assert_close(self.run_model(model), before)
+
     def test_lora_runs_on_quantized_weights_without_touching_them(self) -> None:
         import mlx.nn as nn
 

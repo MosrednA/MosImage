@@ -1,7 +1,7 @@
 # MosImage documentation
 
 Status: Current reference
-Last verified: 2026-10-17
+Last verified: 2026-10-21
 
 The guide and architecture describe the current implementation. The roadmap owns remaining scope and next steps. Dated notes and benchmark reports preserve historical decisions and measurements; their timings and acceptance results apply to the recorded fixtures and runtime.
 

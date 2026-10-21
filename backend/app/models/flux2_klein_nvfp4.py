@@ -69,6 +69,7 @@ class Flux2KleinNvfp4Provider(Flux2KleinProvider):
             self.unload()
             self._want_outpaint_adapter = True
         pipe = self._load_pipe(placement, "text-to-image", control.subrange(0, 0.15))
+        self._configure_loras(pipe, (), control)
         assert self._outpaint_adapter is not None
         self._outpaint_adapter.set_scale(1.1)
         torch = self._load_torch()
@@ -141,6 +142,7 @@ class Flux2Klein9bNvfp4Provider(Flux2KleinNvfp4Provider):
     name = "flux2-klein-9b-nvfp4"
     display_name = "FLUX.2 Klein 9B NVFP4"
     model_id = QUANT_REPO_9B
+    architecture = "klein-9b"
     supports_edit_adapters = True
     base_repo = BASE_REPO_9B
     base_revision = BASE_REVISION_9B

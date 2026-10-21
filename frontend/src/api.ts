@@ -14,7 +14,20 @@ export interface ModelInfo {
   loaded_pipelines: string[];
   /** The model this device runs for the Quality or Fast preset: NVFP4 on an RTX 50, BF16 on Apple silicon. */
   preset?: "quality" | "fast" | null;
+  /** Which LoRAs fit: one trained on 4B has the wrong shapes for 9B. */
+  architecture: "klein-4b" | "klein-9b";
 }
+
+/** One of your own LoRAs and how strongly it applies. */
+export interface LoraChoice { name: string; scale: number }
+
+/** A file in the LoRA folder, with the models it fits or why it cannot be used. */
+export interface LoraFile { name: string; size_bytes: number; models: string[]; problem: string | null }
+
+export interface LoraLibrary { folder: string; loras: LoraFile[] }
+
+/** At most this many of your own LoRAs run at once. */
+export const MAX_LORAS = 3;
 
 export interface GenerationRecord {
   id: number;
@@ -36,6 +49,7 @@ export interface GenerationRecord {
   consistency_lora: boolean;
   detail_crop: boolean;
   specialized_outpaint: boolean;
+  loras: LoraChoice[];
   input_image_path: string | null;
   mask_image_path: string | null;
   output_image_path: string;
@@ -120,6 +134,8 @@ export interface TextToImageRequest {
   count: number;
   /** People or objects to compose into the new image, in prompt order. */
   reference_ids?: number[];
+  /** Your own LoRAs, stacked on the built-in ones. */
+  loras?: LoraChoice[];
 }
 
 export interface DocumentRecord {
@@ -237,6 +253,10 @@ export async function checkHealth(): Promise<void> {
 
 export async function listModels(): Promise<ModelInfo[]> {
   return request("/api/models");
+}
+
+export async function listLoras(): Promise<LoraLibrary> {
+  return request("/api/loras");
 }
 
 export async function listHistory(): Promise<GenerationRecord[]> {

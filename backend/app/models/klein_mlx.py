@@ -29,6 +29,8 @@ import mlx.core as mx
 import mlx.nn as nn
 import torch
 
+from app.models.klein_lora import stacked, unstack
+
 # Weight formats: BF16 as stored, or affine 8-bit/4-bit with groups of 64.
 Precision = Literal["bf16", "q8", "q4"]
 BITS: dict[str, int] = {"q8": 8, "q4": 4}
@@ -375,7 +377,7 @@ class Qwen3Encoder(nn.Module):
 # ------------------------------------------------------------------ LoRA
 
 class LoraLinear(nn.Module):
-    """A low-rank residual on a BF16 or quantized linear; the base weights stay as they are."""
+    """A low-rank residual on a BF16 or quantized linear, or on another residual; the base weights stay as they are."""
 
     def __init__(self, base: nn.Module, down: mx.array, up: mx.array) -> None:
         super().__init__()
@@ -393,7 +395,9 @@ class LoraLinear(nn.Module):
 
 
 def _linear_dims(module: nn.Module) -> tuple[int, int]:
-    """(in, out) features of a BF16 or quantized linear."""
+    """(in, out) features of a BF16 or quantized linear, also under residuals."""
+    if isinstance(module, LoraLinear):
+        return _linear_dims(module.base)
     if isinstance(module, nn.QuantizedLinear):
         out_features, packed = module.weight.shape
         return packed * 32 // module.bits, out_features
@@ -437,8 +441,11 @@ class MlxLoraTarget:
     def attach(self) -> None:
         _set(self.parent, self.leaf, self.layer)
 
+    def attached(self) -> bool:
+        return stacked(self.current(), self.layer)
+
     def restore(self) -> None:
-        _set(self.parent, self.leaf, self.layer.base)
+        unstack(self.current(), self.layer, lambda module: _set(self.parent, self.leaf, module))
 
     @property
     def storage_bytes(self) -> int:
@@ -560,15 +567,13 @@ class MlxTransformer(_MlxModule):
         targets = []
         for name, pair in pairs.items():
             check_cancelled()
-            if set(pair) != {"A", "B"}:
-                raise ValueError(f"Incomplete LoRA pair: {name}")
             try:
                 parent, leaf = _parent(self.mlx, name)
                 base = _get(parent, leaf)
             except (AttributeError, IndexError, KeyError, ValueError) as exc:
                 raise ValueError(f"Unknown LoRA target: {name}") from exc
-            if not isinstance(base, (nn.Linear, nn.QuantizedLinear)):
-                raise ValueError(f"Unsupported or already adapted LoRA target: {name}")
+            if not isinstance(base, (nn.Linear, nn.QuantizedLinear, LoraLinear)):
+                raise ValueError(f"Unsupported LoRA target: {name}")
             down, up = pair["A"], pair["B"]
             in_features, out_features = _linear_dims(base)
             if down.ndim != 2 or up.ndim != 2 or down.shape[0] == 0:

@@ -16,7 +16,7 @@ from .config import settings
 from .jobs import JobCancelled, JobControl
 from .models.base import ImageModelProvider, ModelReference
 from .models.registry import registry
-from .schemas import EditRequest, InpaintForm, OutpaintForm, TextToImageRequest
+from .schemas import EditRequest, InpaintForm, LoraChoice, OutpaintForm, TextToImageRequest
 
 
 def run_text_to_image(request: TextToImageRequest, control: JobControl) -> list[int]:
@@ -52,6 +52,7 @@ def run_text_to_image(request: TextToImageRequest, control: JobControl) -> list[
                     "mask_image_path": None,
                     "output_image_path": storage.to_relative(output_path),
                     "reference_image_paths": json.dumps([storage.to_relative(reference.path) for reference in model_references]) if model_references else None,
+                    "loras": loras_column(request.loras),
                 }
             )
         control.raise_if_cancelled()
@@ -98,6 +99,7 @@ def run_image_edit(request: EditRequest, image_bytes: bytes, image_name: str | N
                     "mask_image_path": None,
                     "output_image_path": storage.to_relative(output_path),
                     "reference_image_paths": json.dumps([storage.to_relative(reference.path) for reference in model_references]) if model_references else None,
+                    "loras": loras_column(request.loras),
                 }
             )
         control.raise_if_cancelled()
@@ -211,7 +213,8 @@ def _run_masked_edit(
                         negative_prompt=iteration.negative_prompt,
                         model_name=iteration.model_name, runtime_mode=iteration.runtime_mode,
                         seed=iteration.seed, steps=iteration.steps, guidance=iteration.guidance,
-                        reference_ids=iteration.reference_ids, consistency_lora=iteration.consistency_lora)
+                        reference_ids=iteration.reference_ids, consistency_lora=iteration.consistency_lora,
+                        loras=iteration.loras)
                     seed, _model_width = provider.edit(detail_request, iteration_workspace.model_input_path,
                         model_output_path, iteration_control, **extra)
                 else:
@@ -245,6 +248,7 @@ def _run_masked_edit(
                         "input_image_path": storage.to_relative(input_path),
                         "mask_image_path": storage.to_relative(mask_path),
                         "output_image_path": storage.to_relative(output_path),
+                        "loras": loras_column(request.loras),
                     }
                 )
         control.raise_if_cancelled()
@@ -254,6 +258,10 @@ def _run_masked_edit(
         for path in (input_path, mask_path, *output_paths):
             path.unlink(missing_ok=True)
         raise
+
+
+def loras_column(loras: list[LoraChoice]) -> str | None:
+    return json.dumps([choice.model_dump() for choice in loras]) if loras else None
 
 
 def release_after_failure(provider: ImageModelProvider, error: BaseException) -> None:

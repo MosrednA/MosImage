@@ -1,7 +1,9 @@
-import { ModelInfo, RuntimeMode } from "../api";
+import { LoraChoice, ModelInfo, RuntimeMode } from "../api";
 import { ASPECT_PRESETS, AspectPreset, aspectPresetFor } from "../generation/aspectRatios";
 import { GENERATION_PRESETS, GenerationPreset, presetForModel } from "../generation/presets";
+import { ChosenLora } from "../generation/loras";
 import { Operation, taskFor } from "../generation/operation";
+import { LoraControls } from "./LoraControls";
 
 export interface EditorSettings {
   preset: GenerationPreset; model_name: string; prompt: string;
@@ -9,12 +11,14 @@ export interface EditorSettings {
   width: number; height: number; strength: number; count: number;
   context_padding: number; scene_context: string;
   consistency_lora: boolean; specialized_outpaint: boolean; detail_crop: boolean;
+  loras: ChosenLora[];
 }
 export const defaultSettings: EditorSettings = {
   preset: "quality", model_name: "flux2-klein-9b-nvfp4", prompt: "", runtime_mode: "balanced",
   seed: "", steps: 4, guidance: 1, width: 1024, height: 1024, strength: 1, count: 1,
   context_padding: 320, scene_context: "",
   consistency_lora: false, specialized_outpaint: false, detail_crop: false,
+  loras: [],
 };
 /** The settings with a preset's model, steps and guidance. */
 export function withPreset(settings: EditorSettings, value: GenerationPreset): EditorSettings {
@@ -28,7 +32,10 @@ export function qualityOptions(settings: EditorSettings, operation: Operation, b
   const consistency_lora = ["edit", "replace", "expand"].includes(operation)
     && model_name === GENERATION_PRESETS.quality.modelName && settings.consistency_lora;
   const detail_crop = operation === "replace" && !blending && settings.detail_crop;
-  return { model_name, consistency_lora, specialized_outpaint, detail_crop };
+  // A LoRA fits one model size and waits while the other runs; Specialized outpaint runs its own LoRA alone.
+  const loras: LoraChoice[] = specialized_outpaint ? []
+    : settings.loras.filter(lora => lora.models.includes(model_name)).map(({ name, scale }) => ({ name, scale }));
+  return { model_name, consistency_lora, specialized_outpaint, detail_crop, loras };
 }
 export function settingsSummary(settings: EditorSettings, operation: Operation, blending: boolean): string {
   const options = qualityOptions(settings, operation, blending);
@@ -37,7 +44,8 @@ export function settingsSummary(settings: EditorSettings, operation: Operation, 
   const count = `${settings.count} ${settings.count === 1 ? "proposal" : "proposals"}`;
   return [quality, count, ...(task === "text-to-image" ? [`${settings.width} × ${settings.height}`] : []),
     ...(options.consistency_lora ? ["Consistency"] : []), ...(options.specialized_outpaint ? ["Specialized"] : []),
-    ...(options.detail_crop ? ["Fine detail"] : [])].join(" · ");
+    ...(options.detail_crop ? ["Fine detail"] : []),
+    ...(options.loras.length === 1 ? [options.loras[0].name] : options.loras.length ? [`${options.loras.length} LoRAs`] : [])].join(" · ");
 }
 
 interface Props {
@@ -72,6 +80,7 @@ export function SettingsControls({ settings, onChange, models, operation, blendi
         {task === "outpaint" && <label className="quality-switch"><span>Specialized outpaint<small>Try an alternative edge fill. Uses Fast while enabled.</small></span><input type="checkbox" role="switch" aria-label="Specialized outpaint" checked={options.specialized_outpaint} onChange={event => onChange({ ...settings, specialized_outpaint: event.target.checked })} /></label>}
         {showDetail && <label className="quality-switch"><span>Fine detail<small>Regenerate selected texture. May invent small details.</small></span><input type="checkbox" role="switch" aria-label="Fine detail" checked={options.detail_crop} onChange={event => onChange({ ...settings, detail_crop: event.target.checked })} /></label>}
       </div>}
+      <LoraControls chosen={settings.loras} onChange={loras => onChange({ ...settings, loras })} modelName={options.model_name} locked={options.specialized_outpaint} />
       <details className="advanced"><summary>Advanced controls</summary><div className="advanced-content">
         <label>Model<select aria-label="Model" value={options.model_name} disabled={presetLocked} onChange={event => { const name = event.target.value; const value = presetForModel(name); const config = GENERATION_PRESETS[value]; onChange({ ...settings, preset: value, model_name: name, steps: config.steps, guidance: config.guidance }); }}>{models.filter(model => model.capabilities.includes(task)).map(model => <option key={model.name} value={model.name}>{model.display_name}</option>)}</select></label>
         {options.model_name === "flux2-klein-9b-nvfp4" && <p>Native NVFP4 for RTX 50 series. The larger model keeps identities and scenes more faithful; its weights are licensed for non-commercial use only.</p>}

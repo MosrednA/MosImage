@@ -157,6 +157,22 @@ describe("submitJob", () => {
     expect(sentForm().get("detail_crop")).toBe("false");
     expect(sentForm().get("consistency_lora")).toBe("false");
   });
+  it("sends your LoRAs on every tool, as JSON in the inpaint form", async () => {
+    const loras = [{ name: "Ink", scale: .8, models: ["flux2-klein-9b-nvfp4"] }];
+    const settings = { ...defaultSettings, prompt: "ink", loras };
+    const sent = [{ name: "Ink", scale: .8 }];
+    await submitJob(input({ settings }));
+    expect(JSON.parse(String(sentForm().get("loras")))).toEqual(sent);
+    await submitJob(input({ settings, operation: "sketch", sketch: new Blob(["strokes"]) }));
+    expect(JSON.parse(String(sentForm().get("loras")))).toEqual(sent);
+    for (const operation of ["generate", "edit", "faces", "enhance", "expand"] as const) await submitJob(input({ settings, operation }));
+    expect(vi.mocked(generateImage).mock.calls[0][0].loras).toEqual(sent);
+    for (const call of [editWholeImage, fixFaces, enhanceImage, outpaintImage]) expect(vi.mocked(call).mock.calls[0][1].loras).toEqual(sent);
+    await submitJob(input({ settings: { ...settings, specialized_outpaint: true }, operation: "expand" }));
+    expect(vi.mocked(outpaintImage).mock.calls[1][1].loras).toEqual([]);
+    await submitJob(input({ settings: defaultSettings }));
+    expect(sentForm().get("loras")).toBe("[]");
+  });
   it("limits Consistency to Quality edits and ignores refinements in Generate", async () => {
     const settings = { ...defaultSettings, prompt: "weave", consistency_lora: true, detail_crop: true, specialized_outpaint: true };
     await submitJob(input({ operation: "edit", settings }));

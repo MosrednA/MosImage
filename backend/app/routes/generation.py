@@ -6,24 +6,26 @@ from io import BytesIO
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from PIL import Image, UnidentifiedImageError
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from .. import storage
 from ..enhance import run_enhance
 from ..faces import face_candidates, run_face_fix
 from ..jobs import jobs
 from ..schemas import (EditRequest, EnhanceRequest, FaceCandidate, FaceDetectionResponse, FaceFixRequest, GenerationRecord, InpaintForm, JobResponse,
-                       OutpaintForm, TextToImageRequest)
+                       LoraChoice, OutpaintForm, TextToImageRequest)
 from ..services import run_image_edit, run_inpaint, run_outpaint, run_text_to_image
-from .common import check_references, http_errors, job_response, parse_parameters, read_uploaded_image, require_capability
+from .common import check_loras, check_references, http_errors, job_response, parse_parameters, read_uploaded_image, require_capability
 
 router = APIRouter(prefix="/api")
+LORA_LIST = TypeAdapter(list[LoraChoice])
 
 
 @router.post("/generate", response_model=JobResponse)
 def generate(request: TextToImageRequest) -> JobResponse:
     require_capability(request.model_name, "text-to-image", "This model cannot generate images.")
     check_references(request.reference_ids)
+    check_loras(request.model_name, request.loras)
     return job_response(jobs.submit("text-to-image", lambda control: run_text_to_image(request, control)))
 
 
@@ -32,6 +34,7 @@ async def edit_image(image: UploadFile = File(...), parameters: str = Form(...))
     request = parse_parameters(EditRequest, parameters)
     require_capability(request.model_name, "edit", "This model cannot edit the whole image.")
     check_references(request.reference_ids)
+    await run_in_threadpool(check_loras, request.model_name, request.loras)
     content = await read_uploaded_image(image)
     return job_response(jobs.submit("edit", lambda control: run_image_edit(request, content, image.filename, control)))
 
@@ -55,6 +58,8 @@ async def inpaint(
     consistency_lora: bool = Form(False),
     detail_crop: bool = Form(False),
     reference_ids: list[int] = Form([]),
+    # JSON, as in the other routes' parameters: [{"name": ..., "scale": ...}].
+    loras: str = Form("[]"),
     image: UploadFile = File(...),
     mask: UploadFile = File(...),
 ) -> JobResponse:
@@ -76,11 +81,13 @@ async def inpaint(
             consistency_lora=consistency_lora,
             detail_crop=detail_crop,
             reference_ids=reference_ids,
+            loras=LORA_LIST.validate_json(loras),
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     require_capability(request.model_name, "inpaint", "This model cannot edit a selection.")
     check_references(request.reference_ids)
+    await run_in_threadpool(check_loras, request.model_name, request.loras)
     image_bytes = await read_uploaded_image(image)
     mask_bytes = await read_uploaded_image(mask)
     return job_response(jobs.submit(
@@ -93,6 +100,7 @@ async def inpaint(
 async def outpaint(image: UploadFile = File(...), parameters: str = Form(...)) -> JobResponse:
     request = parse_parameters(OutpaintForm, parameters)
     require_capability(request.model_name, "outpaint", "This model cannot expand the canvas.")
+    await run_in_threadpool(check_loras, request.model_name, request.loras)
     content = await read_uploaded_image(image)
     return job_response(jobs.submit("outpaint", lambda control: run_outpaint(request, content, control)))
 
@@ -102,6 +110,7 @@ async def fix_faces(image: UploadFile = File(...), parameters: str = Form(...), 
     request = parse_parameters(FaceFixRequest, parameters)
     require_capability(request.model_name, "edit", "This model cannot fix faces.")
     check_references(request.reference_ids)
+    await run_in_threadpool(check_loras, request.model_name, request.loras)
     content = await read_uploaded_image(image)
     mask_bytes = await read_uploaded_image(mask) if mask is not None else None
     return job_response(jobs.submit("edit", lambda control: run_face_fix(request, content, image.filename, mask_bytes, control)))
@@ -124,6 +133,7 @@ async def detect_faces(image: UploadFile = File(...)) -> FaceDetectionResponse:
 async def enhance(image: UploadFile = File(...), parameters: str = Form(...), mask: UploadFile | None = File(None)) -> JobResponse:
     request = parse_parameters(EnhanceRequest, parameters)
     require_capability(request.model_name, "edit", "This model cannot enhance pictures.")
+    await run_in_threadpool(check_loras, request.model_name, request.loras)
     content = await read_uploaded_image(image)
     mask_bytes = await read_uploaded_image(mask) if mask is not None else None
     return job_response(jobs.submit("edit", lambda control: run_enhance(request, content, image.filename, mask_bytes, control)))

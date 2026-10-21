@@ -8,7 +8,7 @@ MosImage uses a split local app architecture:
 - `backend/app/models/` contains runtime adapters. The Quality default is FLUX.2 Klein 9B NVFP4 (`flux2_klein_nvfp4.py`, with its RAM-streamed FP8 text encoder in `klein_text_encoder.py`); Klein 4B NVFP4 (the Fast preset) and 4B BF16 (`flux2_klein.py`) are the other models in `registry.py`. On Apple silicon the registry offers Klein 9B (Quality) and 4B (Fast) from `flux2_klein_apple.py` instead: BF16 on Metal (MPS), or 8-bit/4-bit in MLX (`klein_mlx.py`, `MOSIMAGE_APPLE_WEIGHTS`) inside the same diffusers pipelines. Every AI tool, including expansion, runs on FLUX.2 Klein; selection runs on CPU models (SAM 2.1 Tiny, Grounding DINO tiny, ViTMatte).
 - `frontend/` contains the React + Vite UI and optional Tauri shell in `frontend/src-tauri/`.
 - `data/images/{inputs,masks,outputs}/` stores local image files. `data/app.db` stores metadata.
-- `models/` is reserved for local checkpoints or manually downloaded model files.
+- `models/` is reserved for local checkpoints or manually downloaded model files. `models/adapters/` holds the pinned built-in LoRAs and `models/loras/` the user's own (`backend/app/loras.py`); both stay out of git.
 - `docs/` holds the guide, architecture overview, roadmap and dated research notes (`docs/notes/`). `benchmarks/` holds versioned fixtures and benchmark reports. Keep the root `README.md` a short overview and put detail in `docs/`.
 - `backend/.env.example` contains the default RTX 5070 Ti 16 GB runtime profile. On macOS the defaults in `config.py` switch to the Apple silicon profile by themselves.
 

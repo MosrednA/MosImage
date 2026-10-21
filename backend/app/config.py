@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     data_dir: Path = project_root / "data"
     db_path: Path = data_dir / "app.db"
     image_dir: Path = data_dir / "images"
+    # The user's own LoRAs, one .safetensors file each.
+    lora_dir: Path = project_root / "models" / "loras"
     # Vite dev server, plus the Tauri desktop shell (Windows, then macOS/Linux).
     cors_origins: list[str] = [
         "http://localhost:5173",

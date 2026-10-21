@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -6,7 +7,7 @@ import torch
 from safetensors.torch import save_file
 from torch import nn
 
-from app.models.klein_lora import KleinLora, LoraLinear
+from app.models.klein_lora import KleinLora, LoraLinear, lora_pairs
 from app.models.nvfp4_runtime import Nvfp4Linear
 
 
@@ -108,6 +109,96 @@ class KleinLoraTests(unittest.TestCase):
         for target, chunk in zip(adapter.targets, up.chunk(3), strict=True):
             expected = target.layer.base(x) + 1.1 * ((x @ down.T) @ chunk.T)
             torch.testing.assert_close(target.layer(x), expected)
+
+    def random_checkpoint(self, directory: str, seed: int) -> tuple[Path, torch.Tensor, torch.Tensor]:
+        """A LoRA on the first linear of ``model()`` only."""
+        generator = torch.Generator().manual_seed(seed)
+        down, up = torch.randn(2, 4, generator=generator), torch.randn(4, 2, generator=generator)
+        path = Path(directory) / f"adapter-{seed}.safetensors"
+        save_file({"diffusion_model.transformer_blocks.0.0.lora_A.weight": down,
+                   "diffusion_model.transformer_blocks.0.0.lora_B.weight": up}, str(path))
+        return path, down, up
+
+    def test_stacked_adapters_add_up_and_detach_in_any_order(self):
+        x = torch.randn(3, 4)
+        scales = (.5, 1.5)
+        for first in (0, 1):
+            model = self.model()
+            original = model.transformer_blocks[0][0]
+            with tempfile.TemporaryDirectory() as directory:
+                checkpoints = [self.random_checkpoint(directory, seed) for seed in (0, 1)]
+                adapters = [KleinLora.attach(model, path, lambda: None) for path, _, _ in checkpoints]
+            def residual(index: int) -> torch.Tensor:
+                _, down, up = checkpoints[index]
+                return scales[index] * ((x @ down.T) @ up.T)
+            self.assertTrue(torch.equal(model.transformer_blocks[0][0](x), original(x)))
+            for adapter, scale in zip(adapters, scales, strict=True):
+                adapter.set_scale(scale)
+            torch.testing.assert_close(model.transformer_blocks[0][0](x), original(x) + residual(0) + residual(1))
+            adapters[first].detach()
+            torch.testing.assert_close(model.transformer_blocks[0][0](x), original(x) + residual(1 - first))
+            adapters[1 - first].detach()
+            self.assertIs(model.transformer_blocks[0][0], original)
+
+    def test_detach_refuses_a_target_replaced_underneath_it(self):
+        model = self.model()
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = KleinLora.attach(model, self.random_checkpoint(directory, 0)[0], lambda: None)
+        model.transformer_blocks[0][0] = nn.Linear(4, 4)
+        with self.assertRaisesRegex(RuntimeError, "replaced"):
+            adapter.detach()
+
+    def test_kohya_alpha_is_folded_into_the_down_matrix(self):
+        down, up = torch.randn(2, 4), torch.randn(4, 2)
+        pairs = lora_pairs({"lora_unet_double_blocks_0_img_attn_proj.lora_down.weight": down,
+                            "lora_unet_double_blocks_0_img_attn_proj.lora_up.weight": up,
+                            "lora_unet_double_blocks_0_img_attn_proj.alpha": torch.tensor(1.0)}, None)
+        pair = pairs["transformer_blocks.0.attn.to_out.0"]
+        torch.testing.assert_close(pair["A"], down * .5)
+        torch.testing.assert_close(pair["B"], up)
+
+    def test_comfyui_alpha_keys_scale_like_kohya(self):
+        down, up = torch.randn(2, 4), torch.randn(4, 2)
+        pairs = lora_pairs({"diffusion_model.double_blocks.0.img_attn.proj.lora_A.weight": down,
+                            "diffusion_model.double_blocks.0.img_attn.proj.lora_B.weight": up,
+                            "diffusion_model.double_blocks.0.img_attn.proj.alpha": torch.tensor(1.0)}, None)
+        torch.testing.assert_close(pairs["transformer_blocks.0.attn.to_out.0"]["A"], down * .5)
+
+    def test_diffusers_export_applies_its_peft_alpha(self):
+        down, up = torch.randn(4, 4), torch.randn(4, 4)
+        state = {"transformer.transformer_blocks.0.attn.to_out.0.lora_A.weight": down,
+                 "transformer.transformer_blocks.0.attn.to_out.0.lora_B.weight": up}
+        metadata = {"lora_adapter_metadata": json.dumps({"transformer.r": 4, "transformer.lora_alpha": 2})}
+        torch.testing.assert_close(lora_pairs(state, metadata)["transformer_blocks.0.attn.to_out.0"]["A"], down * .5)
+        torch.testing.assert_close(lora_pairs(state, None)["transformer_blocks.0.attn.to_out.0"]["A"], down)
+
+    def test_diffusers_names_without_their_prefix_and_rslora(self):
+        # As in the "comfyui" upload of Limbicnation/pixel-art-lora; its Diffusers twin trained with rsLoRA.
+        down, up = torch.randn(4, 4), torch.randn(4, 4)
+        bare = {"transformer_blocks.0.attn.to_out.0.lora_A.weight": down, "proj_out.lora_A.weight": down,
+                "transformer_blocks.0.attn.to_out.0.lora_B.weight": up, "proj_out.lora_B.weight": up}
+        self.assertEqual(set(lora_pairs(bare, None)), {"transformer_blocks.0.attn.to_out.0", "proj_out"})
+        rslora = {"lora_adapter_metadata": json.dumps({"transformer.r": 4, "transformer.lora_alpha": 8, "transformer.use_rslora": True})}
+        torch.testing.assert_close(lora_pairs(bare, rslora)["proj_out"]["A"], down * 4)
+
+    def test_lora_parts_that_cannot_be_applied_whole_are_rejected(self):
+        a, b = torch.ones(2, 4), torch.ones(4, 2)
+        cases = {
+            "DoRA": {"diffusion_model.double_blocks.0.img_attn.proj.lora_A.weight": a,
+                     "diffusion_model.double_blocks.0.img_attn.proj.lora_B.weight": b,
+                     "diffusion_model.double_blocks.0.img_attn.proj.dora_scale": torch.ones(1, 4)},
+            "text encoder": {"lora_unet_double_blocks_0_img_attn_proj.lora_down.weight": a,
+                             "lora_unet_double_blocks_0_img_attn_proj.lora_up.weight": b,
+                             "lora_te1_encoder_layers_0_q_proj.lora_down.weight": a},
+            "Unsupported": {"lora_unet_double_blocks_0_img_attn_proj.lora_down.weight": a,
+                            "lora_unet_double_blocks_0_img_attn_proj.lora_up.weight": b,
+                            "lora_unet_unknown_layer.lora_down.weight": a},
+            "Klein does not have": {"diffusion_model.unknown.lora_A.weight": a, "diffusion_model.unknown.lora_B.weight": b},
+            "transformer-only": {"unet.down.lora_A.weight": a},
+        }
+        for message, state in cases.items():
+            with self.subTest(message), self.assertRaisesRegex(ValueError, message):
+                lora_pairs(state, None)
 
     def test_nonfinite_and_dtype_overflow_weights_are_rejected(self):
         for value in (float('nan'),float('inf'),1e300):

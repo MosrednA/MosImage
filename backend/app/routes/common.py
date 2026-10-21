@@ -10,8 +10,9 @@ from pydantic import BaseModel, ValidationError
 from .. import references
 from ..config import settings
 from ..jobs import Job
+from ..loras import ARCHITECTURE_NAMES, inspect, lora_file
 from ..models.registry import registry
-from ..schemas import JobResponse
+from ..schemas import JobResponse, LoraChoice
 
 Model = TypeVar("Model", bound=BaseModel)
 
@@ -50,6 +51,21 @@ def check_references(reference_ids: list[int]) -> None:
         return
     if any(references.get_reference(reference_id) is None for reference_id in reference_ids):
         raise HTTPException(status_code=422, detail="A selected reference no longer exists.")
+
+
+def check_loras(model_name: str, loras: list[LoraChoice]) -> None:
+    """Refuses a missing, unreadable or mismatched LoRA before its job waits in the queue."""
+    if not loras:
+        return
+    architecture = registry.get(model_name).info().architecture
+    for choice in loras:
+        with http_errors({ValueError: 422, OSError: 503}):
+            inspection = inspect(lora_file(choice.name))
+        if inspection.problem:
+            raise HTTPException(status_code=422, detail=f"{choice.name}: {inspection.problem}")
+        if architecture not in inspection.fits:
+            made_for = " or ".join(ARCHITECTURE_NAMES[fit] for fit in inspection.fits)
+            raise HTTPException(status_code=422, detail=f"{choice.name} is made for {made_for}. Turn it off or switch models.")
 
 
 def job_response(job: Job) -> JobResponse:

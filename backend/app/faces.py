@@ -15,7 +15,7 @@ from .detection import Box, Detection, coverage, detector, strongest
 from .jobs import JobControl
 from .models.registry import registry
 from .schemas import MAX_FACES, EditRequest, FaceCandidate, FaceFixRequest
-from .services import _alternative_seed, _model_references, _new_image_path, _save_bytes, release_after_failure
+from .services import _alternative_seed, _model_references, _new_image_path, _save_bytes, loras_column, release_after_failure
 
 FACE_QUERY = "human face."
 # Grounding DINO also calls cakes, dogs and signs a face, scoring them like small
@@ -158,7 +158,8 @@ def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | 
                     # The face prompt is built in; the user's words only add to it, so they may be empty.
                     face_request = EditRequest(prompt="restore the face", model_name=request.model_name, runtime_mode=request.runtime_mode,
                                                guidance=request.guidance, seed=None if seed is None else (seed + number) % (2**32),
-                                               reference_ids=request.reference_ids, mode="face", **({"steps": request.steps} | faithful),
+                                               reference_ids=request.reference_ids, mode="face", loras=request.loras,
+                                               **({"steps": request.steps} | faithful),
                                                ).model_copy(update={"prompt": request.prompt})
                     face_seed, _ = provider.edit(face_request, crop_in, crop_out, step, **extra)
                     used_seed = used_seed or face_seed
@@ -186,6 +187,7 @@ def run_face_fix(request: FaceFixRequest, image_bytes: bytes, image_name: str | 
                     "mask_image_path": storage.to_relative(mask_path),
                     "output_image_path": storage.to_relative(output_path),
                     "reference_image_paths": json.dumps([storage.to_relative(reference.path) for reference in model_references]) if model_references else None,
+                    "loras": loras_column(request.loras),
                 })
         control.raise_if_cancelled()
         return storage.create_generations(values)

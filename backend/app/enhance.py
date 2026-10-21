@@ -16,7 +16,7 @@ from .config import settings
 from .jobs import JobControl
 from .models.registry import registry
 from .schemas import EditRequest, EnhanceRequest
-from .services import _alternative_seed, _new_image_path, _save_bytes, release_after_failure
+from .services import _alternative_seed, _new_image_path, _save_bytes, loras_column, release_after_failure
 
 # Each tile renders at Klein's native size or larger, so no tile loses pixels.
 TILE_AREA = 1024 * 1024
@@ -158,7 +158,7 @@ def run_enhance(request: EnhanceRequest, image_bytes: bytes, image_name: str | N
                     tile_request = EditRequest(prompt="enhance", model_name=request.model_name, runtime_mode=request.runtime_mode,
                                                steps=ENHANCE_STEPS, guidance=request.guidance,
                                                seed=None if seed is None else (seed + number) % (2**32),
-                                               mode="enhance", detail=detail, strength=strength,
+                                               mode="enhance", detail=detail, strength=strength, loras=request.loras,
                                                ).model_copy(update={"prompt": request.prompt})
                     tile_seed, _ = provider.edit(tile_request, tile_in, tile_out, step)
                     used_seed = used_seed or tile_seed
@@ -195,6 +195,7 @@ def run_enhance(request: EnhanceRequest, image_bytes: bytes, image_name: str | N
                     "mask_image_path": storage.to_relative(mask_path) if mask_path is not None else None,
                     "output_image_path": storage.to_relative(output_path),
                     "reference_image_paths": None,
+                    "loras": loras_column(request.loras),
                 })
         control.raise_if_cancelled()
         return storage.create_generations(values)

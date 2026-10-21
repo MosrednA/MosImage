@@ -268,6 +268,17 @@ small { color: var(--muted); }
 .quality-switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .quality-switch input:disabled { opacity: .35; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .quality-switch input::before { transition: none; } }
+.lora-heading, .lora-folder { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lora-heading small { color: var(--muted); font-size: 10px; }
+.lora-heading button, .lora-folder button { flex: none; padding: 3px 9px; font-size: 11px; }
+.lora-controls > small { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.lora-item { display: grid; gap: 8px; }
+.lora-item .quality-switch span { overflow-wrap: anywhere; }
+.lora-strength { display: flex; align-items: center; gap: 10px; color: #c0c7d3; font-size: 11px; }
+.lora-strength input { flex: 1; }
+.lora-strength output { min-width: 35px; font-family: "Cascadia Code", monospace; font-size: 11px; color: var(--accent); text-align: right; }
+.lora-controls .lora-problem { color: var(--warn); }
+.lora-folder code { min-width: 0; overflow-wrap: anywhere; color: var(--faint); font-family: "Cascadia Code", monospace; font-size: 10px; }
 .advanced { margin-top: 20px; font-size: 12px; }
 .advanced summary { color: var(--accent); padding: 8px 0; }
 .advanced-content { padding-top: 14px; display: flex; flex-direction: column; gap: 14px; }

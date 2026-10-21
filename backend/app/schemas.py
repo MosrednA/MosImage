@@ -14,6 +14,25 @@ MAX_REFERENCES_PER_EDIT = 3
 # Fix faces redraws up to this many faces at a time.
 MAX_FACES = 8
 FaceBox = tuple[Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)], Annotated[int, Field(ge=0)]]
+# The transformer a model runs, and so the LoRAs that fit it.
+LoraArchitecture = Literal["klein-4b", "klein-9b"]
+# Own LoRAs one edit can stack on top of the built-in ones.
+MAX_LORAS = 3
+
+
+class LoraChoice(BaseModel):
+    """A file from the LoRA folder, by its name without ``.safetensors``, and its strength."""
+
+    model_config = ConfigDict(extra="forbid")
+    # A file name only: no folders, drive letters, hidden files or control characters.
+    name: str = Field(min_length=1, max_length=200, pattern=r'^[^./\\:*?"<>|\x00-\x1f][^/\\:*?"<>|\x00-\x1f]*$')
+    scale: float = Field(default=1.0, gt=0, le=2, allow_inf_nan=False)
+
+
+def _unique_loras(value: list[LoraChoice]) -> list[LoraChoice]:
+    if len({choice.name for choice in value}) != len(value):
+        raise ValueError("Each LoRA can be chosen once.")
+    return value
 
 
 class ModelInfo(BaseModel):
@@ -23,6 +42,7 @@ class ModelInfo(BaseModel):
     capabilities: list[TaskKind]
     loaded: bool
     loaded_pipelines: list[str] = []
+    architecture: LoraArchitecture
     # The model this device runs for the Quality or Fast preset, if any.
     preset: Literal["quality", "fast"] | None = None
 
@@ -51,11 +71,14 @@ class PromptRequest(BaseModel):
     count: int = Field(default=1, ge=1, le=4)
     # People or objects to bring into the image, named in this order.
     reference_ids: list[Annotated[int, Field(ge=1)]] = Field(default_factory=list, max_length=MAX_REFERENCES_PER_EDIT)
+    loras: list[LoraChoice] = Field(default_factory=list, max_length=MAX_LORAS)
 
     @field_validator("reference_ids")
     @classmethod
     def _unique_references(cls, value: list[int]) -> list[int]:
         return list(dict.fromkeys(value))
+
+    _unique_loras = field_validator("loras")(_unique_loras)
 
 
 class TextToImageRequest(PromptRequest):
@@ -150,11 +173,14 @@ class InpaintForm(BaseModel):
     detail_crop: bool = False
     # Order matters: the prompt names them as reference image 1, 2, ...
     reference_ids: list[Annotated[int, Field(ge=1)]] = Field(default_factory=list, max_length=MAX_REFERENCES_PER_EDIT)
+    loras: list[LoraChoice] = Field(default_factory=list, max_length=MAX_LORAS)
 
     @field_validator("reference_ids")
     @classmethod
     def _unique_references(cls, value: list[int]) -> list[int]:
         return list(dict.fromkeys(value))
+
+    _unique_loras = field_validator("loras")(_unique_loras)
 
     @model_validator(mode="after")
     def compatible_quality_options(self) -> "InpaintForm":
@@ -182,7 +208,22 @@ class OutpaintForm(InpaintForm):
             raise ValueError("Fine detail is available for selected replacements only.")
         if self.specialized_outpaint and (self.model_name != settings.fast_model or self.steps != 4 or self.guidance != 1 or self.strength != 1):
             raise ValueError("Specialized outpaint requires the Fast model at four steps and guidance one.")
+        if self.specialized_outpaint and self.loras:
+            raise ValueError("Specialized outpaint runs its own LoRA; turn your LoRAs off for it.")
         return self
+
+
+class LoraFile(BaseModel):
+    name: str
+    size_bytes: int
+    # The models it fits: empty when it fits none, with the reason in ``problem``.
+    models: list[str]
+    problem: str | None = None
+
+
+class LoraLibrary(BaseModel):
+    folder: str
+    loras: list[LoraFile]
 
 
 class SelectionPoint(BaseModel):
@@ -262,6 +303,7 @@ class GenerationRecord(BaseModel):
     consistency_lora: bool = False
     detail_crop: bool = False
     specialized_outpaint: bool = False
+    loras: list[LoraChoice] = Field(default_factory=list)
     reference_image_paths: list[str] = Field(default_factory=list)
     input_image_path: str | None = None
     mask_image_path: str | None = None
