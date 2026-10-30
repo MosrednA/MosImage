@@ -5,7 +5,7 @@ fastapi==0.142.2
 uvicorn[standard]==0.54.0
 pydantic-settings==2.15.0
 python-multipart==0.0.32
-pillow==12.3.0
+pillow==13.0.0
 numpy==2.5.3
 transformers==5.19.0
 accelerate==1.15.0
@@ -21,7 +21,7 @@ mlx==0.32.3; sys_platform == "darwin"
 anyio==4.15.1
 fsspec==2026.9.0
 urllib3==2.8.0
-setuptools==84.0.0
+setuptools==84.2.1
 # Keeps pip from replacing the torch build installed first.
 torch==2.14.1+cu130; sys_platform == "win32"
 torchvision==0.29.1+cu130; sys_platform == "win32"
