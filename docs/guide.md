@@ -56,7 +56,7 @@ Default runtime behavior:
 - Model CPU offload is enabled by default for the Klein 4B models in Balanced mode; Klein 9B stays resident on the GPU.
 - PyTorch uses `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` to reduce allocator fragmentation.
 
-For Windows and RTX 5070 Ti, use Python 3.13 or 3.12 for the backend virtual environment. The startup script prefers `py -3.13`, then `py -3.12`. The current pinned runtime is PyTorch 2.14.1 with CUDA 13.0 from `backend/requirements-torch-cu130.txt`; the verified local NVIDIA driver is 617.42. The old CUDA 12.8 requirements are retained as a historical baseline and do not match the current dependency set.
+For Windows and RTX 5070 Ti, use Python 3.13 or 3.12 for the backend virtual environment. The startup script prefers `py -3.13`, then `py -3.12`. The current pinned runtime is PyTorch 2.14.1 with CUDA 13.0 from `backend/requirements-torch-cu130.txt`; the verified local NVIDIA driver is 617.42. The old CUDA 12.8 baseline (PyTorch 2.11.0) was removed on 30 October 2026 because no patched PyTorch exists for it; git history keeps it.
 
 If you created the venv with the wrong Python or a CPU-only PyTorch install, delete it and rerun startup:
 
